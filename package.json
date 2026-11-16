@@ -1,0 +1,35 @@
+{
+  "name": "tree-of-life",
+  "version": "1.0.0",
+  "description": "Collaborative hydromorphodynamic terrain simulation with GitHub persistence",
+  "main": "index.html",
+  "scripts": {
+    "dev": "python3 -m http.server 8000",
+    "build": "echo 'No build step needed - static files only'",
+    "deploy": "git push origin main"
+  },
+  "keywords": [
+    "simulation",
+    "physics",
+    "erosion",
+    "collaborative",
+    "github",
+    "three.js"
+  ],
+  "author": "Laurent Perrinet",
+  "license": "MIT",
+  "dependencies": {
+    "three": "^r128 (via CDN)"
+  },
+  "devDependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/laurentperrinet/2026-11_tree-of-life.git"
+  },
+  "homepage": "https://laurentperrinet.github.io/2026-11_tree-of-life/",
+  "notes": {
+    "performance": "64x64 grid runs at 60 FPS on modern hardware. For larger grids, WebGL compute shaders recommended.",
+    "optimization": "Uses Float32Array for all numerical arrays. Physics step is CPU-bound.",
+    "dependencies_external": "Three.js loaded from CDN, no npm required"
+  }
+}
