@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tree of Life - Collaborative Hydromorphodynamic Simulation</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <!-- Main 3D canvas -->
+    <canvas id="canvas"></canvas>
+
+    <!-- Status badge (top-right) -->
+    <div id="status-badge" class="status-badge">
+        <div>Contributors: <span id="contrib-count">1</span></div>
+        <div>Last sync: <span id="last-sync">--</span>s ago</div>
+        <div>Energy: <span id="energy-level">--</span>%</div>
+        <div id="auth-status">🔓 Not authenticated</div>
+        <div id="convergence-indicator" class="convergence-unknown">⊙ Stability: --</div>
+    </div>
+
+    <!-- Help panel (bottom-left) -->
+    <div id="help-panel" class="help-panel">
+        <h2>Controls</h2>
+        <ul>
+            <li><kbd>+</kbd>/<kbd>-</kbd> : Flow rate Q±</li>
+            <li><kbd>↑</kbd>/<kbd>↓</kbd> : Speed V±</li>
+            <li><kbd>D</kbd> : Dual-view modes</li>
+            <li><kbd>S</kbd> : Force sync</li>
+            <li><kbd>R</kbd> : Reset (auth only)</li>
+            <li><kbd>?</kbd> : Toggle help</li>
+            <li>🖱️ Drag: Rotate | Scroll: Zoom</li>
+        </ul>
+        <button id="auth-button">🔓 Sign in with GitHub</button>
+        <div id="reset-container" style="display: none;">
+            <button id="reset-button" class="btn-danger">🔄 Reset Terrain</button>
+        </div>
+    </div>
+
+    <!-- Loading indicator -->
+    <div id="loading-spinner" class="loading-spinner" style="display: none;">
+        <div class="spinner"></div>
+    </div>
+
+    <!-- Message toast -->
+    <div id="toast" class="toast"></div>
+
+    <!-- Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/js-sha256@0.9.0/sha256.min.js"></script>
+    
+    <!-- Our modules -->
+    <script src="js/local-storage.js"></script>
+    <script src="js/terrain.js"></script>
+    <script src="js/physics.js"></script>
+    <script src="js/renderer.js"></script>
+    <script src="js/github-sync.js"></script>
+    <script src="js/auth.js"></script>
+    <script src="js/controls.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
