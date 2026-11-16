@@ -18,9 +18,7 @@
   ],
   "author": "Laurent Perrinet",
   "license": "MIT",
-  "dependencies": {
-    "three": "^r128 (via CDN)"
-  },
+  "dependencies": {},
   "devDependencies": {},
   "repository": {
     "type": "git",
