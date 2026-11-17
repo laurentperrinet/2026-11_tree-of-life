@@ -163,7 +163,11 @@ class TerrainGrid {
         // the Delaunay triangulation, with a minimum triangle angle of 29 degrees.
         this.spiralMargin = 0.75;
         this.sinkRadius = 0.8;
-        this.slope = 0.09;
+        // Radial slope of the funnel cone that drains the bed towards the channel.
+        this.slope = 0.11;
+        // Descent of the outlet channel axis towards the sink, kept separate so
+        // that steepening the cone does not also deepen the channel.
+        this.channelSlope = 0.09;
         this.surroundSlope = 0.3;
         this.peripheralSlope = 0.06;
         this.peripheralWidth = 4;
@@ -319,7 +323,7 @@ class TerrainGrid {
         const width = this.sinkRadius + this.channelFlare * z;
         const t = Math.max(0, Math.min(1, Math.abs(x) / width));
         const blend = t * t * (3 - 2 * t);
-        return -this.slope * z * (1 - blend) + cone * blend;
+        return -this.channelSlope * z * (1 - blend) + cone * blend;
     }
 
     sandDepthFactor(x, z) {
@@ -407,7 +411,8 @@ class TerrainGrid {
     meshSignature() {
         return JSON.stringify([
             'disk-square-vogel-v1', this.radius, this.halfSize, this.spacing, this.spiralMargin,
-            CHANNEL_SAND_FREE_PROFILE, 'jitter-v1', this.jitter, this.jitterSeed
+            CHANNEL_SAND_FREE_PROFILE, 'jitter-v1', this.jitter, this.jitterSeed,
+            'slopes-v1', this.slope, this.channelSlope
         ]);
     }
 

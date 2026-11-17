@@ -452,6 +452,23 @@ test('evaporation on the fixed surround deposits on the underlying face', () => 
     assert.equal(grid.fromJSON(saved), true);
 });
 
+test('a parcel at capacity leaves a sand trail on bare bedrock', () => {
+    const grid = new TerrainGrid();
+    const physics = new PhysicsEngine(grid);
+    grid.elevation.set(grid.bedrock);
+    physics.g = 0;
+    physics.friction = 0;
+    const speed = 1;
+    const capacity = physics.waterPerParticle * physics.transportCapacity * (speed - 0.1);
+    // At capacity a net exchange would be zero; settling still drops sand here.
+    const particle = { x: 5, z: -5, vx: speed, vz: 0, sediment: capacity };
+    const before = totalSediment(grid, physics) + particle.sediment;
+    physics.moveParticle(particle, 0.04);
+    assert.ok(particle.sediment < capacity);
+    assert.ok(grid.elevation.some((height, i) => height > grid.bedrock[i]));
+    assert.ok(Math.abs(totalSediment(grid, physics) + particle.sediment - before) < 1e-12);
+});
+
 test('water deposits sand on the initially bare output-channel bed', () => {
     const grid = new TerrainGrid();
     const physics = new PhysicsEngine(grid);
@@ -603,7 +620,7 @@ test('inverted cone drains through a flared channel towards the bottom sink', ()
         assert.ok(Math.abs(grid.bedrockHeight(0, z) - grid.slope * Math.abs(z)) < 1e-12);
     }
     for (const z of [1, 5, 15, 25, 30]) {
-        assert.ok(Math.abs(grid.bedrockHeight(0, z) + grid.slope * z) < 1e-12);
+        assert.ok(Math.abs(grid.bedrockHeight(0, z) + grid.channelSlope * z) < 1e-12);
         const width = grid.sinkRadius + grid.channelFlare * z;
         const radius = Math.hypot(width, z);
         assert.ok(Math.abs(grid.bedrockHeight(width, z) -
@@ -627,7 +644,7 @@ test('the steeper peripheral bed carries stationary water inward', () => {
         for (let step = 0; step < 50; step++) physics.moveParticle(particle, 0.04);
         assert.ok(24.4 - Math.hypot(particle.x, particle.z) > 1.1, `insufficient drainage at ${angle}`);
     }
-    assert.ok(Math.abs(grid.bedrockHeight(0, 27) + grid.slope * 27) < 1e-12);
+    assert.ok(Math.abs(grid.bedrockHeight(0, 27) + grid.channelSlope * 27) < 1e-12);
 });
 
 test('raised fixed surround returns water to the disk while leaving the outlet downhill', () => {

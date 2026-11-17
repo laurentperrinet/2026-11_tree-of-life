@@ -148,14 +148,16 @@ $$c(r) = S\,\min(r, R) + S_\text{out}\,\max(0, r - R) + S_p\,\operatorname{clip}
 where $S$ is the cone slope, $S_\text{out}$ the slope of the surround and $S_p$ an
 extra slope over the outermost band of width $W_p$, which drains peripheral water
 inwards. Towards the sink ($z > 0$), an outlet channel of half-width
-$w(z) = r_s + f z$ descends from the centre:
+$w(z) = r_s + f z$ descends from the centre with its own slope $S_c$:
 
-$$\beta(x, z) = \begin{cases} c(r) & z \le 0,\\ -S z\,\bigl(1 - \sigma(t)\bigr) + c(r)\,\sigma(t) & z > 0, \end{cases}
+$$\beta(x, z) = \begin{cases} c(r) & z \le 0,\\ -S_c z\,\bigl(1 - \sigma(t)\bigr) + c(r)\,\sigma(t) & z > 0, \end{cases}
 \qquad t = \operatorname{clip}\!\left(\frac{\lvert x\rvert}{w(z)},\ 0,\ 1\right),$$
 
 with the smoothstep $\sigma(t) = t^2(3 - 2t)$, $r_s$ the sink half-width and $f$ the
-channel flare. The bedrock thus rises from $0$ at the centre to $2.49$ u at the
-disk edge and falls to $-2.70$ u at the sink. The initial sand layer is uniform
+channel flare. The bedrock thus rises from $0$ at the centre to $2.99$ u at the
+disk edge and falls to $-2.70$ u at the sink. Keeping $S_c$ separate from $S$
+lets the funnel be steepened, to speed up the drainage, without deepening the
+channel. The initial sand layer is uniform
 except in the channel:
 
 $$\eta_i(0) = \beta_i + D_0\,\phi_i,\qquad
@@ -218,22 +220,32 @@ A parcel's transport capacity grows with its speed above a threshold $v_c$:
 $$C_p = V_p\,K\,\max\bigl(0,\ \lVert\mathbf{v}_p\rVert - v_c\bigr),$$
 
 where $V_p$ is the water volume per parcel and $K$ the capacity coefficient. The
-parcel relaxes its load towards capacity:
+parcel entrains sand and lets part of its load settle **at the same time**:
 
-$$E = (C_p - q_p)\bigl(1 - e^{-\lambda\delta}\bigr),\qquad
-\lambda = \begin{cases} 2 & \lVert\mathbf{v}_p\rVert < v_c,\\ 0.3 & \text{otherwise.}\end{cases}$$
+$$U = C_p\bigl(1 - e^{-\lambda\delta}\bigr),\qquad
+S = q_p\bigl(1 - e^{-\lambda\delta}\bigr),\qquad
+\lambda = \begin{cases} 2 & \lVert\mathbf{v}_p\rVert < v_c,\\ 0.3 & \text{otherwise,}\end{cases}$$
 
-A slowing parcel ($\lVert\mathbf{v}_p\rVert < \lVert\mathbf{v}_p^-\rVert$) deposits at
-least the fraction of its load it lost in speed,
-$E \leftarrow \min\bigl(E,\ -q_p(1 - \lVert\mathbf{v}_p\rVert / \lVert\mathbf{v}_p^-\rVert)\bigr)$,
-and never deposits more than it carries ($E \ge -q_p$). The exchange is shared
-among the erodible vertices $j$ of the triangle:
+where $U$ is the entrainment and $S$ the settling. On a sand bed the net exchange
+$U - S = (C_p - q_p)(1 - e^{-\lambda\delta})$ relaxes the load towards capacity.
+On bare bedrock nothing can be entrained, but the load keeps settling, so a loaded
+parcel leaves a trail of sand behind it (for instance along the initially bare
+outlet channel). A slowing parcel ($\lVert\mathbf{v}_p\rVert < \lVert\mathbf{v}_p^-\rVert$)
+drops at least the fraction of its load it lost in speed: if
+$U - S > -q_p(1 - \lVert\mathbf{v}_p\rVert / \lVert\mathbf{v}_p^-\rVert)$, then $U = 0$
+and $S = q_p(1 - \lVert\mathbf{v}_p\rVert / \lVert\mathbf{v}_p^-\rVert)$. Since
+$S \le q_p$, a parcel never deposits more than it carries. Both terms are shared
+among the erodible vertices $j$ of the triangle, entrainment being limited to the
+sand $s_j = \eta_j - \beta_j$ already on the bed:
 
-$$\eta_j \leftarrow \max\!\left(\beta_j,\ \eta_j - \frac{E\,w_{p,j}\,e_j}{A_j}\right),\qquad
-e_j = \begin{cases} \sigma\!\bigl(\operatorname{clip}((R - r_j)/W_e,\ 0,\ 1)\bigr) & E > 0,\\ 1 & E \le 0,\end{cases}$$
+$$\eta_j \leftarrow \eta_j + \frac{w_{p,j}\,S - \min\bigl(s_j A_j,\ w_{p,j}\,U\,e_j\bigr)}{A_j},\qquad
+e_j = \sigma\!\bigl(\operatorname{clip}((R - r_j)/W_e,\ 0,\ 1)\bigr),$$
 
 where $A_j$ is the lumped vertex area (one third of each adjacent triangle) and
-$e_j$ fades erosion to zero over the outer band of width $W_e$. The load is then
+$e_j$ fades entrainment (not settling) to zero over the outer band of width $W_e$.
+Limiting the entrainment, rather than the net exchange, is what lets the trail
+form: otherwise entrainment would cancel the settling of the same substep on bare
+bedrock. The load is then
 updated with the volume that was **actually** removed or added,
 $q_p \leftarrow \max\bigl(0,\ q_p + \sum_j A_j(\eta_j^- - \eta_j)\bigr)$, so the
 bedrock floor cannot create or destroy sand.
@@ -337,7 +349,8 @@ Values are the defaults in the code. The terrain parameters are duplicated in
 | $N_e$ | `sectors` | 784 | Vertices of the edge polygon |
 | $j$ | `jitter` (`MESH_JITTER`) | 0.1 | Jitter radius as a fraction of $\Delta s$ (0.02 u) |
 | — | `jitterSeed` (`MESH_JITTER_SEED`) | 2026 | Seed of the deterministic jitter field |
-| $S$ | `slope` | 0.09 | Cone slope and channel descent |
+| $S$ | `slope` (`MESH_SLOPE`) | 0.11 | Radial slope of the funnel cone |
+| $S_c$ | `channelSlope` (`MESH_CHANNEL_SLOPE`) | 0.09 | Descent of the outlet channel axis |
 | $S_\text{out}$ | `surroundSlope` | 0.3 | Slope of the surround beyond $R$ |
 | $S_p$ | `peripheralSlope` | 0.06 | Extra slope over the outer band |
 | $W_p$ | `peripheralWidth` | 4 u | Width of the outer drainage band |
@@ -368,7 +381,7 @@ Node.js on an Apple M3 Ultra, 0.06 s of which for the triangulation.
 | $V_p$ | `waterPerParticle` | 0.02 u³ | Water volume per parcel |
 | $K$ | `transportCapacity` | 6 | Capacity per unit volume and speed |
 | $v_c$ | literal | 0.1 u sim s⁻¹ | Speed threshold for transport |
-| $\lambda$ | literals | 0.3 or 2 sim s⁻¹ | Load relaxation rate (moving or slow) |
+| $\lambda$ | literals | 0.3 or 2 sim s⁻¹ | Entrainment and settling rate (moving or slow) |
 | $W_e$ | `erosionBorderWidth` | 2 u | Band where erosion fades to zero |
 | $a$ | `particleRadius` | 0.105 u | Collision radius (substep criterion) |
 | $v_\max$ | `maxSpeed` | 3 u sim s⁻¹ | Speed cap |
@@ -547,7 +560,7 @@ before relying on a ceiling.
 
 **Mesh versioning.** Terrain saves and Worker state carry a mesh signature:
 `disk-square-vogel-v1`, $R$, $L$, $\Delta s$, $m$, `channel-sand-free-v1`,
-`jitter-v1`, $j$ and the seed. States and saves from the earlier polar-ring meshes
+`jitter-v1`, $j$, the seed, `slopes-v1`, $S$ and $S_c$. States and saves from the earlier polar-ring meshes
 (`disk-square-polar-v2`) are not migrated, because their vertices do not
 correspond to those of the spiral: any mismatch resets the shared terrain and
 discards pending contributions. Deploy the Worker and the site together whenever

@@ -324,10 +324,15 @@ class PhysicsEngine {
         let actualExchange = 0;
         sample.face.forEach((index, i) => {
             if (index >= grid.erodibleCount) return;
-            const amount = Math.max(0, sample.weights[i]) *
-                (entrainment * this.erosionFactor(index) - settling);
+            const weight = Math.max(0, sample.weights[i]);
             const previousHeight = grid.elevation[index];
-            const height = Math.max(grid.bedrock[index], previousHeight - amount / grid.vertexArea[index]);
+            // Only sand already on the bed can be entrained: limiting the net
+            // exchange instead would let entrainment cancel this substep's settling
+            // on bare bedrock, and no trail would form.
+            const available = (previousHeight - grid.bedrock[index]) * grid.vertexArea[index];
+            const entrained = Math.min(available, weight * entrainment * this.erosionFactor(index));
+            const height = Math.max(grid.bedrock[index],
+                previousHeight + (weight * settling - entrained) / grid.vertexArea[index]);
             grid.elevation[index] = height;
             actualExchange += (previousHeight - height) * grid.vertexArea[index];
         });

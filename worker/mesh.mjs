@@ -7,7 +7,10 @@ export const MESH_SPACING = 0.2;
 // triangle angle (29 degrees) among the margins tested.
 export const MESH_SPIRAL_MARGIN = 0.75;
 export const MESH_SINK_RADIUS = 0.8;
-export const MESH_SLOPE = 0.09;
+// Radial slope of the funnel cone that drains the bed towards the channel.
+export const MESH_SLOPE = 0.11;
+// Descent of the outlet channel axis towards the sink, independent of the cone.
+export const MESH_CHANNEL_SLOPE = 0.09;
 export const MESH_SURROUND_SLOPE = 0.3;
 export const MESH_PERIPHERAL_SLOPE = 0.06;
 export const MESH_PERIPHERAL_WIDTH = 4;
@@ -23,7 +26,8 @@ export const CHANNEL_SAND_FREE_PROFILE = 'channel-sand-free-v1';
 export const MAX_REQUESTS_PER_SYNC = 2;
 export const MESH_SIGNATURE = JSON.stringify([
     'disk-square-vogel-v1', MESH_RADIUS, MESH_HALF_SIZE, MESH_SPACING, MESH_SPIRAL_MARGIN,
-    CHANNEL_SAND_FREE_PROFILE, 'jitter-v1', MESH_JITTER, MESH_JITTER_SEED
+    CHANNEL_SAND_FREE_PROFILE, 'jitter-v1', MESH_JITTER, MESH_JITTER_SEED,
+    'slopes-v1', MESH_SLOPE, MESH_CHANNEL_SLOPE
 ]);
 
 /**
@@ -166,7 +170,7 @@ export function createInitialMesh() {
         const width = MESH_SINK_RADIUS + MESH_CHANNEL_FLARE * z;
         const t = Math.max(0, Math.min(1, Math.abs(x) / width));
         const blend = t * t * (3 - 2 * t);
-        bedrock[i] = -MESH_SLOPE * z * (1 - blend) + cone * blend;
+        bedrock[i] = -MESH_CHANNEL_SLOPE * z * (1 - blend) + cone * blend;
     }
 
     const sandDepthFactor = Float64Array.from(bedrock, (_, i) => {
