@@ -18,7 +18,7 @@ function totalSediment(grid, physics) {
 test('local colonies grow on wet sandy banks and microbes diffuse only through suitable habitat', () => {
     const biology = Object.create(BiologyGrid.prototype);
     biology.size = 5;
-    for (const name of ['active', 'sand', 'flow', 'plants', 'inhibitor', 'microbeU', 'microbeV',
+    for (const name of ['active', 'sand', 'flow', 'plants', 'inhibitor', 'microbeU', 'microbeV', 'microbeSeeds',
         'nearby', 'scratch', 'nextPlants', 'nextInhibitor', 'nextU', 'nextV', 'habitat']) {
         biology[name] = new Float32Array(25);
     }
@@ -61,7 +61,7 @@ test('local biology round-trips independently of the shared terrain', () => {
 test('crowded plant centers fade while the colony edge remains brighter', () => {
     const biology = Object.create(BiologyGrid.prototype);
     biology.size = 25;
-    for (const name of ['active', 'sand', 'flow', 'plants', 'inhibitor', 'microbeU', 'microbeV',
+    for (const name of ['active', 'sand', 'flow', 'plants', 'inhibitor', 'microbeU', 'microbeV', 'microbeSeeds',
         'nearby', 'scratch', 'nextPlants', 'nextInhibitor', 'nextU', 'nextV', 'habitat']) {
         biology[name] = new Float32Array(625);
     }
@@ -75,7 +75,6 @@ test('crowded plant centers fade while the colony edge remains brighter', () => 
         }
     }
     const center = 12 * biology.size + 11;
-    const edge = center - 1;
     for (let i = 0; i < 10; i++) biology.updateColonies(0.2);
     assert.ok(biology.inhibitor[center] > 0.1);
     assert.ok(biology.plants[center] < 0.6);
@@ -89,7 +88,7 @@ test('crowded plant centers fade while the colony edge remains brighter', () => 
 test('microorganisms spread farther than plants under the same conditions', () => {
     const biology = Object.create(BiologyGrid.prototype);
     biology.size = 7;
-    for (const name of ['active', 'sand', 'flow', 'plants', 'inhibitor', 'microbeU', 'microbeV',
+    for (const name of ['active', 'sand', 'flow', 'plants', 'inhibitor', 'microbeU', 'microbeV', 'microbeSeeds',
         'nearby', 'scratch', 'nextPlants', 'nextInhibitor', 'nextU', 'nextV', 'habitat']) {
         biology[name] = new Float32Array(49);
     }

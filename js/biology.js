@@ -17,6 +17,7 @@ class BiologyGrid {
         this.inhibitor = new Float32Array(count);
         this.microbeU = new Float32Array(count);
         this.microbeV = new Float32Array(count);
+        this.microbeSeeds = new Float32Array(count);
         this.nearby = new Float32Array(count);
         this.scratch = new Float32Array(count);
         this.nextPlants = new Float32Array(count);
@@ -77,6 +78,7 @@ class BiologyGrid {
                     }
                 }
                 this.microbeV[i] = concentration;
+                this.microbeSeeds[i] = concentration / 0.25;
             }
         }
         this.updateSand();
@@ -151,8 +153,7 @@ class BiologyGrid {
         for (let n = 0; n < steps; n++) {
             for (let i = 0; i < count; i++) {
                 this.habitat[i] = this.active[i] && this.sand[i]
-                    ? Math.max(0, 1 - this.flow[i] / 0.04) * Math.max(0, 1 - this.plants[i] / 0.6) *
-                    (0.55 + 0.45 * Math.min(1, nearby[i] / 0.004)) : 0;
+                    ? Math.max(0, 1 - this.flow[i] / 0.04) * Math.max(0, 1 - this.plants[i] / 0.6) : 0;
             }
             for (let z = 1; z < size - 1; z++) {
                 for (let x = 1; x < size - 1; x++) {
@@ -173,7 +174,7 @@ class BiologyGrid {
                     const wetness = Math.min(1, Math.max(0, (nearby[i] - 0.0008) / 0.008));
                     const bank = this.sand[i] * wetness *
                         Math.min(1, Math.max(0, (0.8 - this.flow[i] / Math.max(nearby[i], 1e-12)) / 0.6));
-                    const reaction = u * v * v * habitat;
+                    const reaction = this.sand[i] * u * v * v;
                     this.nextPlants[i] = Math.max(0, Math.min(1, p + step *
                         (0.15 * lapP + bank * (0.06 + 0.8 * p) * (1 - p) -
                             (0.9 * inhibitor + (this.sand[i] ? 0 : 0.2)) * p)));
@@ -182,7 +183,8 @@ class BiologyGrid {
                     this.nextU[i] = Math.max(0, Math.min(1, u + step *
                         (0.9 * lapU - reaction + 0.046 * (1 - u))));
                     this.nextV[i] = Math.max(0, Math.min(1, v + step *
-                        (0.45 * lapV + reaction - (0.109 + 0.05 * (1 - habitat)) * v)));
+                        (0.45 * lapV + reaction - (0.109 + 0.05 * (1 - habitat)) * v +
+                            0.02 * this.microbeSeeds[i] * habitat)));
                 }
             }
             [this.plants, this.nextPlants] = [this.nextPlants, this.plants];
