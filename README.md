@@ -1,732 +1,528 @@
-# 🌊 Tree of Life - Collaborative Hydromorphodynamic Simulation
+# Tree of Life: a collaborative erosion simulation
 
-> **Current collaboration protocol:** The browser keeps the triangular-mesh
-> physics local and sends only per-vertex elevation deltas to the Cloudflare
-> Worker. The Worker averages one contribution per browser ID for each shared
-> terrain version. Water, sediment, particles, vegetation and microbes remain
-> local to each browser. A browser ID is counted as active for 24 hours.
-> Synchronization is scheduled toward an 80,000-request daily target, with a
-> five-minute minimum interval. This is an application-level target, not a hard
-> Cloudflare quota or protection against arbitrary direct requests.
+**Live site:** <https://laurentperrinet.github.io/2026-11_tree-of-life/>
 
-## Current browser simulation
+Tree of Life is a browser simulation of water carving channels in a sandy bed.
+It was inspired by "Tree of Life" photographs of branching rivulets on Icelandic
+beaches. Each visitor runs the full model locally: 1,500 water parcels move
+across a triangular mesh, erode sand and deposit it again, while vegetation and
+microbial colonies grow on the evolving bed. Visitors share only the bed
+**elevation**. A Cloudflare Worker averages the elevation changes contributed by
+each browser into a common terrain, so everyone sculpts the same landscape.
 
-The browser models an erodible circular bed within a fixed square surround.
-Its solid base forms an inverted cone of radial slope 0.09, with an additional
-0.06 slope across the outermost four units to drain peripheral water, except for a
-channel that widens towards the bottom of the square and slopes down from the
-centre to the sink. Initially the bed is covered by a uniform layer of sand
-0.3 simulation units deep. The outer ring and square surround cannot be eroded,
-but can receive sediment left by evaporating water. The circular edge is a polygon whose
-vertices lie on the disk boundary. The black, non-erodible surround rises
-outwards so water on it flows back towards the disk; the outlet channel remains
-open and slopes down to the sink.
+This is an **exploratory particle model**. It is not a calibrated hydrodynamic
+or morphodynamic solver: it does not solve the shallow-water or Exner equations,
+and branching is encouraged but not guaranteed.
 
-Blue spheres represent 1,500 water parcels, each carrying the same volume as
-before. Older 500- or 1,000-parcel saves retain their water and sediment and
-receive additional sediment-free parcels. Gravity follows the
-local slope of each triangle, with friction. The square boundary reflects water
-except at the sink in the middle of its bottom edge. On reaching the sink, each
-parcel is reintroduced three mesh rings inside the disk at a uniformly random angle,
-retaining its sediment. Independently of the sink, each parcel has a constant
-random hazard of bursting (mean waiting time 90 simulation time units). It
-turns white and fades for 0.8 simulation time units, then is reinjected with
-no sediment. The sand is deposited on the mesh where the parcel evaporated,
-including on the fixed surround. Pausing the
-simulation also pauses this process.
-Parcels can also move over the fixed surround, but
-cannot exchange sand with it. The initial
-parcels are distributed across the bed so the flow is immediately visible.
-Transport capacity increases with speed: moving parcels pick up sand when
-below capacity, and slowing or stationary parcels deposit their load. Parcels
-erode progressively less across the outermost two simulation units of the
-disk, reaching zero at the fixed boundary; deposition remains unrestricted.
-Parcels
-push one another when they overlap; this approximate water pressure helps
-spread accumulations and keep water moving towards the sink. Collision impulses
-can deflect particles. The evolving
-bed affects subsequent paths, so flow can concentrate in eroded channels.
-Sand also avalanches between neighboring mesh vertices when the slope along an
-edge exceeds an angle of repose of 34 degrees. These local transfers conserve
-sand volume and never remove the underlying bedrock. This is a simplified
-granular relaxation, not a full model of wet sand or fluid mechanics.
-A fixed, sloping non-erodible layer limits erosion at each vertex; sediment
-can still accumulate on it inside the disk. Bed
-volume plus carried sediment is conserved by these exchanges and by recycling.
+```text
+ ┌──────────── each browser (local) ────────────┐           ┌──── Cloudflare ─────┐
+ │ water parcels ─► erosion / deposition ─► bed │  delta    │ Worker + Durable    │
+ │                                          │   ├─────────► │ Object "global":    │
+ │ vegetation + microbes (256 × 256 grid) ◄─┘   │           │ mean of the deltas  │
+ │                                              │ ◄─────────┤ per vertex, version │
+ └──────────────────────────────────────────────┘  shared   └─────────────────────┘
+                                                   elevation
+```
 
-`+`/`-` adjust the circulation rate and the arrow keys adjust simulation speed;
-`D` switches between elevation, wireframe mesh, sand depth, flow and sediment views. This is a simplified
-particle model: it does not solve the shallow-water equations or model
-realistic fluid dynamics, and branching is not guaranteed. Remote terrain merges,
-if configured, are external modifications and do not conserve this local
-sediment balance.
+Water, carried sediment, particles, vegetation and microorganisms **never
+leave the browser**. Only the elevation field is shared.
 
-The terrain uses a polar mesh with staggered, variable-density rings and
-approximately hexagonal spacing inspired by sunflower seed patterns. It has
-50,264 vertices and 99,742 triangles, with 125 rings and the
-`disk-square-polar-v2` save topology. Older terrain and local biology saves
-are not loaded, so this resolution change starts a fresh map.
-Test the browser model with `node --test tests/terrain-physics.test.js`.
+---
 
-## Cloudflare collaboration Worker
+## 1. The model
 
-The Worker stores the shared elevation array for the browser's
-`disk-square-polar-v2` mesh in a SQLite-backed Durable Object. Its
-`worker/mesh.mjs` initialization mirrors the mesh vertex order and initial
-bedrock/sand profile used by `js/terrain.js`.
-Terrain saves and shared state record the mesh dimensions and resolution;
-changing the radius, square size, ring count or spacing automatically starts a
-fresh terrain and discards pending contributions. Local biology remains
-independent. Deploy the Worker and browser update together when changing the
-mesh: older clients may be incompatible.
-The steeper peripheral bed profile is migrated without discarding existing
-sand or local particles; pending shared contributions are cleared.
+Lengths are in dimensionless simulation units (u) and times in simulation
+seconds (sim s). Gravity is set to $g = 9.81$, so one unit can be read as one
+metre, but nothing is calibrated against field data. Horizontal positions are
+$(x, z)$ and elevation is vertical, following the Three.js convention ($y$ up).
+The sink lies at $z = +L$, which appears at the bottom of the screen.
 
-Each browser has a random local ID. A single `POST /api/sync` request both
-submits a compressed elevation delta and returns the latest shared state.
-Submissions include a terrain version; the Worker accepts at most one per
-browser and version. After an adaptive collection interval, it applies the
-arithmetic mean of the accepted elevation deltas per vertex. A stale
-contribution is discarded and the browser receives the newer terrain instead.
-Collaborator IDs expire after 24 hours without a sync.
+### 1.1 Equations
 
-The interval is `max(5 minutes, active browsers × 2 × 86,400,000 ms / 80,000)`,
-rounded up to a whole millisecond. The factor of two conservatively budgets a
-possible CORS preflight plus the sync request. This targets no more than 80,000
-sync-related Worker requests/day for a stable, accurately observed
-active-browser count. OAuth, reset and other requests are outside that
-calculation, and public Worker traffic cannot be capped by this client schedule
-alone. Configure Cloudflare-side abuse and quota controls before relying on a
-strict ceiling.
+#### Terrain
 
-Endpoints:
+The bed is a polar triangular mesh. The disk of radius $R$ is filled with $N_r$
+concentric rings, each with about $2\pi r/\Delta s$ vertices, alternately rotated
+by half a sector so that triangles are close to equilateral (a sunflower-like,
+approximately hexagonal packing). Every interior vertex is then displaced by a
+deterministic offset drawn uniformly in a disk of radius $j\,\Delta s$. This
+jitter breaks the alignments of the rings along the cardinal axes, and hence along
+the channel axis, which would otherwise favour some flow directions. The offset
+comes from an integer hash of the vertex index and the seed, so the browser and the
+Worker build bit-identical meshes. The triangulation depends only on ring angles
+and is unchanged by the jitter. The outer ring is not jittered: it is a polygon
+whose vertices lie on the circle, and it is projected radially onto a square of
+half-side $L$ to form a fixed surround. Each vertex $i$ carries an elevation
+
+$$\eta_i = \beta_i + s_i, \qquad s_i \ge 0,$$
+
+where $\beta_i$ is the fixed, non-erodible bedrock and $s_i$ the sand thickness.
+At distance $r = \sqrt{x^2 + z^2}$ from the centre, the bedrock is an inverted
+cone
+
+$$c(r) = S\,\min(r, R) + S_\text{out}\,\max(0, r - R) + S_p\,\operatorname{clip}(r - R + W_p,\ 0,\ W_p),$$
+
+where $S$ is the cone slope, $S_\text{out}$ the slope of the surround and $S_p$ an
+extra slope over the outermost band of width $W_p$, which drains peripheral water
+inwards. Towards the sink ($z > 0$), an outlet channel of half-width
+$w(z) = r_s + f z$ descends from the centre:
+
+$$\beta(x, z) = \begin{cases} c(r) & z \le 0,\\ -S z\,\bigl(1 - \sigma(t)\bigr) + c(r)\,\sigma(t) & z > 0, \end{cases}
+\qquad t = \operatorname{clip}\!\left(\frac{\lvert x\rvert}{w(z)},\ 0,\ 1\right),$$
+
+with the smoothstep $\sigma(t) = t^2(3 - 2t)$, $r_s$ the sink half-width and $f$ the
+channel flare. The bedrock thus rises from $0$ at the centre to $2.49$ u at the
+disk edge and falls to $-2.70$ u at the sink. The initial sand layer is uniform
+except in the channel:
+
+$$\eta_i(0) = \beta_i + D_0\,\phi_i,\qquad
+\phi(x, z) = \begin{cases} 1 & z \le 0 \text{ or } \lvert x\rvert \ge 1.25\,w(z),\\
+0 & z > 0 \text{ and } \lvert x\rvert \le w(z),\\
+\sigma\!\bigl((\lvert x\rvert / w(z) - 1)/0.25\bigr) & \text{otherwise,}\end{cases}$$
+
+where $D_0$ is the initial sand depth and $\phi_i \in [0, 1]$ the sand factor. The
+channel bed ($\phi = 0$) is bare bedrock: it never receives sand. Only the
+48,696 vertices strictly inside the polygon edge are erodible. The edge ring and
+the square surround can receive sediment from evaporating parcels, but they can
+never be eroded.
+
+#### Water parcels
+
+Each parcel $p$ has a position $\mathbf{x}_p$, a velocity $\mathbf{v}_p$ and a
+sediment load $q_p$ (a volume). The elevation is linearly interpolated over the
+triangle containing the parcel with barycentric weights $w_{p,j}$, so the slope
+$\nabla\eta$ is constant on each triangle. One physics step is taken per
+animation frame, with a step
+
+$$\Delta t = \Delta t_0\,\tau\,\frac{Q}{0.5},$$
+
+where $\Delta t_0$ is the base step, $\tau$ the speed factor and $Q$ the
+"flow rate" control. $Q$ does not inject water: it multiplies the step like
+$\tau$, and $Q = 0$ pauses the simulation. Each step is split into
+$n = \lceil \Delta t / (a / v_\max) \rceil$ substeps of length $\delta = \Delta t / n$,
+so that a parcel of radius $a$ travels less than one radius per substep. In each
+substep:
+
+$$\mathbf{v}_p \leftarrow \bigl(\mathbf{v}_p - g\,\nabla\eta\,\delta\bigr)\,e^{-k\delta},\qquad
+\mathbf{v}_p \leftarrow \mathbf{v}_p\,\min\!\left(1, \frac{v_\max}{\lVert\mathbf{v}_p\rVert}\right),\qquad
+\mathbf{x}_p \leftarrow \mathbf{x}_p + \mathbf{v}_p\,\delta,$$
+
+where $k$ is a linear friction rate and $v_\max$ a speed cap. The square walls
+$\lvert x\rvert = L$ and $\lvert z\rvert = L$ reflect parcels, except for the sink:
+the segment $\lvert x\rvert < r_s$ of the wall $z = L$.
+
+**Pressure.** Overlapping parcels ($d < 2a$, unit normal $\mathbf{n}$ from the
+other parcel $o$ to $p$) exchange equal and opposite impulses
+
+$$J = \min\bigl(0.25,\ 6\,(2a - d)\,\delta\bigr) + 0.55\,\max\bigl(0,\ -(\mathbf{v}_p - \mathbf{v}_o)\cdot\mathbf{n}\bigr),
+\qquad \mathbf{v}_p \mathrel{+}= J\mathbf{n},\quad \mathbf{v}_o \mathrel{-}= J\mathbf{n}.$$
+
+This soft repulsion stands in for water pressure. It spreads accumulations and keeps
+water moving towards the sink.
+
+#### Sediment exchange
+
+A parcel's transport capacity grows with its speed above a threshold $v_c$:
+
+$$C_p = V_p\,K\,\max\bigl(0,\ \lVert\mathbf{v}_p\rVert - v_c\bigr),$$
+
+where $V_p$ is the water volume per parcel and $K$ the capacity coefficient. The
+parcel relaxes its load towards capacity:
+
+$$E = (C_p - q_p)\bigl(1 - e^{-\lambda\delta}\bigr),\qquad
+\lambda = \begin{cases} 2 & \lVert\mathbf{v}_p\rVert < v_c,\\ 0.3 & \text{otherwise.}\end{cases}$$
+
+A slowing parcel ($\lVert\mathbf{v}_p\rVert < \lVert\mathbf{v}_p^-\rVert$) deposits at
+least the fraction of its load it lost in speed,
+$E \leftarrow \min\bigl(E,\ -q_p(1 - \lVert\mathbf{v}_p\rVert / \lVert\mathbf{v}_p^-\rVert)\bigr)$,
+and never deposits more than it carries ($E \ge -q_p$). The exchange is shared
+among the erodible vertices $j$ of the triangle:
+
+$$\eta_j \leftarrow \max\!\left(\beta_j,\ \eta_j - \frac{E\,w_{p,j}\,\phi_j\,e_j}{A_j}\right),\qquad
+e_j = \begin{cases} \sigma\!\bigl(\operatorname{clip}((R - r_j)/W_e,\ 0,\ 1)\bigr) & E > 0,\\ 1 & E \le 0,\end{cases}$$
+
+where $A_j$ is the lumped vertex area (one third of each adjacent triangle) and
+$e_j$ fades erosion to zero over the outer band of width $W_e$. The load is then
+updated with the volume that was **actually** removed or added,
+$q_p \leftarrow \max\bigl(0,\ q_p + \sum_j A_j(\eta_j^- - \eta_j)\bigr)$, so the
+bedrock floor cannot create or destroy sand.
+
+#### Sand avalanches
+
+After every substep, the sand relaxes towards the angle of repose $\theta_r$. For
+each mesh edge between two erodible vertices, with $h$ the higher vertex, $l$ the
+lower one ($\phi_l > 0$) and $\ell_{hl}$ the edge length:
+
+$$\epsilon = \eta_h - \eta_l - \tan\theta_r\,\ell_{hl},\qquad
+m = \min\!\left(s_h A_h,\ \frac{(1 - e^{-20\delta})\,\epsilon}{1/A_h + 1/A_l}\right)\ \text{ if } \epsilon > 0,$$
+
+and the volume $m$ moves from $h$ to $l$. Four sweeps over the 150,005 edges,
+alternately forwards and backwards, are made per substep. This is a simple
+granular relaxation, not a model of wet sand.
+
+#### Recycling: sink and evaporation
+
+- **Sink.** A parcel crossing the sink is counted and reinjected, at rest and
+  **with its load**, three ring spacings inside the disk edge
+  ($r = R_\text{edge}(\theta) - 3R/N_r$) at a uniformly random angle $\theta$.
+- **Evaporation ("bursting").** In each substep a parcel bursts with probability
+  $1 - e^{-\delta/T_b}$, so each parcel has a mean lifetime $T_b$ between bursts.
+  It stops, turns white and fades over $T_\text{fade}$, then deposits its load on
+  the vertices of its triangle (weights $\propto w_{p,j}\phi_j$, surround
+  included) and is reinjected without sediment. A parcel that bursts inside the
+  sand-free channel keeps its load.
+
+Exchange, avalanches and both recycling paths conserve
+$\sum_i A_i s_i + \sum_p q_p$ exactly (to rounding). Remote merges do not
+(section 1.3).
+
+#### Diagnostic fields
+
+After each step, the parcels are projected onto the vertices for display and
+biology:
+
+$$h_i = \frac{V_p}{A_i}\sum_p w_{p,i},\qquad c_i = \frac{1}{A_i}\sum_p q_p\,w_{p,i},\qquad
+\mathbf{u}_i = \sum_p w_{p,i}\,\mathbf{v}_p,\qquad \Phi_i = h_i\,\lVert\mathbf{u}_i\rVert,$$
+
+where $h_i$ is the water depth, $c_i$ the suspended sediment, $\mathbf{u}_i$ the
+weighted velocity and $\Phi_i$ the water flux.
+
+#### Biology: vegetation and microbial colonies
+
+Biology lives on a regular $256 \times 256$ grid of spacing $\Delta = 2R/255$,
+finer than the mesh. It is restricted to cells inside the disk whose triangle is
+fully erodible. Each cell interpolates the bed and has a sand mask
+$m_i = [\eta > \beta]$. Every frame, a flow memory $F$ follows the interpolated
+flux with time constant $\tau_F$:
+
+$$F \leftarrow F + \bigl(1 - e^{-\Delta t/\tau_F}\bigr)(\Phi - F).$$
+
+Once at least $0.16$ sim s has accumulated, colonies advance through
+$\lceil 5\,\Delta t_b\rceil$ explicit Euler steps covering $5\,\Delta t_b$ units of
+biological time, where $\Delta t_b$ is the accumulated simulation time. Biology
+therefore runs five times faster than the water. Two
+neighbourhood fields come from repeated decaying max-dilations
+$\mathcal{D}_\gamma[X]_i = \max(X_i,\ \gamma X_j : j \in \mathcal{N}_4(i))$:
+nearby flow $N = \mathcal{D}^4_{0.72}[F]$ and nearby plants
+$N_P = \mathcal{D}^{12}_{0.84}[P]$, the latter spreading through sand only. Then
+
+$$H = m\,(1 - F/0.04)_+\,(1 - P/0.6)_+\,\operatorname{clip}\!\left(\frac{N_P - 0.035}{0.12},\ 0,\ 1\right),\qquad
+B = m\,\operatorname{clip}\!\left(\frac{N - 0.0008}{0.008},\ 0,\ 1\right)\operatorname{clip}\!\left(\frac{0.8 - F/N}{0.6},\ 0,\ 1\right),$$
+
+where $H$ is the microbial habitat (calm, sandy, near but not under plants) and
+$B$ the plant-growth "bank" term (wet surroundings but not the strongest path).
+The four fields evolve as
+
+$$\begin{aligned}
+\dot P &= D_P\,\mathcal{L}P + B\,(0.06 + 0.8P)(1 - P) - \bigl(0.9\,I + 0.2\,(1 - m)\bigr)P,\\
+\dot I &= D_I\,\mathcal{L}I + 0.1\,P - 0.05\,I,\\
+\dot U &= D_U\,\mathcal{L}_H U - [H > 0]\,U V^2 + F_{GS}(1 - U),\\
+\dot V &= D_V\,\mathcal{L}_H V + [H > 0]\,U V^2 - \bigl(F_{GS} + k_{GS} + 0.15\,(1 - H)\bigr)V + 0.06\,\Sigma\,H\,(1 - V/0.15)_+,
+\end{aligned}$$
+
+where $P$ is the vegetation density, $I$ its inhibitor (crowded centres fade while
+colony edges keep growing), $U$ and $V$ the Gray–Scott substrate and microbe
+concentrations, and $\Sigma$ a fixed map of Gaussian seed patches. The diffuse
+source $0.06\,\Sigma H$ lets colonies regrow after extinction. The discrete
+Laplacian $\mathcal{L}X_i = \tfrac14\sum_{j}(X_j - X_i)$ runs over the four
+neighbours, with both cells sandy. $\mathcal{L}_H$ weights each term by
+$\min(H_i, H_j)$, so microbes diffuse only through suitable habitat. All fields are
+clipped to $[0, 1]$.
+
+### 1.2 Variables
+
+Values are the defaults in the code. The terrain parameters are duplicated in
+`worker/mesh.mjs`, which must stay identical to `js/terrain.js`.
+
+**Terrain:** `TerrainGrid` in `js/terrain.js`; `MESH_*` in `worker/mesh.mjs`.
+
+| Symbol | Name in code | Default | Role |
+| --- | --- | --- | --- |
+| $R$ | `radius` | 25 u | Radius of the erodible disk |
+| $L$ | `halfSize` | 30 u | Half-side of the square surround |
+| $N_r$ | `rings` | 125 | Number of concentric rings |
+| $\Delta s$ | `spacing` | 0.2 u | Target vertex spacing along a ring |
+| $j$ | `jitter` (`MESH_JITTER`) | 0.1 | Jitter radius as a fraction of $\Delta s$ (0.02 u) |
+| — | `jitterSeed` (`MESH_JITTER_SEED`) | 2026 | Seed of the deterministic jitter field |
+| $S$ | `slope` | 0.09 | Cone slope and channel descent |
+| $S_\text{out}$ | `surroundSlope` | 0.3 | Slope of the surround beyond $R$ |
+| $S_p$ | `peripheralSlope` | 0.06 | Extra slope over the outer band |
+| $W_p$ | `peripheralWidth` | 4 u | Width of the outer drainage band |
+| $r_s$ | `sinkRadius` | 0.8 u | Sink and channel half-width at $z = 0$ |
+| $f$ | `channelFlare` | 0.12 | Channel widening per unit of $z$ |
+| $D_0$ | `initialSandDepth` | 0.3 u | Initial sand thickness |
+| $\beta_i$ | `bedrock` | from $c$ and $\beta$ above | Non-erodible floor |
+| $\eta_i$ | `elevation` | $\beta_i + D_0\phi_i$ | Bed elevation (the shared field) |
+| $\phi_i$ | `sandDepthFactor()` | 0–1 | Sand factor; 0 on the channel bed |
+| $A_i$ | `vertexArea` | ≈ 0.040 u² (0.030–0.051) | Lumped vertex area |
+| — | `binSize` | 1 u | Spatial hash cell for point location |
+
+The mesh has 50,264 vertices (48,696 erodible), 99,742 triangles and 150,005
+edges, with 784 vertices on the edge ring.
+
+**Water and sediment:** `PhysicsEngine` in `js/physics.js`.
+
+| Symbol | Name in code | Default | Role |
+| --- | --- | --- | --- |
+| $\Delta t_0$ | `dt` | 0.04 sim s | Base step per animation frame |
+| $\tau$ | `timeScale` | 1 (0.1–5, ×1.5 per key) | Speed factor |
+| $Q$ | `Q_inlet` | 0.5 (0–2, ±0.1 per key) | "Flow rate"; scales the step, 0 pauses |
+| $g$ | `g` | 9.81 u sim s⁻² | Gravity along the slope |
+| $k$ | `friction` | 1.8 sim s⁻¹ | Linear velocity damping |
+| $N_p$ | `particleCount` | 1,500 | Number of water parcels |
+| $V_p$ | `waterPerParticle` | 0.02 u³ | Water volume per parcel |
+| $K$ | `transportCapacity` | 6 | Capacity per unit volume and speed |
+| $v_c$ | literal | 0.1 u sim s⁻¹ | Speed threshold for transport |
+| $\lambda$ | literals | 0.3 or 2 sim s⁻¹ | Load relaxation rate (moving or slow) |
+| $W_e$ | `erosionBorderWidth` | 2 u | Band where erosion fades to zero |
+| $a$ | `particleRadius` | 0.105 u | Collision radius (substep criterion) |
+| $v_\max$ | `maxSpeed` | 3 u sim s⁻¹ | Speed cap |
+| $1/T_b$ | `particleHazardRate` | 1/90 sim s⁻¹ | Burst (evaporation) hazard |
+| $T_\text{fade}$ | `burstDuration` | 0.8 sim s | Fade-out duration of a burst |
+| $\tan\theta_r$ | `sandReposeSlope` | tan 34° ≈ 0.675 | Angle of repose |
+| — | literal | 20 sim s⁻¹ | Avalanche relaxation rate |
+| — | `TRANSIT_SAMPLE_LIMIT` | 100 | Trips averaged for the transit time |
+| — | `SAND_THROUGHPUT_WINDOW_SECONDS` | 60 sim s | Window for the particle flow |
+
+With the defaults, $\Delta t = 0.04$ sim s per frame in $n = 2$ substeps, and
+parcels are reinjected at $r = 24.4$ u.
+
+**Biology:** `BiologyGrid` in `js/biology.js`.
+
+| Symbol | Name in code | Default | Role |
+| --- | --- | --- | --- |
+| — | `size` | 256 | Cells per side |
+| $\Delta$ | `spacing` | $2R/255$ ≈ 0.196 u | Cell spacing |
+| $\tau_F$ | literal | 8 sim s | Flow-memory time constant |
+| — | literal | 0.16 sim s | Minimum interval between colony updates |
+| — | literal | 5 | Biological time per simulation second |
+| $D_P$, $D_I$ | literals | 0.15, 0.02 | Plant and inhibitor diffusion (grid units) |
+| $D_U$, $D_V$ | literals | 0.9, 0.45 | Gray–Scott diffusion (grid units) |
+| $F_{GS}$ | literal | 0.046 | Gray–Scott feed rate |
+| $k_{GS}$ | literal (0.109 − 0.046) | 0.063 | Gray–Scott kill rate |
+| $\Sigma$ | `microbeSeeds` | Gaussian patches, amplitude 1 | Inoculum map (3 u lattice) |
+
+**Collaboration:** `worker/index.mjs`, `worker/mesh.mjs` and `js/collaboration.js`.
+
+| Symbol | Name in code | Default | Role |
+| --- | --- | --- | --- |
+| $B$ | `DAILY_REQUEST_BUDGET` | 80,000 requests day⁻¹ | Target sync-related requests |
+| — | `MAX_REQUESTS_PER_SYNC` | 2 | One CORS preflight plus one sync |
+| $T_\text{min}$ | literal | 300,000 ms (5 min) | Minimum sync interval |
+| — | `ACTIVE_CLIENT_MS` | 86,400,000 ms (24 h) | Activity window of a browser ID |
+| $\Delta_\max$ | `MAX_DELTA` | 10 u | Largest accepted change per vertex |
+| — | `MAX_COMPRESSED_BYTES` | 300,000 B | Upload limit; raised automatically only for meshes above ~74,000 vertices |
+| — | literal | 6 h | Maximum retry backoff |
+
+### 1.3 Collaboration as an averaging scheme
+
+Let $\eta^{(v)}$ be the shared elevation at version $v$. Browser $c$ downloads it as
+its base, simulates locally and submits once per version a float32 delta
+$\Delta^{(c)}_i = \eta^{(c)}_i - \eta^{(v)}_i$, gzip-compressed. The first accepted
+contribution opens a collection window of length
+
+$$T = \max\!\left(T_\text{min},\ \left\lceil n_\text{active}\cdot 2\cdot\frac{86{,}400{,}000\ \text{ms}}{B}\right\rceil\right),$$
+
+where $n_\text{active}$ is the number of browser IDs seen in the past 24 h. The
+first sync after the window closes finalises it:
+
+$$\eta^{(v+1)}_i = \max\!\left(\beta_i,\ \eta^{(v)}_i + \frac{1}{N_c}\sum_{c=1}^{N_c}\Delta^{(c)}_i\right),$$
+
+where $N_c$ is the number of accepted contributions. Contributions based on an
+older version are discarded, and the browser receives the newer terrain instead.
+When a browser receives a new version, it **replaces** its local bed with the
+shared one. Local erosion since its last accepted submission is lost, and the
+sediment held by its parcels is no longer balanced by the bed. Averaging reduces
+the weight of any single browser but does not make anonymous input trustworthy.
+
+---
+
+## 2. Using the simulation
+
+The page opens looking straight down at the disk.
+
+| Input | Action | Who |
+| --- | --- | --- |
+| Drag | Orbit the camera around the centre | Everyone |
+| Scroll | Zoom (camera distance 10–100 u) | Everyone |
+| **D** or **View** | Cycle the display mode | Everyone |
+| **+** / **-** | Change $Q$ by ±0.1 (0–2) | Signed-in, `?admin` |
+| **↑** / **↓** | Multiply or divide $\tau$ by 1.5 (0.1–5) | Signed-in, `?admin` |
+| **S** | Sync now, if the adaptive interval has elapsed | Signed-in, `?admin` |
+| **R**, twice within 3 s | Reset the shared terrain | Owner only |
+| **?** | Toggle the control panel | Signed-in, `?admin` |
+
+Touch gestures and double-click are not handled.
+
+### Display modes
+
+| Mode | What is shown |
+| --- | --- |
+| `elevation` (default) | Dark bed with the biology overlay: yellow-green vegetation and ochre-to-purple microbes |
+| `mesh` | Wireframe of the triangular mesh with the parcels, without biology |
+| `sand depth` | Sand thickness in a reversed cmocean *deep* map: dark for bare rock, mid-palette for the initial layer $D_0$, lightest at $2D_0$ or more (`SAND_DEPTH_DISPLAY_MAX`); dimmed lighting |
+| `flux` | Water flux $\Phi_i$, square-root scaled by its current maximum |
+| `sediment` | Suspended sediment $c_i$, square-root scaled by its current maximum |
+
+The fixed surround is black in every mode except `mesh`. Water parcels are drawn
+as flattened blue spheres. A bursting parcel turns white and fades.
+
+### Status bar
+
+The status bar is refreshed at most once per second. Its **❔** button opens the
+same explanations.
+
+| Icon | Indicator | Meaning |
+| --- | --- | --- |
+| 👥 | Collaborators | Browser IDs seen by the Worker in the past 24 h |
+| 🔄 | Last sync | Wall-clock seconds since the last successful sync |
+| ⌛ | Next sync | Wall-clock seconds to the next attempt, including retry backoff; `--` while syncing |
+| 🕰️ | Simulation time | Cumulative sim s in this browser, summed over its tabs and saved every 5 s; not shared, not reset with the terrain |
+| ⏱️ | Transit time | Mean rim-to-sink time over the last 100 trips (bursts excluded) |
+| 💧 | Particle flow | Parcels reaching the sink per sim s, over the last 60 sim s |
+
+### Administration
+
+Open `?admin` (for example
+<https://laurentperrinet.github.io/2026-11_tree-of-life/?admin>) to show the control
+panel, then sign in with GitHub. Any GitHub account unlocks the simulation controls
+for its own browser. Only the owner can reset the shared terrain: the browser
+checks the login `laurentperrinet`, and the Worker independently checks the
+numeric GitHub ID `OWNER_GITHUB_ID`. A reset reinitialises the shared terrain,
+starts a new version, and resets the owner's local particles and biology. The URL
+parameters `?reset=1` and `?reset=1&hard=1` trigger the same reset once the owner
+is signed in. Other browsers adopt the reset terrain at their next sync, but keep
+their own biology.
+
+---
+
+## 3. Collaboration protocol
+
+The Worker (`worker/index.mjs`) routes every terrain request to a single
+SQLite-backed Durable Object named `global`. Its `blockConcurrencyWhile` call
+serialises updates.
 
 | Method and path | Purpose |
 | --- | --- |
-| `GET /api/state` | Read the current shared elevation and version |
-| `POST /api/sync` | Submit one compressed elevation delta and receive shared state |
-| `POST /api/auth/exchange` | Exchange a GitHub OAuth authorization code |
-| `POST /api/admin/reset` | Reset the terrain as the GitHub owner |
+| `GET /api/state` | Current shared elevation and metadata (does not count as activity) |
+| `POST /api/sync` | Heartbeat or contribution; returns the metadata, and the terrain if the version changed |
+| `POST /api/auth/exchange` | Exchange a GitHub OAuth code for a token (holds the client secret) |
+| `POST /api/admin/reset` | Reset the terrain; requires the owner's GitHub bearer token |
 
-Administration uses a bearer token verified against GitHub's `/user` endpoint
-and the configured numeric `OWNER_GITHUB_ID`. The OAuth exchange requires
-`GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` as Worker bindings; the secret
-must never be committed or placed in browser code. The frontend must generate
-and verify a cryptographically random OAuth `state` before exchanging the code,
-use the exact GitHub Pages callback URL, and handle expired tokens. The
-frontend verifies OAuth `state` and uses the exact GitHub Pages callback. To
-enable sign-in, the Worker at
-`https://tree-of-life.laurent-perrinet.workers.dev` must have
-`GITHUB_CLIENT_SECRET` configured as a Cloudflare secret (never in source
-code). The frontend points to its `/api/auth/exchange` endpoint.
-Sign-in requires the GitHub Pages origin; `file://` and localhost cannot use
-the configured callback. A contribution is anonymous and is not independently
-verified; averaging reduces the influence of a single submission but does not
-make public input trustworthy. The Worker shares elevation only; it does not
-claim to average the complete physical state.
-The deployment needs a Cloudflare account, the Durable Object binding in
-`wrangler.toml`, and the three configuration values above. No secret
-should be shared in chat. Do not deploy this prototype as a production service.
+A sync request carries `X-Collaborator-ID` (32 hexadecimal characters, random,
+kept in `localStorage`). It also carries `X-Terrain-Version` and `X-Mesh-Signature`
+once these are known. With a contribution, it adds `X-Payload-Encoding: gzip` and
+a body holding one float32 per vertex. An empty body is a heartbeat. The Worker
+rejects:
 
-Run the local tests from the project root:
+- a signature from another mesh (409);
+- a wrong length, corrupt gzip or oversized body (400 or 413);
+- non-finite values or $\lvert\Delta\rvert > \Delta_\max$;
+- negative changes on non-erodible vertices (deposits on the surround are allowed).
 
-```bash
-npm test
-```
+Only the GitHub Pages origin is allowed by CORS.
 
-These tests use local mocks, not the Cloudflare runtime or a deployed OAuth
-application. Browser-to-Worker behavior still needs end-to-end validation after
-the Worker code is deployed. The older `tests/terrain-physics.test.js` suite
-covers a different browser-model snapshot and is not included in this targeted
-protocol test command.
+The browser follows the interval returned by the Worker, never shorter than
+5 minutes. After a failure it retries with exponential backoff, capped at 6 hours.
+The 80,000-request target holds only for a stable, honestly reporting population.
+OAuth, reset and direct calls are outside it. It is **not** a hard quota:
+configure Cloudflare-side rate limiting before relying on a ceiling.
 
-An interactive web-based simulation of water-driven terrain erosion creating natural branching patterns, inspired by the "Tree of Life" photograph from Iceland. Browsers contribute elevation changes to shared terrain through a Cloudflare Worker.
-
-The current simulation is an exploratory particle model, not a validated hydrodynamic solver.
-In the elevation view, vegetation grows rapidly on sandy ground near sustained
-water flow but away from its strongest paths. Its reaction–diffusion model
-suppresses crowded centers while colony edges continue to grow.
-Ochre-to-purple microorganisms form a separate Gray–Scott reaction–diffusion
-pattern on sandy, low-flow ground near and between plants and spread farther
-than the vegetation. A diffuse, localized source lets colonies regrow after
-extinction without resetting the plants or terrain. Both use a 256×256
-biological grid finer than the terrain mesh. Each visitor's biology is saved
-locally between visits and is never synchronized with shared terrain; resetting
-the terrain also resets that visitor's biology.
-
-## 🎯 Quick Start (5 Minutes)
-
-### For Users
-Just visit: **https://laurentperrinet.github.io/2026-11_tree-of-life/**
-- Observe water parcels eroding and depositing sediment
-- The initial view looks straight down at the center of the disk; drag or scroll to adjust it
-- Press **D** or select **View** to cycle through display modes.
-- Open [the admin view](https://laurentperrinet.github.io/2026-11_tree-of-life/?admin)
-  and sign in with GitHub to access the simulation controls.
-  The URL itself grants no permissions; resetting still requires the authorized
-  GitHub owner.
-
-### For Developers
-```bash
-# Setup locally
-cd ~/2026-11_tree-of-life
-python3 -m http.server 8000
-# Visit http://localhost:8000
-```
-
-### For GitHub Maintainers
-The project is **ready to deploy**. See [Deployment Guide](#-deployment-complete-guide) below.
+**Mesh versioning.** Terrain saves and Worker state carry a mesh signature:
+`disk-square-polar-v2`, $R$, $L$, $N_r$, $\Delta s$, `channel-sand-free-v1`,
+`jitter-v1`, $j$ and the seed. Worker states of schemas 2 and 3 were built on the
+regular mesh, before the jitter, and they are migrated in place. Each vertex keeps its
+sand depth at its jittered position, the steeper peripheral profile is applied and
+sand is removed from the channel. Any other mismatch, such as a change of mesh
+dimensions, resets the shared terrain and discards pending contributions. Deploy
+the Worker and the site together whenever the mesh changes.
 
 ---
 
-## 🎨 Concept
-
-This project visualizes how flowing water carrying sediment creates self-similar branching patterns across different scales:
-- **Beach scale**: Rivulets forming in wet sand during outflow
-- **Mountain scale**: Glacial meltwater valleys and avalanche chutes  
-- **Desert scale**: Ephemeral gully networks
-
-The simulation runs in your browser and contributes elevation changes to shared
-terrain stored by the Cloudflare Worker.
-
-**Key Innovation**: Natural branching emerges from physics—no explicit branching algorithm!
-
-## 🌊 Physics Engine
-
-### Model and parameters
-
-The browser uses Lagrangian water parcels on a triangular terrain mesh. Gravity
-accelerates each parcel down the local slope; friction damps its velocity.
-Moving parcels erode sand when below transport capacity and deposit sediment
-when slowing down. Neighboring vertices relax when their slope exceeds the
-angle of repose. This exploratory particle model is not a shallow-water or
-Exner-equation solver, and branching is not guaranteed.
-
-| Parameter | Keyboard | Default | Effect |
-|-----------|----------|---------|--------|
-| **Q_inlet** (flow rate) | **+** / **-** | 0.5 | Water-parcel circulation rate |
-| **timeScale** | **↑** / **↓** | 1 | Simulation speed multiplier |
-| Gravity | fixed | 9.81 | Acceleration along the terrain slope |
-| Friction | fixed | 1.8 | Velocity damping |
-| Transport capacity | fixed | 6 | Sediment load capacity |
-
-### Why Branching Forms Naturally
-
-```
-Feedback Loop:
-  More water → Deeper channel
-     ↓
-  Deeper channel → Redirected particle paths
-     ↓
-  More parcels follow the channel
-     ↓
-  More erosion along those paths
-     ↓
-  More erosion → Even deeper channel
-     ↓
-  [LOOP] = Self-organizing branching network!
-```
-
-No explicit branching code is used.
-
-## 🎮 Complete Controls Reference
-
-### Keyboard Shortcuts
-
-The **D** display shortcut and **View** button are available to everyone.
-The control panel appears with `?admin`; sign in with GitHub before its other
-simulation controls and keyboard shortcuts become available. Reset remains
-restricted to the authorized GitHub owner.
-
-| Key | Action | Notes |
-|-----|--------|-------|
-| **+** / **-** | Increase/decrease flow (Q) | Larger Q = more water input per step |
-| **↑** / **↓** | Increase/decrease simulation speed | |
-| **D** | Cycle display mode | Elevation → mesh → sand depth → flux → sediment |
-| **S** | Request synchronization with the Worker | Respects the adaptive minimum interval |
-| **R** | Reset terrain (authentication required) | Press twice to confirm. Shows "Converged?" first |
-| **?** | Show/hide help panel | Available in the admin view |
-
-### Mouse Controls
-
-| Gesture | Action |
-|---------|--------|
-| **Drag** | Rotate 3D terrain view |
-| **Scroll** | Zoom in/out |
-| **Double-click** | Reset camera view |
-
-### Display Modes (Press **D** or select **View**)
-
-The current mode appears briefly in the center when it changes:
-**elevation** (default), **mesh** (wireframe with particles), **sand depth**,
-**flux**, then **sediment**. Sand depth uses reduced lighting to avoid
-overexposing the pale colors on steep channel banks.
-
-### Status Bar (Bottom)
-
-Shows real-time statistics:
-- **Collaborators (24 h)**: Browser IDs seen by the Worker in the past day
-- **Last Sync**: Seconds since this browser last contacted the Worker
-- **Next sync**: Wall-clock seconds until the next scheduled attempt, including retry backoff.
-- **Simulation time**: Cumulative simulated seconds across visits and tabs in this
-  browser, stored locally every five seconds from the introduction of this counter.
-  It is not a global time for the shared terrain and is not reset when the terrain
-  is reset. Clearing browser storage erases it.
-- **Transit time**: Mean simulation time for the last 100 water parcels reaching the sink.
-- **Particle flow**: Water parcels reaching the sink per simulation second,
-  averaged over the last 60 simulation seconds (or since startup).
-
-Open the **?** in the status bar for details on all indicators and collaboration.
-
-## 🔗 Collaboration Guide
-
-### How Your Changes Are Saved
-
-```
-Browser A ── elevation delta ─┐
-Browser B ── elevation delta ─┼─→ Cloudflare Worker
-Browser C ── elevation delta ─┘         │
-                                        ├─ averages deltas per vertex
-Each browser ←─ shared elevation/version┘
-```
-
-### Averaging and request budget
-
-- Each browser submits at most one elevation delta per shared terrain version.
-- The Worker averages accepted deltas at each mesh vertex; it does not merge
-  complete terrain states with a max-height rule.
-- Water depth, sediment, particles, vegetation and microorganisms remain
-  browser-local and are not averaged.
-- A random browser ID is kept in localStorage. The Worker considers it active
-  for 24 hours after its last sync.
-- Each sync request both submits a contribution and returns the latest state.
-  The interval starts at five minutes and grows with the active-browser count
-  toward an 80,000-request daily target.
-- The schedule is not an absolute quota: direct public Worker calls and
-  administration/OAuth requests are not constrained by the browser cadence.
-
-### Authentication & Reset Permissions
-
-**Who can reset?**
-- Only @laurentperrinet (you!) can reset terrain
-- Requires GitHub OAuth login
-- Token stored in **sessionStorage** (cleared when tab closes, never persisted)
-
-**How to reset:**
-1. Press **R** twice to confirm (first press shows current status)
-2. See toast notification: "Reset initiated"
-3. Choose **Soft** (clear cache) or **Hard** (reinitialize cirque)
-4. Terrain reloads from GitHub
-
-**Reset URL parameters** (for direct testing):
-- `?reset=1` - Soft reset
-- `?reset=1&hard=1` - Hard reset
-- Requires authenticated session (OAuth login)
-
-### Convergence Detection
-
-The simulation detects when patterns stabilize:
-
-```
-Energy:  E(t) = Σ (u² + v²) * h  [total kinetic energy]
-Status:  "Converged" when ΔE < 5% for 30 seconds
-Effect:  Reset button becomes available
-Purpose: Prevents stuck patterns, allows fresh start
-```
-
-Read the energy value in status badge—lower = more converged.
-
-## 📁 Project Structure & File Guide
-
-### Core Application
-
-```
-index.html                      # Main entry point - Canvas + UI structure
-css/style.css                   # Styling - Dark theme, responsive, animations
-js/main.js                      # App orchestrator - Initializes all modules
-```
-
-### Simulation Modules
-
-```
-js/terrain.js                   # TerrainGrid class - 2D state management
-                                # Contains: elevation(h), velocity(u,v), sediment(c)
-                                
-js/physics.js                   # Water parcels, sediment transport, slope
-                                # relaxation and local energy calculation
-                                
-js/renderer.js                  # Renderer class - Three.js visualization
-                                # Updates mesh, applies colors, handles display modes
-```
-
-### Collaboration & Auth
-
-```
-js/collaboration.js             # Cloudflare sync, compressed elevation deltas,
-                                # browser identity and adaptive request cadence
-worker/index.mjs                # Shared state, per-version contribution averaging
-worker/mesh.mjs                 # Shared mesh initialization and request-budget formula
-
-js/auth.js                      # AuthManager - GitHub OAuth2 flow
-                                # ResetManager - Reset logic & permissions
-                                # Only @laurentperrinet can reset
-```
-
-### User Interface & Input
-
-```
-js/controls.js                  # ControlHandler - Keyboard + mouse input
-                                # Maps keys to physics parameters
-                                
-js/ui.js                        # UIManager - Status badge, toasts, help
-                                # Real-time statistics display
-                                
-js/local-storage.js             # LocalStorage class - Browser persistence
-                                # Caches local simulation state
-```
-
-### Persistent Data
-
-```
-data/terrain.json               # Legacy GitHub persistence prototype; not used
-                                # by the current collaboration protocol
-worker/                         # Shared elevation state and Durable Object
-```
-
-### Configuration & Deployment
-
-```
-package.json                    # Project metadata (no npm dependencies!)
-.github/workflows/deploy.yml    # GitHub Actions - Auto-deploy to Pages
-.nojekyll                       # GitHub Pages config (skip Jekyll)
-.gitignore                      # Standard build/node_modules patterns
-LICENSE                         # MIT License
-```
-
-### Documentation
-
-```
-README.md                       # This file - Complete user & dev guide
-START_HERE.md                   # 5-minute quick start guide
-DEPLOYMENT.md                   # Detailed GitHub Pages setup
-CODE_MAP.md                     # Navigate the codebase
-CONTRIBUTING.md                 # How to contribute
-PERFORMANCE.md                  # Optimization strategies
-FILES_MANIFEST.md               # What each file does
-PROJECT_CHECKLIST.md            # Completion status
-SUMMARY.md                      # Technical overview
-```
-
-### File Sizes
-
-```
-JavaScript:       ~77 KB  (core logic)
-CSS:             ~13 KB  (styling)
-HTML:             ~2 KB  (structure)
-terrain.json:   ~500 KB  (shared data - largest)
-Documentation:  ~25 KB  (guides)
-Total:          ~617 KB  (with terrain.json)
-```
-
-## 🚀 Deployment: Complete Guide
-
-### Prerequisites
-
-- GitHub account (@laurentperrinet)
-- Git installed locally
-- GitHub CLI (`gh`) installed (optional, but recommended)
-- Modern web browser
-
-### Option A: Using GitHub CLI (Fastest)
-
-```bash
-cd ~/2026-11_tree-of-life
-
-# Create GitHub repository
-gh repo create 2026-11_tree-of-life \
-  --public \
-  --source=. \
-  --remote=origin \
-  --push
-
-# That's it! Repo is created, pushed, and ready.
-# Now enable GitHub Pages...
-```
-
-### Option B: Manual Setup
-
-```bash
-cd ~/2026-11_tree-of-life
-
-# Create repo on GitHub.com first, then:
-git remote add origin https://github.com/laurentperrinet/2026-11_tree-of-life.git
-git branch -M main
-git push -u origin main
-```
-
-### Step 1: Enable GitHub Pages
-
-1. Go to: `https://github.com/laurentperrinet/2026-11_tree-of-life/settings/pages`
-2. **Source**: Select `main` branch
-3. **Folder**: Select `/ (root)`
-4. Click **Save**
-5. Wait 2-3 minutes for deployment
-6. Your site will be live at:
-   ```
-   https://laurentperrinet.github.io/2026-11_tree-of-life/
-   ```
-
-### Step 2: Create OAuth Application
-
-1. Go to: `https://github.com/settings/developers`
-2. Click **Developer settings** → **OAuth Apps** → **New OAuth App**
-3. Fill in the form:
-   - **Application name**: `Tree of Life`
-   - **Homepage URL**: `https://laurentperrinet.github.io/2026-11_tree-of-life/`
-   - **Authorization callback URL**: `https://laurentperrinet.github.io/2026-11_tree-of-life/`
-4. Click **Register application**
-5. Copy the **Client ID** (you'll need this next)
-
-### Step 3: Configure OAuth Client ID
-
-1. Edit `js/main.js` in your repo
-2. Find line ~15 where it says: `clientId: 'YOUR_GITHUB_OAUTH_CLIENT_ID'`
-3. Replace with your Client ID from Step 2:
-   ```js
-   clientId: 'YOUR_ACTUAL_CLIENT_ID_HERE'
-   ```
-4. Save and commit:
-   ```bash
-   git add js/main.js
-   git commit -m "Configure OAuth Client ID"
-   git push
-   ```
-5. GitHub Actions auto-deploys (takes ~1 min)
-6. Wait another minute, then refresh your site
-7. Login should now work!
-
-### Verification Checklist
-
-- [ ] GitHub repo created at `github.com/laurentperrinet/2026-11_tree-of-life`
-- [ ] GitHub Pages enabled (check Settings → Pages)
-- [ ] Site accessible at `https://laurentperrinet.github.io/2026-11_tree-of-life/`
-- [ ] OAuth app created in GitHub Developer settings
-- [ ] Client ID configured in `js/main.js`
-- [ ] Can login via GitHub (top-right "Login" button)
-- [ ] Simulation runs and displays 3D terrain
-- [ ] Can adjust flow rate with **Q**/**E** keys
-- [ ] Reset button appears when converged + logged in
-- [ ] Shared elevation syncs through the Cloudflare Worker
-
-### Troubleshooting Deployment
-
-**Site not loading?**
-- Check: GitHub Pages enabled in Settings → Pages
-- Check: `.nojekyll` file exists (prevents Jekyll from interfering)
-- Check: Browser console (F12) for errors
-
-**OAuth not working?**
-- Check: Client ID in `js/main.js` matches GitHub OAuth app
-- Check: Callback URL in OAuth app matches deployed site URL
-- Check: Browser console for "CORS" errors (usually means wrong Client ID)
-
-**Terrain not syncing?**
-- Check the browser console for Cloudflare Worker/CORS errors
-- Confirm the Worker has a SQLite-backed Durable Object binding
-- Use **S** in the admin view; it respects the adaptive sync interval
-
-**Performance issues?**
-- Grid too large? Check `js/terrain.js` line ~20 for `gridSize`
-- Too many updates? Check the active-browser cadence in `worker/mesh.mjs`
-- See PERFORMANCE.md for detailed optimization guide
-
-## 📊 Technical Specifications
-
-### Performance Targets
-
-```
-Terrain:            Staggered polar triangular mesh
-FPS Target:         60 frames/second
-Timestep:           0.04 s, scaled by the local speed control
-Stability Check:    Particle travel is substepped below particle radius
-Sync Overhead:      Adaptive; minimum 5 minutes per browser
-Request Target:     80,000 collaboration requests/day
-```
-
-### Browser Compatibility
-
-✅ **Supported:**
-- Chrome/Chromium 90+
-- Firefox 88+
-- Safari 14+
-- Edge 90+
-
-⚠️ **Not Supported:**
-- Internet Explorer (WebGL required)
-- Older mobile browsers (memory constraints)
-
-### Scaling Path
-
-| Mesh | FPS Target | Status |
-|------|------------|--------|
-| Polar triangular mesh | Device-dependent | Current |
-
-See PERFORMANCE.md for scaling details.
-
-## 🔬 Scientific Background
-
-### Shallow Water Equations
-
-These equations model fluid flow with vertical averaging:
-
-```
-∂u/∂t + u·∇u = -g∇(h+z) - c|u|u
-∂v/∂t + v·∇v = -g∇(h+z) - c|v|v
-∂h/∂t + ∇·(hu,hv) = 0
-```
-
-Where:
-- **u, v**: Horizontal flow velocity (m/s)
-- **h**: Water depth (m)
-- **z**: Bed elevation (m)
-- **g**: Gravity (9.81 m/s²)
-- **c**: Friction coefficient (Manning's n)
-
-**Assumptions:**
-- Vertical velocity negligible (sh doesn't change rapidly)
-- Hydrostatic pressure
-- Uniform depth (no surface gradients within a cell)
-
-**Valid for:**
-- Shallow water depths (h << wavelength)
-- Moderate slopes (∇z small)
-- Not applicable for deep oceans or steep mountain streams
-
-### Sediment Transport (Exner Equation)
-
-The Exner equation governs bed elevation change:
-
-```
-∂z/∂t = -∇·q_s
-q_s = c_s * u  [sediment flux]
-c_s = α * (τ_b - τ_c)^β  [suspended sediment concentration]
-```
-
-Where:
-- **z**: Bed elevation (m)
-- **q_s**: Sediment flux vector (m³/s per unit width)
-- **c_s**: Suspended sediment concentration (fraction)
-- **τ_b**: Bed shear stress
-- **τ_c**: Critical shear stress for motion
-- **α, β**: Empirical parameters
-
-**Implementation simplification**: 
-```
-c_s ≈ k * |u|  [linear approximation]
-∂z/∂t = -∇·(c_s * u)  [erosion rate]
-```
-
-### Numerical Scheme
-
-**Explicit Finite Difference:**
-- Grid: Arakawa C-grid (staggered)
-- Time: Forward Euler (explicit)
-- Space: Central differences (2nd order)
-
-**CFL Stability Condition:**
-```
-dt ≤ dx / (max|u| + √(gh))  [Courant condition]
-```
-
-We enforce this dynamically—if violated, we reduce dt automatically.
-
-### References
-
-- Exner, F. M. (1925). "Über die Wechselwirkung zwischen Wasser und Geschiebe"
-- de Saint-Venant, B. (1871). "Théorie du mouvement non-permanent des eaux"
-- Shallow water equations: https://en.wikipedia.org/wiki/Shallow_water_equations
-- Sediment transport: https://en.wikipedia.org/wiki/Sediment_transport
-
-## 🔮 Future Enhancements
-
-### Short Term (Months)
-
-- [ ] **Multiple water sources** - Rain field instead of single inlet
-- [ ] **Wind erosion** - Aeolian processes on dry terrain
-- [ ] **Flow visualization** - Overlay velocity vectors on terrain
-- [ ] **Offline mode** - Run without GitHub (local-only)
-- [ ] **Replay system** - Play back terrain evolution from git history
-
-### Medium Term (Quarters)
-
-- [ ] **Multiplayer WebSockets** - Real-time sync instead of GitHub polling
-- [ ] **Statistics dashboard** - Channel count, branching metrics, volume eroded
-- [ ] **Terrain presets** - Glacial, desert, tropical terrain shapes
-- [ ] **Custom parameters UI** - Adjust physics without editing code
-- [ ] **Cross-section view** - 2D profile through 3D terrain
-
-### Long Term (Years)
-
-- [ ] **WebGL compute shaders** - Support 256×256+ grids
-- [ ] **Particle rendering** - Visualize water particles
-- [ ] **Global collaboration** - Public terrain that anyone can edit
-- [ ] **Physics learning game** - Educational mode with quizzes
-- [ ] **Academic paper** - Publish methodology & results
-
-## 🤝 Contributing
-
-This project welcomes contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for:
-- How to contribute code
-- Community guidelines
-- Feature ideas
-- Code style standards
-
-**Types of contributions:**
-1. **Playing = Contributing** - Just run the simulation, your erosion persists!
-2. **Code contributions** - Fork, branch, submit PR
-3. **Documentation** - Improve guides, fix typos
-4. **Bug reports** - Found an issue? Open an issue on GitHub
-
-## 🔓 License
-
-MIT License - Free to use, modify, distribute.
-
-```
-Copyright (c) 2026 Laurent Perrinet
-
-Permission is hereby granted, free of charge...
-[See LICENSE file for full text]
-```
-
-## 📞 Support & Questions
-
-- **How do I deploy this?** → See [Deployment Guide](#-deployment-complete-guide) above
-- **How does the physics work?** → See [Scientific Background](#-scientific-background)
-- **Where is code for X?** → See [CODE_MAP.md](CODE_MAP.md)
-- **Can I modify/extend it?** → See [CONTRIBUTING.md](CONTRIBUTING.md)
-- **Found a bug?** → Open an issue on GitHub
-
-## 🌍 Related Projects
-
-- [retipuj](https://laurentperrinet.github.io/retipuj/) - Similar interactive simulation (author's previous work)
-- [Shallow Water Simulator](https://github.com/topics/shallow-water-simulation) - Other implementations
-- [Landscape Evolution Models](https://github.com/topics/geomorphology) - Academic simulations
-
-## 🎓 Learning Resources
-
-If you want to understand the physics better:
-
-- **Shallow water equations**: https://en.wikipedia.org/wiki/Shallow_water_equations
-- **Sediment transport**: https://en.wikipedia.org/wiki/Sediment_transport
-- **Geomorphology**: https://en.wikipedia.org/wiki/Geomorphology
-- **Three.js tutorial**: https://threejs.org/docs/
-- **GitHub API docs**: https://docs.github.com/en/rest
+## 4. What is stored where
+
+| Store | Key | Content | Lifetime |
+| --- | --- | --- | --- |
+| Durable Object | `state` | Shared elevation, bedrock, version, active IDs, pending sum of deltas | Permanent |
+| `localStorage` | `tree-of-life-terrain-disk-v12` | Elevation, water, sediment and particles (format `13.0`); saved when a new shared version arrives and after a reset | Ignored after 24 h |
+| `localStorage` | `tree-of-life-local-biology-v2` | Plants, inhibitor, $U$, $V$, quantised to 16 bits | Saved every 5 s and on exit |
+| `localStorage` | `tree-of-life-collaborator-id` | Random browser ID | Until storage is cleared |
+| `localStorage` | `tree-of-life-simulation-time-v1:<uuid>` | Simulation time of one tab | Summed over all tabs |
+| `sessionStorage` | `github-oauth-token`, `tree-of-life-oauth-state` | GitHub token and OAuth `state` | Until the tab closes |
+
+Terrain saves from formats `10.0` to `12.0` were made on the regular mesh. They
+are migrated on load: the bedrock of their time is subtracted at the regular
+positions, and their sand is laid back on the current, jittered bedrock, without
+the channel. A save that still holds per-vertex vegetation and microbe
+arrays (the former biology) is resampled once onto the 256 × 256 grid, if no
+biology save exists yet.
 
 ---
 
-**Version**: 1.0.0  
-**Created**: November 16, 2026  
-**Last Updated**: November 16, 2026  
-**Live Demo**: https://laurentperrinet.github.io/2026-11_tree-of-life/  
-**GitHub Repo**: https://github.com/laurentperrinet/2026-11_tree-of-life  
-**Author**: Laurent Perrinet (@laurentperrinet)
+## 5. Code layout
+
+```text
+index.html               Page, status bar, help dialogue; loads Three.js r128 from cdnjs
+css/style.css            Dark full-screen layout, status bar, dialogues, toasts
+js/terrain.js            TerrainGrid: polar mesh, bedrock, sand profile, point location, save format
+js/physics.js            PhysicsEngine: parcels, collisions, sediment exchange, avalanches, recycling
+js/biology.js            BiologyGrid: flow memory, vegetation, Gray–Scott microbes, compact save
+js/renderer.js           TerrainRenderer: Three.js meshes, display modes, instanced parcels
+js/collaboration.js      CollaborativeSync: browser ID, gzip deltas, schedule, backoff, reset call
+js/auth.js               AuthManager (GitHub OAuth through the Worker), ResetManager
+js/local-storage.js      LocalStorageManager, SimulationTimeTracker, SessionStorageManager
+js/controls.js           InputControls: keyboard and mouse
+js/ui.js                 UIManager: status bar, toasts, admin panel, reset confirmation
+js/main.js               Application: wiring, start-up order, animation loop, autosave
+worker/index.mjs         Cloudflare Worker and the Simulation Durable Object
+worker/mesh.mjs          Mesh and sand profile mirrored from js/terrain.js; sync interval formula
+tests/*.test.js          Browser modules run in node:vm with DOM mocks
+worker/index.test.mjs    Worker protocol with a mocked Durable Object
+wrangler.toml            Worker name, public variables, Durable Object binding and migration
+.github/workflows/       GitHub Pages deployment of the repository root
+```
+
+The browser modules are classic scripts that share globals, in the order of
+`index.html`. There is no build step. See [CODE_MAP.md](CODE_MAP.md) for a
+function-level map.
+
+---
+
+## 6. Running and testing
+
+```bash
+npx http-server -p 8000 -c-1      # or: python3 -m http.server 8000
+# open http://localhost:8000
+npm test                          # node --test tests/*.test.js worker/*.test.mjs
+```
+
+A local page runs the simulation stand-alone. CORS admits only the GitHub Pages
+origin and the OAuth callback is the production URL, so synchronisation and sign-in
+fail locally. The tests cover mesh geometry, sediment conservation, avalanches,
+recycling, save migrations, biology, the camera and UI, OAuth, the collaboration
+client and the Worker protocol. They use mocks, not the Cloudflare runtime. The
+physics suite takes about five minutes.
+
+---
+
+## 7. Documentation
+
+| File | Purpose |
+| --- | --- |
+| [START_HERE.md](START_HERE.md) | Five-minute orientation for visitors, the owner and developers |
+| [SUMMARY.md](SUMMARY.md) | One-page technical summary and design history |
+| [CODE_MAP.md](CODE_MAP.md) | Where each mechanism lives, function by function |
+| [FILES_MANIFEST.md](FILES_MANIFEST.md) | Every file in the repository and what uses it |
+| [README_DEV.md](README_DEV.md) | Development set-up, conventions, save formats and mesh changes |
+| [DEVELOPMENT.md](DEVELOPMENT.md) | Troubleshooting |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | GitHub Pages, Cloudflare Worker and OAuth configuration |
+| [PERFORMANCE.md](PERFORMANCE.md) | Measured costs and optimisation options |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How visitors and developers contribute |
+| [PROJECT_CHECKLIST.md](PROJECT_CHECKLIST.md) | What is done, known limitations and open work |
+| `.DEPLOYMENT_STATUS.txt` | Deployment configuration recorded in the repository and checks to run |
+
+---
+
+## Licence
+
+MIT. See [LICENSE](LICENSE). © 2026 Laurent Perrinet.

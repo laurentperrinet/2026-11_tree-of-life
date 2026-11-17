@@ -1,11 +1,12 @@
-import { createInitialMesh, getSyncIntervalMs, MESH_SIGNATURE } from './mesh.mjs';
+import {
+    createInitialMesh, getSyncIntervalMs, LEGACY_MESH_SIGNATURE, MESH_SIGNATURE
+} from './mesh.mjs';
 
 const ACTIVE_CLIENT_MS = 24 * 60 * 60 * 1000;
 const DAILY_REQUEST_BUDGET = 80_000;
 const MAX_COMPRESSED_BYTES = 300_000;
 const MAX_DELTA = 10;
-const STATE_SCHEMA_VERSION = 3;
-const LEGACY_MESH_SIGNATURE = JSON.stringify(['disk-square-polar-v2', 25, 30, 125, 0.2]);
+const STATE_SCHEMA_VERSION = 4;
 const ORIGIN = 'https://laurentperrinet.github.io';
 const FRONTEND_URL = `${ORIGIN}/2026-11_tree-of-life/`;
 
@@ -230,7 +231,7 @@ export class Simulation {
 
     async loadState() {
         const stored = await this.ctx.storage.get('state');
-        if ([2, STATE_SCHEMA_VERSION].includes(stored?.schemaVersion) &&
+        if ([2, 3, STATE_SCHEMA_VERSION].includes(stored?.schemaVersion) &&
             stored.elevation instanceof Float64Array &&
             stored.bedrock instanceof Float64Array &&
             stored.sumDelta instanceof Float64Array &&
@@ -239,20 +240,26 @@ export class Simulation {
             stored.activeClients && typeof stored.activeClients === 'object' &&
             stored.contributions && typeof stored.contributions === 'object' &&
             Array.isArray(stored.contributionIds)) {
-            const matchesMesh = stored.meshSignature === MESH_SIGNATURE ||
-                (stored.meshSignature === undefined && MESH_SIGNATURE === LEGACY_MESH_SIGNATURE);
-            if (matchesMesh && stored.schemaVersion === STATE_SCHEMA_VERSION) return stored;
-            if (matchesMesh && stored.schemaVersion === 2) {
-                const oldMesh = createInitialMesh(0);
+            if (stored.meshSignature === MESH_SIGNATURE &&
+                stored.schemaVersion === STATE_SCHEMA_VERSION) return stored;
+            const previousMesh = stored.meshSignature === LEGACY_MESH_SIGNATURE ||
+                stored.meshSignature === undefined;
+            if (previousMesh && [2, 3].includes(stored.schemaVersion)) {
+                // Older states were built on the regular (unjittered) mesh; the
+                // sand depth of each vertex is carried over to its jittered position.
+                const oldMesh = stored.schemaVersion === 2
+                    ? createInitialMesh(0, false, 0)
+                    : createInitialMesh(undefined, false, 0);
                 if (stored.erodibleCount !== oldMesh.erodibleCount ||
                     stored.bedrock.length !== oldMesh.bedrock.length ||
                     !stored.bedrock.every((height, i) => height === oldMesh.bedrock[i]) ||
                     !stored.elevation.every((height, i) => Number.isFinite(height) && height >= stored.bedrock[i])) {
                     throw new Error('Cannot migrate an incompatible stored terrain profile');
                 }
+                const mesh = createInitialMesh();
                 const state = createState(Number.isSafeInteger(stored.version) ? stored.version + 1 : 0);
                 state.elevation = Float64Array.from(stored.elevation, (height, i) =>
-                    state.bedrock[i] + (height - stored.bedrock[i]));
+                    state.bedrock[i] + (height - stored.bedrock[i]) * mesh.sandDepthFactor[i]);
                 state.activeClients = stored.activeClients;
                 await this.ctx.storage.put('state', state);
                 return state;

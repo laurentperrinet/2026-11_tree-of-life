@@ -1,194 +1,118 @@
-# Development Setup Guide
+# Development guide
 
-## Prerequisites
+How to work on the code without breaking the shared terrain. For the model
+itself, see [README.md](README.md). For problems, see
+[DEVELOPMENT.md](DEVELOPMENT.md).
 
-- **Node.js** 16+ ([install](https://nodejs.org/))
-- **Git** 2.30+ ([install](https://git-scm.com/))
-- **VS Code** (recommended, but any editor works)
+## Set-up
 
-## Installation
+- Node.js 20 or later, needed only for the tests and the local servers.
+- Git.
+- For the Worker, a Cloudflare account and `npx wrangler` (see
+  [DEPLOYMENT.md](DEPLOYMENT.md)).
 
 ```bash
-# Clone the repository
 git clone https://github.com/laurentperrinet/2026-11_tree-of-life.git
 cd 2026-11_tree-of-life
-
-# Install development dependencies
-npm install
+npm install            # optional: dev tools only (eslint, prettier, serve, http-server)
 ```
 
-## Running Locally
+## Running locally
 
-### Option 1: Simple HTTP Server (Recommended)
-```bash
-npm run dev:http
-```
-Opens the app at `http://localhost:8080` with auto-reload.
+Serve the folder over HTTP; `file://` breaks relative assets and browser APIs.
 
-### Option 2: Serve (Node.js)
-```bash
-npm run dev
-```
-Opens the app at `http://localhost:3000`.
+| Command | URL |
+| --- | --- |
+| `npx http-server -p 8000 -c-1` | <http://localhost:8000> (no cache) |
+| `npm run dev:http` | <http://localhost:8080> (opens the browser, no cache) |
+| `npm run dev` | <http://localhost:3000> (`serve`) |
+| `python3 -m http.server 8000` | <http://localhost:8000> |
 
-### Option 3: VS Code Live Server Extension
-1. Install [Live Server](https://marketplace.visualstudio.com/items?itemName=ritwickdey.LiveServer) extension
-2. Right-click `index.html` → "Open with Live Server"
-3. Opens at `http://localhost:5500`
+A local page simulates stand-alone. The Worker accepts only the GitHub Pages
+origin, and the OAuth callback is the production URL, so sync and sign-in fail
+with a warning toast. The physics, biology and display all work. For debugging,
+`window.app` exposes the running `Application`. For example,
+`app.physics.timeScale = 3` or `app.renderer.displayMode = 'flux'` in the
+console.
 
-## Code Quality
-
-### Linting (ESLint)
-```bash
-npm run lint          # Check for errors
-npm run lint -- --fix # Auto-fix issues
-```
-
-### Formatting (Prettier)
-```bash
-npm run format       # Format all code
-```
-
-### Before Committing
-```bash
-npm run lint --fix && npm run format
-```
-
-## Project Structure
-
-```
-├── index.html           # Main HTML file
-├── css/
-│   └── style.css       # All styling
-├── js/
-│   ├── main.js         # App orchestration
-│   ├── terrain.js      # 2D grid state management
-│   ├── physics.js      # Hydrodynamics simulation
-│   ├── renderer.js     # Three.js 3D visualization
-│   ├── github-sync.js  # GitHub API + terrain merging
-│   ├── auth.js         # OAuth + permissions
-│   ├── controls.js     # Keyboard & mouse input
-│   ├── local-storage.js # Browser storage
-│   └── ui.js           # UI components & status
-├── data/
-│   └── terrain.json    # Shared persistent terrain
-├── package.json        # Dependencies & scripts
-└── .vscode/
-    ├── settings.json   # VS Code settings
-    ├── extensions.json # Recommended extensions
-    └── launch.json     # Debug configuration
-```
-
-## VS Code Extensions (Recommended)
-
-Install these for best development experience:
-- **ESLint** - JavaScript linting
-- **Prettier** - Code formatter
-- **Live Server** - Local HTTP server with reload
-- **GitLens** - Git integration & history
-- **Copilot** - AI code completion
-
-Auto-install: Run "Show Recommended Extensions" in VS Code.
-
-## GitHub OAuth Setup (Production)
-
-1. Go to GitHub Settings → Developer settings → OAuth Apps
-2. Create new OAuth App:
-   - **Application name**: Tree of Life
-   - **Homepage URL**: `https://laurentperrinet.github.io/2026-11_tree-of-life/`
-   - **Authorization callback URL**: Same as above
-3. Copy `Client ID` and update in `js/main.js`:
-   ```js
-   const clientId = 'YOUR_CLIENT_ID';
-   ```
-
-**Security Note**: For production, implement server-side token exchange (Netlify Functions, CloudFlare Workers, etc.)
-
-## Deployment
-
-### GitHub Pages
-1. Ensure `main` branch has all changes
-2. Go to repo Settings → Pages
-3. Select `main` branch as source
-4. Site publishes at: `https://laurentperrinet.github.io/2026-11_tree-of-life/`
-
-### Local Testing Before Deploy
-```bash
-npm run build  # Verify (static files only)
-npm run dev    # Test locally
-```
-
-## Debugging
-
-### Browser DevTools
-1. Press `F12` (or Cmd+Option+I on Mac)
-2. Check Console for errors
-3. Inspect Network tab for GitHub API calls
-4. Profile Performance for simulation FPS
-
-### VS Code Debugger
-- Press F5 to attach debugger when Live Server is running
-- Set breakpoints in `js/*.js` files
-- Step through code and inspect variables
-
-## Common Issues
-
-### OAuth not working
-- Check `Client ID` is correct in `js/main.js`
-- Ensure redirect URL matches GitHub OAuth App settings
-- Clear session storage: Press F12 → Application → Session Storage → Clear
-
-### Terrain not syncing
-- Check GitHub Personal Access Token permissions
-- Verify `data/terrain.json` exists in repo
-- Check browser Console for API errors
-
-### Performance issues
-- Profile with DevTools (Performance tab)
-- Check if physics step is bottleneck
-- Consider reducing grid size (see `js/terrain.js`)
-
-## Testing Changes
+## Tests
 
 ```bash
-# Format code
-npm run format
-
-# Lint code
-npm run lint --fix
-
-# Start local server
-npm run dev
-
-# Test in browser
-# Navigate to http://localhost
-# Check Console (F12) for errors
-# Test controls (+ - ↑ ↓ D S R ?)
-# Verify 3D view with mouse drag & scroll
+npm test                                   # everything, about five minutes
+node --test tests/collaboration.test.js    # one file
+node --test --test-name-pattern="avalanche" tests/terrain-physics.test.js
 ```
 
-## Contributing
+The browser scripts are evaluated in `node:vm` contexts with minimal DOM, storage
+and `fetch` mocks. The Worker is imported directly and driven with a mocked
+Durable Object storage. No test runs Cloudflare or GitHub for real.
 
-1. Create a feature branch: `git checkout -b feature/my-feature`
-2. Make changes and test locally
-3. Format and lint: `npm run format && npm run lint --fix`
-4. Commit with descriptive message
-5. Push and create Pull Request
+## Conventions
 
-## Performance Targets
+- Plain ES2020 browser scripts, no bundler and no runtime dependency. Each file
+  defines globals used by the files after it in `index.html`.
+- Comments, docs and identifiers in new prose use international English with
+  British spelling (colour, centre, behaviour). Existing code identifiers keep
+  their spelling, such as `initialize()`.
+- Docstrings follow the `Args:` / `Returns:` style with units in brackets, as in
+  `jitterOffset()`.
+- Use `Float64Array` for the bed (conservation is checked to 1e-9 in the tests)
+  and `Float32Array` for biology.
+- `npm run lint` and `npm run format` exist, but no ESLint or Prettier
+  configuration is committed: add one before relying on them.
 
-- **FPS**: 60 on modern hardware (64×64 grid)
-- **Physics step**: < 16ms
-- **Render time**: < 16ms
-- **GitHub sync**: 15s fetch, 60s commit
+## Changing a parameter
 
-## Further Reading
+Model parameters are fields set in the constructors (`TerrainGrid`,
+`PhysicsEngine`) or literals in `BiologyGrid.updateColonies()`. When you change
+one:
 
-- [Three.js Documentation](https://threejs.org/docs/)
-- [Git Workflows](https://git-scm.com/book/en/v2)
-- [ESLint Guide](https://eslint.org/docs/rules/)
-- [Prettier Docs](https://prettier.io/docs/en/index.html)
+1. Update the equations and variable tables in [README.md](README.md), section 1,
+   in the same commit.
+2. If it is a **terrain** parameter (anything that changes vertex positions,
+   bedrock or initial sand), apply the rules below.
+3. Run `npm test`. Several tests check physical invariants: conservation,
+   channel without sand, no erosion of the surround.
 
----
+## Changing the mesh or the initial terrain
 
-**Questions?** Check `CODE_MAP.md` for detailed architecture documentation.
+The browser (`js/terrain.js`) and the Worker (`worker/mesh.mjs`) build the same
+mesh independently. They must agree bit for bit; the test *browser and Worker
+initialize the same higher-resolution terrain* checks it.
+
+1. Change the constant in **both** files (`this.radius` ↔ `MESH_RADIUS`, etc.).
+2. Change the **mesh signature** in both files (`meshSignature()` and
+   `MESH_SIGNATURE`). Add a tag (such as `'jitter-v1'`) when the geometry or
+   profile changes without a dimension change.
+3. Decide whether existing terrains are **migrated** or **reset**:
+   - Browser: `TerrainGrid.fromJSON()` accepts formats `10.0`–`13.0`. Bump
+     `toJSON().version` and add a branch to `savedBedrock()` if the old bedrock
+     must be reconstructed.
+   - Worker: `Simulation.loadState()` migrates schemas 2 and 3 and resets on any
+     other mismatch. Bump `STATE_SCHEMA_VERSION` and add a migration if sand must
+     survive.
+4. Keep randomness deterministic and integer-based (`hashUint32`). Trigonometry
+   or `Math.random()` would make the browser and the Worker disagree.
+5. Deploy the Worker and the site together. Older open tabs receive a 409 and must
+   reload.
+
+## Save formats
+
+| Data | Writer | Format | Compatibility |
+| --- | --- | --- | --- |
+| Local terrain | `TerrainGrid.toJSON()` | `version: '13.0'`, `topology`, `meshSignature`, arrays, particles | Reads `10.0`–`13.0`. Accepts 500 or 1,000 saved parcels and adds parcels up to 1,500 |
+| Local biology | `BiologyGrid.toJSON()` | `version: 1`, `size: 256`, base64 of four 16-bit fields | Exact match only |
+| Store wrapper | `LocalStorageManager.save()` | `{ version: '1.0', savedAt, data }` | Version must match; terrain expires after 24 h |
+| Shared state | `createState()` in the Worker | `schemaVersion: 4`, `meshSignature`, float64 arrays, contributions | Migrates 2 and 3 |
+
+`fromJSON()` rejects, with a console warning, any save whose elevation lies below
+the bedrock or erodes the surround. It also rejects saves that add sand to the
+channel, or that hold non-finite values or invalid particles.
+
+## Randomness
+
+Parcel creation, reinjection angles and burst times use `Math.random()` without a
+seed, so two runs never match. The mesh jitter and the microbe seed patches are
+deterministic hashes. Tests therefore check invariants and statistics, not exact
+trajectories. Making the particles reproducible would need a seeded generator
+in `PhysicsEngine`.

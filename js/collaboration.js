@@ -182,8 +182,6 @@ class CollaborativeSync {
             ? null : Math.max(0, Math.ceil((this.nextSyncAt - Date.now()) / 1000));
     }
 
-    recordChange() {}
-
     fetchAndMerge() {
         return this.syncNow();
     }

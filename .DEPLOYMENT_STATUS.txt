@@ -1,301 +1,40 @@
-═══════════════════════════════════════════════════════════════════════════════
-                  🌊 TREE OF LIFE - DEPLOYMENT STATUS 🌊
-═══════════════════════════════════════════════════════════════════════════════
-
-✅ COMPLETE STATUS:
-
-Repository:     ✅ CREATED & PUSHED
-Code:           ✅ COMPLETE & TESTED (9 modules, ~2,200 lines)
-Documentation:  ✅ COMPREHENSIVE (11 guides, ~2,000 lines)
-README.md:      ✅ ENHANCED with complete deployment instructions
-GitHub Pages:   ⏳ READY (needs activation)
-OAuth:          ⏳ READY (needs Client ID configuration)
-Live Site:      ⏳ COMING SOON (15 minutes after OAuth setup)
-
-═══════════════════════════════════════════════════════════════════════════════
-
-🚀 IMMEDIATE NEXT STEPS (15 minutes):
-
-1️⃣ ENABLE GITHUB PAGES:
-   URL: https://github.com/laurentperrinet/2026-11_tree-of-life/settings/pages
-   Steps:
-     • Source: Select 'main' branch
-     • Folder: '/ (root)'
-     • Save
-     • Wait 2-3 minutes for deployment
-
-2️⃣ CREATE OAUTH APP:
-   URL: https://github.com/settings/developers
-   Steps:
-     • Developer settings → OAuth Apps → New OAuth App
-     • Name: Tree of Life
-     • Homepage: https://laurentperrinet.github.io/2026-11_tree-of-life/
-     • Callback: https://laurentperrinet.github.io/2026-11_tree-of-life/
-     • Register → Copy Client ID
-
-3️⃣ CONFIGURE CLIENT ID:
-   Steps:
-     • Go to: https://github.com/laurentperrinet/2026-11_tree-of-life
-     • Edit file: js/main.js (line ~15)
-     • Find: clientId: 'YOUR_GITHUB_OAUTH_CLIENT_ID'
-     • Replace with your Client ID
-     • Commit with message: "Configure OAuth Client ID"
-     • Auto-deployed by GitHub Actions (1 min)
-
-4️⃣ TEST & PLAY:
-   Visit: https://laurentperrinet.github.io/2026-11_tree-of-life/
-   • Press ? to see all controls
-   • Press Q+/Q- to adjust water flow
-   • Watch natural branching patterns form!
-   • Login button works after OAuth is configured
-
-═══════════════════════════════════════════════════════════════════════════════
-
-📚 DOCUMENTATION PROVIDED:
-
-   In GitHub repo (all ready to read):
-
-   START_HERE.md
-   └─ Quick 5-minute setup guide
-
-   README.md (1,600 lines - COMPREHENSIVE!)
-   ├─ Quick Start
-   ├─ Physics Engine (equations + feedback loop)
-   ├─ Complete Controls Reference
-   │  ├─ Keyboard shortcuts table
-   │  ├─ Mouse controls
-   │  ├─ Display modes
-   │  └─ Status badge guide
-   ├─ Collaboration Guide
-   │  ├─ How changes sync
-   │  ├─ Merge strategy
-   │  ├─ GitHub integration
-   │  ├─ Authentication
-   │  └─ Convergence detection
-   ├─ Project Structure
-   ├─ Deployment Guide (with troubleshooting)
-   ├─ Technical Specifications
-   ├─ Scientific Background
-   │  ├─ Shallow water equations
-   │  ├─ Sediment transport
-   │  ├─ Numerical scheme
-   │  └─ Academic references
-   ├─ Future Enhancements
-   ├─ Contributing guidelines
-   ├─ Support & Learning
-   └─ License info
-
-   DEPLOYMENT.md - Detailed setup guide
-   CODE_MAP.md - Navigate the codebase
-   CONTRIBUTING.md - How to contribute
-   PERFORMANCE.md - Optimization strategies
-   FILES_MANIFEST.md - File organization
-   PROJECT_CHECKLIST.md - Completion status
-   SUMMARY.md - Technical overview
-
-═══════════════════════════════════════════════════════════════════════════════
-
-🎯 WHAT'S IN THE REPO:
-
-Code (9 modules):
-  ✅ js/main.js             - App orchestration
-  ✅ js/terrain.js          - 2D grid state management
-  ✅ js/physics.js          - Simulation engine (SWE + Exner)
-  ✅ js/renderer.js         - Three.js 3D visualization
-  ✅ js/github-sync.js      - GitHub API + merge logic
-  ✅ js/auth.js             - OAuth2 + reset management
-  ✅ js/controls.js         - Keyboard/mouse input
-  ✅ js/local-storage.js    - Browser persistence
-  ✅ js/ui.js               - Status badge + notifications
-
-Static:
-  ✅ index.html             - HTML structure
-  ✅ css/style.css          - Responsive dark theme
-  ✅ data/terrain.json      - 🔑 Shared state (Git-backed)
-  ✅ package.json           - Metadata
-
-Config:
-  ✅ .github/workflows/deploy.yml  - GitHub Actions auto-deploy
-  ✅ .nojekyll                     - GitHub Pages config
-  ✅ .gitignore                    - Standard patterns
-  ✅ LICENSE                       - MIT License
-
-Total: 26 files, ~4,200 lines of code + docs
-
-═══════════════════════════════════════════════════════════════════════════════
-
-🌊 FEATURES READY TO DEPLOY:
-
-PHYSICS ✅
-  ✓ Shallow water equations (momentum + continuity)
-  ✓ Sediment transport (Exner equation)
-  ✓ Emergent branching (natural self-organization)
-  ✓ CFL stability checking
-  ✓ Energy-based convergence detection
-  ✓ 60 FPS performance on 64×64 grid
-
-COLLABORATION ✅
-  ✓ GitHub as persistent database (data/terrain.json)
-  ✓ Auto-sync: Fetch (15s), Commit (60s)
-  ✓ Intelligent merge: Max-elevation strategy
-  ✓ localStorage offline caching
-  ✓ Full git history = automatic timelapse
-
-INTERFACE ✅
-  ✓ 3D terrain visualization (Three.js)
-  ✓ Keyboard controls (Q, E, V, H, D, S, R, ?)
-  ✓ Mouse rotation & zoom
-  ✓ Live statistics badge
-  ✓ Help panel with all controls
-  ✓ Display modes (elevation/velocity/sediment)
-
-SECURITY ✅
-  ✓ GitHub OAuth2 authentication
-  ✓ Author-only reset (@laurentperrinet)
-  ✓ Session tokens (non-persistent)
-  ✓ No hardcoded secrets
-  ✓ No database vulnerabilities
-
-DEPLOYMENT ✅
-  ✓ GitHub Pages ready
-  ✓ Zero build step (vanilla JavaScript)
-  ✓ GitHub Actions auto-deploy
-  ✓ Cross-browser compatible
-  ✓ Mobile-responsive design
-
-═══════════════════════════════════════════════════════════════════════════════
-
-📖 HOW TO USE THE README:
-
-User asking: "How do I..."
-
-├─ "...play with it?"
-│  └─ README.md → Quick Start section
-
-├─ "...deploy it?"
-│  └─ README.md → Deployment Guide section (step-by-step)
-
-├─ "...understand the physics?"
-│  └─ README.md → Physics Engine OR Scientific Background
-
-├─ "...use all the controls?"
-│  └─ README.md → Complete Controls Reference
-
-├─ "...fix a problem?"
-│  └─ README.md → Deployment → Troubleshooting
-
-├─ "...find code for X?"
-│  └─ CODE_MAP.md (find any file/function)
-
-├─ "...contribute code?"
-│  └─ CONTRIBUTING.md (guidelines)
-
-├─ "...make it faster?"
-│  └─ PERFORMANCE.md (optimization guide)
-
-═══════════════════════════════════════════════════════════════════════════════
-
-🎓 LEARNING VALUE:
-
-This project teaches:
-
-  • PHYSICS: Shallow water equations, sediment transport, geomorphology
-  • GIT: Using Git as a collaborative database, version control
-  • WEB: Three.js 3D rendering, GitHub API, OAuth2 authentication
-  • PERFORMANCE: Real-time optimization, numerical stability (CFL)
-  • DESIGN: Clean architecture, comprehensive documentation
-  • COLLABORATION: Merge strategies, conflict resolution
-
-═══════════════════════════════════════════════════════════════════════════════
-
-✨ WHY THIS PROJECT IS SPECIAL:
-
-  🎯 No User Accounts
-     → GitHub OAuth handles authentication
-     → Zero database needed
-
-  🎯 No Server Required
-     → Pure client-side + GitHub API
-     → Scales with GitHub's infrastructure
-
-  🎯 Natural Branching Patterns
-     → Not hardcoded - emerges from physics!
-     → Looks like real river deltas, avalanche paths
-
-  🎯 Collaborative Art
-     → Everyone's erosion patterns combine
-     → Full history visible in git log
-
-  🎯 Open Source Ready
-     → MIT License included
-     → No proprietary dependencies
-     → Free to fork & modify
-
-═══════════════════════════════════════════════════════════════════════════════
-
-📊 BY THE NUMBERS:
-
-   Files Created:          26
-   JavaScript Modules:     9 (~2,200 lines)
-   Documentation Guides:   11 (~2,000 lines)
-   Total Code:            ~4,200 lines
-   Project Size:          617 KB (with terrain.json)
-   Git Commits:           11
-   External Dependencies:  0 (all via CDN)
-   Build Steps:           0 (vanilla JavaScript)
-   Time to Deployment:    ~15 minutes (OAuth setup)
-
-═══════════════════════════════════════════════════════════════════════════════
-
-🚀 CURRENT DEPLOYMENT STATUS:
-
-   Status: READY FOR PRODUCTION
-
-   ✅ Code: Complete & tested
-   ✅ Documentation: Comprehensive & detailed
-   ✅ GitHub Repo: Created (2026-11_tree-of-life)
-   ✅ GitHub Pages: Configured (needs activation)
-   ✅ OAuth: Ready (needs Client ID)
-   ✅ All Files: Pushed to main branch
-   ✅ GitHub Actions: Ready to auto-deploy
-
-   ⏳ NEXT: Activate GitHub Pages + OAuth (15 minutes)
-
-═══════════════════════════════════════════════════════════════════════════════
-
-📋 YOUR 4-STEP CHECKLIST:
-
-   [ ] Step 1: Enable GitHub Pages (2 minutes)
-       URL: https://github.com/laurentperrinet/2026-11_tree-of-life/settings/pages
-
-   [ ] Step 2: Create OAuth App (3 minutes)
-       URL: https://github.com/settings/developers
-
-   [ ] Step 3: Configure Client ID (2 minutes)
-       - Copy Client ID from step 2
-       - Edit js/main.js in GitHub editor
-       - Replace clientId value
-       - Commit & push
-
-   [ ] Step 4: Test & Play (2 minutes)
-       URL: https://laurentperrinet.github.io/2026-11_tree-of-life/
-
-═══════════════════════════════════════════════════════════════════════════════
-
-🎉 READY TO SHIP!
-
-Your collaborative terrain erosion simulator is production-ready and completely
-documented. All instructions are in README.md (and other guides).
-
-Next: Enable GitHub Pages + OAuth (see 4-step checklist above).
-
-═══════════════════════════════════════════════════════════════════════════════
-
-Date Created:   November 16, 2026
-Status:         Production-Ready ✅
-Documentation:  Complete ✅
-GitHub Pages:   Ready (activation pending)
-OAuth:          Ready (Client ID pending)
-Live Demo:      Coming in 15 minutes!
-
-═══════════════════════════════════════════════════════════════════════════════
+TREE OF LIFE - DEPLOYMENT STATUS
+Updated 2026-11-17. This file records what the repository configures. It
+cannot tell whether production is live: run the checks below.
+
+STATIC SITE (GitHub Pages)
+  URL        https://laurentperrinet.github.io/2026-11_tree-of-life/
+  Deployed   on every push to main, by .github/workflows/deploy.yml
+  Setting    Repository Settings > Pages > Source = GitHub Actions
+
+COLLABORATION WORKER (Cloudflare)
+  URL        https://tree-of-life.laurent-perrinet.workers.dev
+  Deployed   by hand: npx wrangler deploy
+  Entry      worker/index.mjs
+  Durable    SIMULATION -> class Simulation (SQLite-backed, migration v1)
+  Variables  GITHUB_CLIENT_ID = Ov23liPHpc4sc5qUGMVx   (wrangler.toml)
+             OWNER_GITHUB_ID  = 381808                 (wrangler.toml)
+  Secret     GITHUB_CLIENT_SECRET   (Cloudflare only: wrangler secret put)
+  Allowed    Origin https://laurentperrinet.github.io (worker/index.mjs)
+
+GITHUB OAUTH APPLICATION
+  Client ID  Ov23liPHpc4sc5qUGMVx   (also in js/main.js)
+  Callback   https://laurentperrinet.github.io/2026-11_tree-of-life/
+
+CURRENT FORMATS
+  Mesh       disk-square-polar-v2, R 25, L 30, 125 rings, spacing 0.2,
+             channel-sand-free-v1, jitter-v1 (0.1, seed 2026)
+  Worker     state schema 4 (migrates 2 and 3)
+  Browser    terrain save 13.0 (reads 10.0 to 12.0), biology save 1
+  Rule       a mesh change needs the Worker and the site deployed together
+
+CHECKS AFTER A DEPLOYMENT
+  1. npm test passes locally (about five minutes).
+  2. curl -s https://tree-of-life.laurent-perrinet.workers.dev/api/state
+     returns JSON whose meshSignature matches js/terrain.js meshSignature().
+  3. The site loads, shows "Simulation ready" and, after the first sync,
+     a number of seconds next to the sync icon in the status bar.
+  4. ?admin > Sign in with GitHub works and shows the lock and login.
+  5. Optional, owner only: Reset Terrain increments the shared version.
+
+See DEPLOYMENT.md for the procedure and DEVELOPMENT.md for failures.

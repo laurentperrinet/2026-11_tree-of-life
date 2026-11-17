@@ -34,8 +34,8 @@
   },
   "homepage": "https://laurentperrinet.github.io/2026-11_tree-of-life/",
   "notes": {
-    "performance": "64x64 grid runs at 60 FPS on modern hardware. For larger grids, WebGL compute shaders recommended.",
-    "optimization": "Uses Float32Array for all numerical arrays. Physics step is CPU-bound.",
-    "dependencies_external": "Three.js loaded from CDN, no npm required"
+    "performance": "One CPU physics step per animation frame on a 50,264-vertex polar mesh with 1,500 water parcels; see PERFORMANCE.md for measured costs.",
+    "optimization": "Typed arrays (Float64Array for the bed, Float32Array for biology) on a single thread; sand relaxation dominates the physics step.",
+    "dependencies_external": "Three.js r128 is loaded from cdnjs; the browser app needs no npm install. The Worker is deployed with wrangler."
   }
 }

@@ -252,8 +252,9 @@ class ResetManager {
     }
     
     /**
-     * Perform hard reset (delete terrain.json + cirque vierge)
-     * Requires double confirmation
+     * Hard reset, kept for the `?reset=1&hard=1` URL. It currently performs the
+     * same shared-terrain, particle and biology reset as softReset().
+     * Returns 'confirm' until called with confirmed = true.
      */
     async hardReset(confirmed = false) {
         if (!this.canReset()) {
@@ -272,15 +273,5 @@ class ResetManager {
             console.error('Hard reset failed:', error);
             return false;
         }
-    }
-    
-    /**
-     * Get reset status
-     */
-    getStatus() {
-        return {
-            canReset: this.canReset(),
-            user: this.auth.getUserLogin()
-        };
     }
 }

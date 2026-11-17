@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import { deepStrictEqual, equal, ok } from 'node:assert/strict';
 import worker, { Simulation } from './index.mjs';
-import { createInitialMesh, getSyncIntervalMs, MESH_SIGNATURE } from './mesh.mjs';
+import {
+    channelSandFactor, createInitialMesh, getSyncIntervalMs, LEGACY_MESH_SIGNATURE, MESH_SIGNATURE
+} from './mesh.mjs';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
@@ -37,7 +39,9 @@ function harness(initialState) {
         if (clientId) headers['X-Collaborator-ID'] = clientId;
         if (version !== undefined) headers['X-Terrain-Version'] = String(version);
         if (encoding) headers['X-Payload-Encoding'] = encoding;
-        if (meshSignature) headers['X-Mesh-Signature'] = meshSignature;
+        if (path === '/api/sync' && meshSignature !== false) {
+            headers['X-Mesh-Signature'] = meshSignature || MESH_SIGNATURE;
+        }
         const response = await worker.fetch(new Request(`https://worker.example${path}`, {
             method, headers, body
         }), env);
@@ -101,26 +105,35 @@ test('a changed mesh signature resets shared terrain and pending contributions o
     equal((await request('/api/state')).body.version, 13);
 });
 
-test('existing shared state is migrated to the steeper bed without losing sand', async () => {
-    const mesh = createInitialMesh(0);
-    mesh.elevation[0] += 0.1;
-    mesh.elevation[mesh.erodibleCount - 1] += 0.2;
-    for (const meshSignature of [undefined, MESH_SIGNATURE]) {
+test('existing shared state is migrated to the sand-free channel without losing other sand', async () => {
+    for (const schemaVersion of [2, 3]) {
+        const mesh = createInitialMesh(schemaVersion === 2 ? 0 : undefined, false, 0);
+        const channelIndex = mesh.vertices.findIndex(({ x, z }) =>
+            z > 0 && Math.abs(x) < (0.8 + 0.12 * z) * 0.9);
+        const bankIndex = mesh.vertices.findIndex(({ x, z }) =>
+            z > 0 && Math.abs(x) > (0.8 + 0.12 * z) * 1.3);
+        mesh.elevation[channelIndex] += 0.1;
+        mesh.elevation[bankIndex] += 0.2;
         const old = {
-            schemaVersion: 2, meshSignature, version: 12,
-            elevation: mesh.elevation, bedrock: mesh.bedrock, erodibleCount: mesh.erodibleCount,
+            schemaVersion,
+            meshSignature: schemaVersion === 2 ? undefined : LEGACY_MESH_SIGNATURE,
+            version: 12,
+            elevation: mesh.elevation,
+            bedrock: mesh.bedrock,
+            erodibleCount: mesh.erodibleCount,
             sumDelta: new Float64Array(mesh.elevation.length),
-            activeClients: {}, contributions: { [clientA]: true },
-            contributionIds: [clientA], windowEndsAt: 1
+            activeClients: {},
+            contributions: { [clientA]: true },
+            contributionIds: [clientA],
+            windowEndsAt: 1
         };
         const { request, storedState } = harness(old);
         const state = await request('/api/state');
+        const newMesh = createInitialMesh();
         equal(state.body.version, 13);
         equal(state.body.acceptedContributions, 0);
-        equal(state.body.terrain.elevation[0], mesh.elevation[0]);
-        const index = mesh.erodibleCount - 1;
-        ok(Math.abs(state.body.terrain.elevation[index] - createInitialMesh().bedrock[index] -
-            (mesh.elevation[index] - mesh.bedrock[index])) < 1e-12);
+        equal(state.body.terrain.elevation[channelIndex], newMesh.bedrock[channelIndex]);
+        ok(Math.abs(state.body.terrain.elevation[bankIndex] - newMesh.bedrock[bankIndex] - 0.5) < 1e-12);
         equal(storedState().meshSignature, MESH_SIGNATURE);
         equal((await request('/api/state')).body.version, 13);
     }
@@ -166,8 +179,20 @@ test('contributions from an incompatible mesh are rejected', async () => {
         method: 'POST', clientId: clientA, version: 0, encoding: 'gzip',
         meshSignature: 'different mesh', body: await compressedDelta(mesh.elevation.length, { 0: 0.1 })
     });
+
     equal(response.status, 409);
     equal((await request('/api/state')).body.acceptedContributions, 0);
+});
+
+test('initial mesh has no sand on the channel axis or flanks', () => {
+    const mesh = createInitialMesh();
+    for (let i = 0; i < mesh.vertices.length; i++) {
+        const { x, z } = mesh.vertices[i];
+        if (z <= 0) continue;
+        const depth = mesh.elevation[i] - mesh.bedrock[i];
+        if (channelSandFactor(x, z) === 0) equal(depth, 0);
+        else ok(depth >= 0);
+    }
 });
 
 test('legacy Durable Object state migrates to the triangular mesh schema', async () => {

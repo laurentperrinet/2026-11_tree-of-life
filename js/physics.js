@@ -167,6 +167,7 @@ class PhysicsEngine {
                 let high = edge.a;
                 let low = edge.b;
                 if (grid.elevation[high] < grid.elevation[low]) [high, low] = [low, high];
+                if (grid.sandDepthFactorAt(low) === 0) continue;
                 const excess = grid.elevation[high] - grid.elevation[low] -
                     this.sandReposeSlope * edge.length;
                 if (excess <= 0) continue;
@@ -249,9 +250,10 @@ class PhysicsEngine {
         const grid = this.grid;
         const sample = grid.sample(particle.x, particle.z);
         if (!sample) throw new Error('Evaporating particle outside the terrain mesh');
-        const weights = sample.weights.map(weight => Math.max(0, weight));
+        const weights = sample.weights.map((weight, i) =>
+            Math.max(0, weight) * grid.sandDepthFactorAt(sample.face[i]));
         const total = weights.reduce((sum, weight) => sum + weight, 0);
-        if (total < 1e-12) throw new Error('No terrain for sediment deposit');
+        if (total < 1e-12) return;
         for (let i = 0; i < sample.face.length; i++) {
             if (weights[i] > 0) {
                 const index = sample.face[i];
@@ -288,7 +290,7 @@ class PhysicsEngine {
         let actualExchange = 0;
         sample.face.forEach((index, i) => {
             if (index >= grid.erodibleCount) return;
-            const amount = exchange * Math.max(0, sample.weights[i]) *
+            const amount = exchange * Math.max(0, sample.weights[i]) * grid.sandDepthFactorAt(index) *
                 (exchange > 0 ? this.erosionFactor(index) : 1);
             const previousHeight = grid.elevation[index];
             const height = Math.max(grid.bedrock[index], previousHeight - amount / grid.vertexArea[index]);

@@ -1,79 +1,91 @@
 # Deployment
 
-## GitHub Pages
+The application has two independently deployed parts:
 
-The site is published from the `main` branch by
-`.github/workflows/deploy.yml`. Push the frontend and documentation changes to
-GitHub, then check the repository's **Actions** tab for the Pages deployment.
-The public site is:
+| Part | Hosted on | Deployed by | URL |
+| --- | --- | --- | --- |
+| Static site (`index.html`, `css/`, `js/`) | GitHub Pages | `.github/workflows/deploy.yml`, on every push to `main` | <https://laurentperrinet.github.io/2026-11_tree-of-life/> |
+| Collaboration API (`worker/`) | Cloudflare Workers + Durable Objects | `npx wrangler deploy`, by hand | <https://tree-of-life.laurent-perrinet.workers.dev> |
 
-`https://laurentperrinet.github.io/2026-11_tree-of-life/`
+## 1. GitHub Pages
 
-## Cloudflare Worker
+The workflow uploads the repository root as the Pages artefact and deploys it.
+It also runs on pull requests. In the repository settings, **Pages → Source**
+must be **GitHub Actions**. `.nojekyll` stops Jekyll from processing the files.
+After a push, follow the run in the **Actions** tab. The site is usually updated
+within a minute or two.
 
-The collaboration API runs separately from GitHub Pages. Configure the
-`SIMULATION` SQLite-backed Durable Object binding in `wrangler.toml`, then set
-these Cloudflare Worker variables/secrets:
+## 2. GitHub OAuth application
 
-- `GITHUB_CLIENT_ID` (variable)
-- `OWNER_GITHUB_ID=381808` (variable)
-- `GITHUB_CLIENT_SECRET` (encrypted secret; never commit it)
+Sign-in is needed only for the admin controls and the owner reset.
 
-From the project directory, deploy the Worker with:
+1. GitHub → Settings → Developer settings → **OAuth Apps** → New OAuth App.
+2. **Homepage URL** and **Authorization callback URL** are both
+   `https://laurentperrinet.github.io/2026-11_tree-of-life/`. The browser
+   (`AuthManager.isConfigured()`) and the Worker (`FRONTEND_URL`) both require
+   this exact URL.
+3. Copy the **Client ID** into **both** `js/main.js` (`clientId`) and
+   `wrangler.toml` (`GITHUB_CLIENT_ID`). The current value is
+   `Ov23liPHpc4sc5qUGMVx`.
+4. Generate a **client secret**. It goes only into Cloudflare (step 3.3). Never
+   put it in the repository, the browser code or a chat. The `secrets/` folder is
+   ignored by git for local copies.
 
-```bash
-npx wrangler deploy
-```
+The browser requests the `user:email` scope with `allow_signup=false`. The token
+lives in `sessionStorage` and is dropped when the tab closes.
 
-The Worker URL configured by the frontend is
-`https://tree-of-life.laurent-perrinet.workers.dev`.
-Check `GET /api/state` after deployment. The GitHub OAuth callback must remain
-`https://laurentperrinet.github.io/2026-11_tree-of-life/`.
+## 3. Cloudflare Worker
 
-## Collaboration protocol
+1. `wrangler.toml` declares:
+   - the Worker `tree-of-life` with entry point `worker/index.mjs`;
+   - the public variables `GITHUB_CLIENT_ID` and `OWNER_GITHUB_ID` (`381808`, the
+     numeric ID of the owner's GitHub account, from
+     `https://api.github.com/users/<login>`);
+   - the Durable Object binding `SIMULATION` → class `Simulation`, created by the
+     migration `v1` as a SQLite-backed class.
+2. Log in once: `npx wrangler login`.
+3. Set the secret: `npx wrangler secret put GITHUB_CLIENT_SECRET`.
+4. Deploy: `npx wrangler deploy`.
+5. Check:
 
-Browsers run the existing triangular-mesh simulation locally and send
-compressed elevation deltas to `POST /api/sync`. The Worker averages at most
-one contribution per browser ID and terrain version, then returns the common
-elevation field. Water, sediment, particles, vegetation and microorganisms are
-not shared.
+   ```bash
+   curl -s https://tree-of-life.laurent-perrinet.workers.dev/api/state | head -c 300
+   ```
 
-The browser stores a random collaborator ID in localStorage. The Worker
-considers an ID active for 24 hours since its last sync and returns a suggested
-interval:
+   The response starts with `{"version":…,"meshSignature":…,"activeCollaborators":…`.
+   A first request after a mesh change creates or migrates the stored state.
 
-```text
-max(5 minutes, active browser IDs × 2 × 86,400,000 ms / 80,000)
-```
+The Worker URL is hard-coded in `js/collaboration.js` (`endpoint`) and
+`js/main.js` (`exchangeUrl`). The allowed origin `https://laurentperrinet.github.io`
+is hard-coded in `worker/index.mjs` (`ORIGIN`). Change all three together if the
+site moves.
 
-The factor of two budgets for a possible CORS preflight plus the sync request.
-This targets 80,000 sync-related Worker requests per day for the observed
-browser population. It is not a hard cap on an open Worker URL: direct callers,
-administrator actions and OAuth exchanges are outside the browser schedule.
-Configure Cloudflare-side limits and abuse protection if a strict service
-quota is required.
+## 4. Deploying a change
 
-## Owner reset
+| Change | Deploy |
+| --- | --- |
+| Interface, rendering, physics or biology only | Push to `main` (Pages only) |
+| Worker logic that keeps the mesh | `npx wrangler deploy` |
+| Mesh, bedrock or initial sand (signature changes) | Run `npx wrangler deploy`, then push to `main` straight away. Until both are live, open tabs get HTTP 409 and must reload |
 
-Only the configured GitHub owner can reset shared terrain. Use the site admin
-view, sign in with GitHub, then confirm **Reset Terrain**. The Worker verifies
-the bearer token against GitHub's `/user` endpoint before changing the shared
-state.
+Before any deployment, run `npm test`. The tests use mocks and do not prove that
+the production configuration is right: after deploying, check `/api/state`, load
+the site, and watch the 🔄 indicator after the first sync.
 
-## Local checks
+## 5. Request budget and abuse
 
-Serve the static site over HTTP (not `file://`) so browser APIs and relative
-assets work:
+The Worker suggests a sync interval of
+`max(5 min, active browsers × 2 × 86,400,000 ms / 80,000)`. This targets 80,000
+sync-related requests per day for a well-behaved population. It is **not**
+enforced against direct calls. OAuth exchanges, resets and reads of
+`/api/state` are outside it. If a strict ceiling matters, add Cloudflare rate
+limiting or WAF rules in front of the Worker. Contributions are anonymous:
+averaging bounds the effect of one browser per version, but a script with many IDs
+can still bias the terrain.
 
-```bash
-npx http-server -p 8000 -c-1
-```
+## 6. Owner reset
 
-Run tests:
-
-```bash
-npm test
-```
-
-`npm test` exercises the Worker protocol and OAuth flow locally. It does not
-deploy the Worker or verify the production Cloudflare configuration.
+Open `?admin`, sign in with GitHub, then press **R** twice or click **Reset
+Terrain**. The Worker checks the bearer token with `api.github.com/user` and
+compares the numeric ID with `OWNER_GITHUB_ID`, then reinitialises the shared
+terrain and increments its version.

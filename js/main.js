@@ -109,10 +109,22 @@ class Application {
             this.ui.updateAuthStatus();
             
             const loaded = this.localStore.load(this.grid);
+            let biologyDiscarded = false;
             if (!this.biologyStore.load(this.biology)) {
-                if (this.biologyStore.getSize() > 0) throw new Error('Could not load local biology');
-                if (loaded && this.grid.hasLegacyBiology) this.biology.importLegacy();
-                if (!this.biologyStore.save(this.biology)) throw new Error('Could not save local biology');
+                // An unreadable save (older format, corrupt value) must not stop the
+                // simulation: the biology is purely local, so restarting it is harmless.
+                // BiologyGrid.fromJSON() validates before writing, so the fields are intact.
+                if (this.biologyStore.getSize() > 0) {
+                    console.warn('Discarding unreadable local biology save');
+                    biologyDiscarded = true;
+                } else if (loaded && this.grid.hasLegacyBiology) {
+                    this.biology.importLegacy();
+                }
+                // Storage may be full or disabled (private browsing): keep running, and
+                // let the periodic save in animate() report the failure.
+                if (!this.biologyStore.save(this.biology)) {
+                    console.error('Could not save local biology');
+                }
             }
             this.biologyLoaded = true;
 
@@ -127,8 +139,15 @@ class Application {
             this.renderer.createTerrainMesh(this.grid, this.biology);
             
             this.ui.showLoading(false);
-            this.ui.showToast(authError ? authError.message : '✓ Simulation ready',
-                authError ? 'error' : 'success', authError ? 8000 : 3000);
+            // One final toast: a later call would replace an earlier one immediately.
+            if (authError) {
+                this.ui.showToast(authError.message, 'error', 8000);
+            } else if (biologyDiscarded) {
+                this.ui.showToast('✓ Simulation ready; local vegetation could not be restored and restarts',
+                    'warning', 8000);
+            } else {
+                this.ui.showToast('✓ Simulation ready', 'success', 3000);
+            }
             
             this.handleUrlParams();
             // Start main loop

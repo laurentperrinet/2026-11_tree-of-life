@@ -1,164 +1,83 @@
-# ✅ Tree of Life - Project Completion Checklist
+# Project checklist
 
-## 🎯 Overall Goals
-- [x] Create interactive web simulation of hydromorphodynamic terrain erosion
-- [x] Implement collaborative GitHub-based persistence system
-- [x] Add authentication for reset permissions (author-only)
-- [x] Deploy to GitHub Pages for public access
-- [x] Document all features, physics, and deployment
+Status on 2026-11-17. Each item marked done is covered by the code and, where
+noted, by a test.
 
-## 📦 Core Components
+## Done
 
-### Simulation Engine
-- [x] TerrainGrid class (2D state: elevation, water, sediment)
-- [x] PhysicsEngine (shallow water equations + sediment transport)
-- [x] Energy tracking for convergence detection
-- [x] Stable numerical integration with CFL condition checking
+### Terrain
 
-### Visualization
-- [x] Three.js 3D mesh rendering
-- [x] Real-time mesh deformation
-- [x] Multiple display modes (elevation, flux, sediment)
-- [x] Color mapping for terrain visualization
-- [x] Status badge with live statistics
+- [x] Polar triangular mesh with staggered rings, square surround, deterministic
+  jitter (tests: geometry, positive areas, jitter bound, browser = Worker)
+- [x] Inverted-cone bedrock with peripheral drainage band and flared outlet channel
+- [x] Sand-free channel bed and flanks (tests: initial terrain, no deposit there)
+- [x] Save format `13.0` with migration from `10.0`–`12.0`, and mesh-signature
+  checks
 
-### Collaborative System
-- [x] GitHub API integration (fetch terrain.json)
-- [x] Terrain merge strategy (max elevation)
-- [x] Automatic sync loop (15s fetch, 60s commit)
-- [x] localStorage persistence between syncs
-- [x] Commit message with metadata
+### Physics
 
-### Authentication & Reset
-- [x] GitHub OAuth2 flow
-- [x] User identity verification (@laurentperrinet)
-- [x] Session token management (sessionStorage, non-persistent)
-- [x] Soft reset (clear cache, reload)
-- [x] Hard reset option (reinitialize cirque)
-- [x] URL parameter triggers (?reset=1, ?reset=1&hard=1)
-- [x] Energy-based convergence detection
+- [x] 1,500 Lagrangian water parcels with gravity, friction, speed cap and wall
+  reflection
+- [x] Soft parcel–parcel pressure
+- [x] Speed-dependent transport capacity, erosion fading near the edge
+- [x] Angle-of-repose avalanches
+- [x] Sink recycling with load; evaporation that deposits its load
+- [x] Exact conservation of sand plus load (test: closed cycle and reload)
+- [x] Transit time and particle flow indicators
 
-### User Interface
-- [x] Keyboard controls (Q±, V±, D, S, R, ?)
-- [x] Mouse controls (rotate, zoom)
-- [x] Help panel with control reference
-- [x] Status badge (contributors, sync time, energy, stability)
-- [x] Toast notifications for user feedback
-- [x] Auth status display with login button
-- [x] Reset button (visible only when auth'd & converged)
+### Biology
 
-### Code Organization
-- [x] Modular JavaScript (8 separate files)
-- [x] No external npm dependencies (Three.js via CDN)
-- [x] Clear separation of concerns
-- [x] Comprehensive comments and docstrings
-- [x] Consistent naming conventions
+- [x] Vegetation with inhibitor on wet banks (tests: growth, crowded centres)
+- [x] Gray–Scott microbes restricted to calm sandy habitat, with recovery
+  after extinction
+- [x] Visitor-local 16-bit save, independent of the shared terrain
 
-## 📚 Documentation
-- [x] README.md (features, controls, physics, collaboration)
-- [x] DEPLOYMENT.md (GitHub Pages setup, OAuth config, troubleshooting)
-- [x] PERFORMANCE.md (optimization notes, scaling guidance)
-- [x] Code comments (in all JavaScript files)
-- [x] JSDoc comments for major classes
+### Collaboration and administration
 
-## 🚀 Deployment Readiness
-- [x] GitHub Pages configuration (.nojekyll)
-- [x] Automated deploy workflow (.github/workflows/deploy.yml)
-- [x] package.json with metadata and scripts
-- [x] .gitignore for build artifacts
-- [x] Git repository initialized and committed
+- [x] Cloudflare Worker with SQLite-backed Durable Object
+- [x] Per-version averaging of gzip-compressed deltas, one per browser
+- [x] Adaptive interval toward 80,000 requests per day; exponential backoff
+- [x] Validation of contributions (size, finiteness, bounds, surround)
+- [x] Migration of Worker schemas 2 and 3; reset on other mesh changes
+- [x] GitHub OAuth through the Worker; owner-only reset checked server-side
+- [x] Public display modes; admin controls behind `?admin` and sign-in
 
-## 🎨 Production Readiness
+### Documentation
 
-### Code Quality
-- [x] No console errors on startup
-- [x] Graceful error handling
-- [x] Fallbacks for missing features
-- [x] Cross-browser compatible
-- [x] Mobile-responsive UI
-- [x] Accessibility considered
+- [x] README with equations and variable tables matching the code
+- [x] Guides for start-up, development, troubleshooting, deployment, performance
+- [x] Legacy GitHub persistence and grid solver removed
 
-### Documentation Quality
-- [x] README explains concept clearly
-- [x] Physics equations documented
-- [x] DEPLOYMENT.md is step-by-step
-- [x] Code comments explain physics
-- [x] Troubleshooting guide included
-- [x] Security notes documented
+## Known limitations
 
-### Performance
-- [x] 64×64 grid: 60 FPS ✓
-- [x] Memory optimized (Float32Array)
-- [x] Async GitHub sync (non-blocking)
-- [x] localStorage caching
-- [x] Scaling path to 256×256
+- The model is exploratory and uncalibrated; branching is not guaranteed.
+- Adopting a new shared version replaces the local bed. Local erosion since the
+  last accepted submission is lost, and the local sand balance breaks.
+- Contributions are anonymous. The request budget is a client-side target,
+  not a quota.
+- Particle randomness is unseeded, so runs are not reproducible.
+- Physics and biology cost about 75 ms per frame. Simulated time depends on the
+  device's frame rate.
+- No touch controls; desktop mouse and keyboard only.
+- `npm run lint` and `npm run format` have no committed configuration.
+- Sync and sign-in cannot be tested from `localhost`.
+- The status-help text in `index.html` duplicates the README and must be kept in
+  step by hand.
+- Small unused methods remain: `TerrainGrid.microbeSuitability()`,
+  `ResetManager.getStatus()`, `CollaborativeSync.recordChange()`,
+  `SessionStorageManager.hasToken()`, `LocalStorageManager.isAvailable()` and
+  `LocalStorageManager.clear()`.
 
-## 📁 File Structure
-```
-✓ .github/workflows/deploy.yml    [GitHub Actions auto-deploy]
-✓ .gitignore                      [Version control]
-✓ .nojekyll                       [GitHub Pages]
-✓ README.md                       [Main guide]
-✓ DEPLOYMENT.md                   [Deploy instructions]
-✓ PERFORMANCE.md                  [Optimization notes]
-✓ PROJECT_CHECKLIST.md            [This file]
-✓ package.json                    [Metadata]
-✓ index.html                      [Main UI]
-✓ css/style.css                   [Styling]
-✓ data/terrain.json               [🔑 Shared state]
-✓ js/main.js                      [Orchestration]
-✓ js/terrain.js                   [Grid state]
-✓ js/physics.js                   [Simulation]
-✓ js/renderer.js                  [3D viz]
-✓ js/github-sync.js               [Collaboration]
-✓ js/auth.js                      [Authentication]
-✓ js/controls.js                  [Input]
-✓ js/local-storage.js             [Persistence]
-✓ js/ui.js                        [Interface]
-```
+## Open work
 
-## ✨ Key Features Implemented
-
-| Feature | Done | Tested | Docs |
-|---------|------|--------|------|
-| Physics (shallow water) | ✅ | ✅ | ✅ |
-| Sediment transport | ✅ | ✅ | ✅ |
-| Natural bifurcation | ✅ | ✅ | ✅ |
-| 3D rendering | ✅ | ✅ | ✅ |
-| GitHub sync | ✅ | ✅ | ✅ |
-| Terrain merge | ✅ | ✅ | ✅ |
-| OAuth login | ✅ | ✅ | ✅ |
-| Reset system | ✅ | ✅ | ✅ |
-| Convergence detect | ✅ | ✅ | ✅ |
-| Keyboard controls | ✅ | ✅ | ✅ |
-| Mouse controls | ✅ | ✅ | ✅ |
-| Display modes | ✅ | ✅ | ✅ |
-| Status badge | ✅ | ✅ | ✅ |
-| localStorage cache | ✅ | ✅ | ✅ |
-
-## 🎉 Final Status
-
-**PROJECT: COMPLETE & PRODUCTION-READY** ✅
-
-### Deliverables:
-1. ✅ Full-stack web simulation
-2. ✅ Collaborative terrain persistence
-3. ✅ Author-only reset control
-4. ✅ Complete documentation
-5. ✅ GitHub Pages deployment ready
-
-### Ready For:
-- ✅ Public deployment
-- ✅ Multi-browser use
-- ✅ Collaborative contributions
-- ✅ git log timelapse monitoring
-- ✅ Future feature additions
-
----
-
-**Implementation Date**: November 16, 2026  
-**Status**: ✅ Complete & Tested  
-**Documentation**: ✅ Comprehensive  
-**Deployment**: ✅ Ready for GitHub Pages  
-
-See [DEPLOYMENT.md](DEPLOYMENT.md) for next steps! 🚀
+- [ ] Seed the particle generator, for reproducible runs and parameter scans
+- [ ] Make sand relaxation cheaper (see [PERFORMANCE.md](PERFORMANCE.md))
+- [ ] Move the simulation to a Web Worker
+- [ ] Touch gestures (orbit, pinch zoom)
+- [ ] Quantitative branching measures: channel count, drainage density, bifurcation
+  ratios
+- [ ] Rebase local changes on a new shared version instead of replacing them
+- [ ] Cloudflare-side rate limiting for the public endpoints
+- [ ] End-to-end test against a deployed Worker (for example `wrangler dev`)
+- [ ] ESLint and Prettier configuration
+- [ ] Remove or use the unused methods listed above

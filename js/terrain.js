@@ -1,7 +1,30 @@
 const LEGACY_TERRAIN_MESH_SIGNATURE = JSON.stringify(['disk-square-polar-v2', 25, 30, 125, 0.2]);
+const CHANNEL_SAND_FREE_PROFILE = 'channel-sand-free-v1';
 
 /**
- * Circular erodible bed with staggered polar rings and a fixed square surround.
+ * Integer avalanche hash (lowbias32), mirrored from `worker/mesh.mjs`.
+ *
+ * Only 32-bit integer operations are used, so the browser and the Worker
+ * obtain bit-identical vertex positions on every JavaScript engine.
+ *
+ * Args:
+ *   x: integer key (any 32-bit value).
+ *
+ * Returns:
+ *   An unsigned 32-bit integer.
+ */
+function hashUint32(x) {
+    x ^= x >>> 16;
+    x = Math.imul(x, 0x7feb352d);
+    x ^= x >>> 15;
+    x = Math.imul(x, 0x846ca68b);
+    x ^= x >>> 16;
+    return x >>> 0;
+}
+
+/**
+ * Circular erodible bed with staggered, slightly jittered polar rings and a
+ * fixed square surround.
  */
 class TerrainGrid {
     constructor() {
@@ -16,6 +39,11 @@ class TerrainGrid {
         this.peripheralWidth = 4;
         this.initialSandDepth = 0.3;
         this.channelFlare = 0.12;
+        // Vertex jitter radius as a fraction of the spacing: it breaks the
+        // alignments of the rings along the cardinal axes (and hence the
+        // channel axis) that would otherwise favour some flow directions.
+        this.jitter = 0.1;
+        this.jitterSeed = 2026;
         this.vertices = [{ x: 0, z: 0 }];
         this.triangles = [];
         this.ringVertices = [];
@@ -37,6 +65,17 @@ class TerrainGrid {
             }
             this.ringVertices.push(ring);
             this.ringAngles.push(angles);
+        }
+
+        // The triangulation below only uses ring angles, so jittering the
+        // positions keeps it valid as long as the jitter is small. The outer
+        // ring stays on the circle, which keeps the disk edge and the square
+        // surround projected from it exact.
+        const regularDisk = this.vertices.map(point => ({ ...point }));
+        for (let i = 0; i < this.ringVertices[this.rings - 1][0]; i++) {
+            const { dx, dz } = this.jitterOffset(i);
+            this.vertices[i].x += dx;
+            this.vertices[i].z += dz;
         }
 
         this.sectors = this.ringVertices[this.rings - 1].length;
@@ -81,6 +120,8 @@ class TerrainGrid {
             square.push(this.vertices.length);
             this.vertices.push({ x: point.x * factor, z: point.z * factor });
         }
+        // Regular positions are kept to read saves made before the jitter.
+        this.regularVertices = regularDisk.concat(this.vertices.slice(regularDisk.length));
         for (let s = 0; s < this.sectors; s++) {
             const next = (s + 1) % this.sectors;
             this.triangles.push([outer[s], square[s], outer[next]]);
@@ -140,6 +181,32 @@ class TerrainGrid {
         this.initialize();
     }
 
+    /**
+     * Deterministic isotropic displacement of one disk vertex.
+     *
+     * Uniform in a disk, drawn by rejection from a square: unlike a square
+     * jitter it has no preferred cardinal direction, and it avoids
+     * trigonometry, whose last bit may differ between engines.
+     *
+     * Args:
+     *   index: vertex index; the same index always yields the same offset.
+     *
+     * Returns:
+     *   The offset `{ dx, dz }` (m), of length at most jitter * spacing.
+     */
+    jitterOffset(index) {
+        const amplitude = this.jitter * this.spacing;
+        let state = hashUint32(Math.imul(index, 0x9e3779b9) ^ this.jitterSeed);
+        for (let attempt = 0; amplitude > 0 && attempt < 64; attempt++) {
+            state = hashUint32(state);
+            const u = 2 * state / 4294967296 - 1;
+            state = hashUint32(state);
+            const v = 2 * state / 4294967296 - 1;
+            if (u * u + v * v <= 1) return { dx: amplitude * u, dz: amplitude * v };
+        }
+        return { dx: 0, dz: 0 };
+    }
+
     bedrockHeight(x, z, surroundSlope = this.surroundSlope, peripheralSlope = this.peripheralSlope) {
         const radius = Math.hypot(x, z);
         const cone = this.slope * Math.min(this.radius, radius) +
@@ -153,8 +220,25 @@ class TerrainGrid {
         return -this.slope * z * (1 - blend) + cone * blend;
     }
 
+    sandDepthFactor(x, z) {
+        if (z <= 0) return 1;
+        const channelWidth = this.sinkRadius + this.channelFlare * z;
+        const t = Math.abs(x) / channelWidth;
+        if (t <= 1) return 0;
+        if (t >= 1.25) return 1;
+        const blend = (t - 1) / 0.25;
+        return blend * blend * (3 - 2 * blend);
+    }
+
+    sandDepthFactorAt(index) {
+        const point = this.vertices[index];
+        return this.sandDepthFactor(point.x, point.z);
+    }
+
     initialize() {
-        this.vertices.forEach((point, i) => { this.elevation[i] = this.bedrock[i] + this.initialSandDepth; });
+        this.vertices.forEach((point, i) => {
+            this.elevation[i] = this.bedrock[i] + this.initialSandDepth * this.sandDepthFactor(point.x, point.z);
+        });
         this.waterDepth.fill(0);
         this.sediment.fill(0);
         this.velocityX.fill(0);
@@ -188,12 +272,6 @@ class TerrainGrid {
         }
     }
 
-    microbeSuitability(i) {
-        if (i >= this.erodibleCount || this.elevation[i] <= this.bedrock[i] + 1e-8) return 0;
-        return Math.max(0, 1 - this.flowHistory[i] / 0.04) *
-            Math.max(0, 1 - this.vegetation[i] / 0.6);
-    }
-
     locate(x, z) {
         const key = `${Math.floor(x / this.binSize)},${Math.floor(z / this.binSize)}`;
         for (const index of this.bins.get(key) || []) {
@@ -225,12 +303,15 @@ class TerrainGrid {
     }
 
     meshSignature() {
-        return JSON.stringify(['disk-square-polar-v2', this.radius, this.halfSize, this.rings, this.spacing]);
+        return JSON.stringify([
+            'disk-square-polar-v2', this.radius, this.halfSize, this.rings, this.spacing,
+            CHANNEL_SAND_FREE_PROFILE, 'jitter-v1', this.jitter, this.jitterSeed
+        ]);
     }
 
     toJSON() {
         return {
-            version: '12.0',
+            version: '13.0',
             topology: 'disk-square-polar-v2',
             meshSignature: this.meshSignature(),
             timestamp: new Date().toISOString(),
@@ -253,24 +334,39 @@ class TerrainGrid {
                     (Number.isFinite(p.burstProgress) && p.burstProgress >= 0 && p.burstProgress < 1)) &&
                 this.locate(p.x, p.z));
         const savedMeshSignature = json.meshSignature ?? LEGACY_TERRAIN_MESH_SIGNATURE;
-        if (!['10.0', '11.0', '12.0'].includes(json.version) || json.topology !== 'disk-square-polar-v2' ||
-            savedMeshSignature !== this.meshSignature() || !validParticles ||
+        const legacyMeshDimensions = this.radius === 25 && this.halfSize === 30 &&
+            this.rings === 125 && this.spacing === 0.2;
+        if (!['10.0', '11.0', '12.0', '13.0'].includes(json.version) ||
+            json.topology !== 'disk-square-polar-v2' ||
+            (savedMeshSignature !== this.meshSignature() &&
+                !(json.version !== '13.0' && legacyMeshDimensions &&
+                    savedMeshSignature === LEGACY_TERRAIN_MESH_SIGNATURE)) ||
+            !validParticles ||
             arrays.some(a => !Array.isArray(a) || a.length !== this.elevation.length || !a.every(Number.isFinite))) {
             console.warn('Saved terrain is incompatible with the circular mesh');
             return false;
         }
-        const oldSurround = json.version === '10.0';
-        const oldProfile = json.version !== '12.0';
-        const savedBedrock = (i) => oldProfile
-            ? this.bedrockHeight(this.vertices[i].x, this.vertices[i].z, oldSurround ? 0 : this.surroundSlope, 0)
-            : this.bedrock[i];
+        // Saves before version 13.0 were made on the regular (unjittered) mesh.
+        const savedBedrock = (i) => {
+            const point = this.regularVertices[i];
+            if (json.version === '10.0') return this.bedrockHeight(point.x, point.z, 0, 0);
+            if (json.version === '11.0') return this.bedrockHeight(point.x, point.z, this.surroundSlope, 0);
+            if (json.version === '12.0') return this.bedrockHeight(point.x, point.z);
+            return this.bedrock[i];
+        };
         if (json.elevation.some((height, i) => height < savedBedrock(i))) {
             console.warn('Saved terrain extends below the bedrock');
             return false;
         }
         if (json.elevation.some((height, i) =>
-            i >= this.erodibleCount && height < savedBedrock(i) + this.initialSandDepth)) {
+            i >= this.erodibleCount &&
+            height < savedBedrock(i) + this.initialSandDepth * this.sandDepthFactorAt(i))) {
             console.warn('Saved terrain erodes the fixed surround');
+            return false;
+        }
+        if (json.version === '13.0' && json.elevation.some((height, i) =>
+            this.sandDepthFactorAt(i) === 0 && height > this.bedrock[i] + 1e-12)) {
+            console.warn('Saved terrain adds sand to the output channel');
             return false;
         }
         for (const [name, max] of [['flowHistory', Infinity], ['vegetation', 1]]) {
@@ -295,11 +391,10 @@ class TerrainGrid {
                 return false;
             }
         }
-        this.elevation.set(json.elevation);
-        if (oldProfile) {
-            for (let i = 0; i < this.elevation.length; i++) {
-                this.elevation[i] = this.bedrock[i] + (json.elevation[i] - savedBedrock(i));
-            }
+        for (let i = 0; i < this.elevation.length; i++) {
+            const sand = Math.max(0, json.elevation[i] - savedBedrock(i));
+            const profileFactor = json.version === '13.0' ? 1 : this.sandDepthFactorAt(i);
+            this.elevation[i] = this.bedrock[i] + sand * profileFactor;
         }
         this.waterDepth.set(json.waterDepth);
         this.sediment.set(json.sediment);

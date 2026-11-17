@@ -21,7 +21,16 @@ test('saved terrain is rejected when mesh dimensions change, even at the same ve
     delete saved.meshSignature;
     assert.equal(grid.fromJSON(saved), false);
     grid.radius -= 1;
-    assert.equal(grid.fromJSON(saved), true);
+    assert.equal(grid.fromJSON(saved), false);
+    const legacy = grid.toJSON();
+    legacy.version = '12.0';
+    delete legacy.meshSignature;
+    // Version 12.0 saves were made on the regular mesh with uniform sand.
+    legacy.elevation = grid.regularVertices.map(point =>
+        grid.bedrockHeight(point.x, point.z) + grid.initialSandDepth);
+    assert.equal(grid.fromJSON(legacy), true);
+    grid.radius += 1;
+    assert.equal(grid.fromJSON(legacy), false);
 });
 
 function totalSediment(grid, physics) {
@@ -202,17 +211,6 @@ test('microorganism colors appear on sand without hiding plants or high-flow gro
     assert.ok(color.r < 0.1 && color.b < 0.1);
 });
 
-test('terrain sync does not merge visitor-local biology', () => {
-    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'github-sync.js'), 'utf8'), context);
-    const sync = vm.runInContext('new GitHubSync()', context);
-    const local = { version: '10.0', topology: 'disk', elevation: [1, 1], vegetation: [0.7, 0.1] };
-    const remote = { ...local, vegetation: [0.2, 0.8] };
-    const merged = sync.mergeTerrain(local, remote);
-    assert.deepEqual(Array.from(merged.vegetation), [0.7, 0.1]);
-    assert.deepEqual(Array.from(sync.mergeTerrain(local, { ...remote, vegetation: undefined }).vegetation),
-        [0.7, 0.1]);
-});
-
 test('polar mesh covers a full disk and its square surround', () => {
     const grid = new TerrainGrid();
     assert.ok(grid.vertices.length > 4096);
@@ -231,7 +229,8 @@ test('polar mesh covers a full disk and its square surround', () => {
     assert.ok(grid.ringAngles[4][1] !== 2 * Math.PI / grid.ringVertices[4].length);
     grid.vertices.forEach((point, i) => {
         assert.ok(Math.abs(grid.bedrock[i] - grid.bedrockHeight(point.x, point.z)) < 1e-12);
-        assert.ok(Math.abs(grid.elevation[i] - grid.bedrock[i] - grid.initialSandDepth) < 1e-12);
+        assert.ok(Math.abs(grid.elevation[i] - grid.bedrock[i] -
+            grid.initialSandDepth * grid.sandDepthFactorAt(i)) < 1e-12);
     });
     const outerRing = grid.ringVertices[grid.rings - 1];
     for (let s = 0; s < grid.sectors; s++) {
@@ -243,6 +242,43 @@ test('polar mesh covers a full disk and its square surround', () => {
             assert.ok(grid.sample(x, z), `missing mesh at ${x},${z}`);
         }
     }
+});
+
+test('disk vertices are jittered isotropically by at most a tenth of the spacing', () => {
+    const grid = new TerrainGrid();
+    const amplitude = grid.jitter * grid.spacing;
+    const offsets = grid.vertices.map((point, i) => ({
+        dx: point.x - grid.regularVertices[i].x,
+        dz: point.z - grid.regularVertices[i].z
+    }));
+    const disk = offsets.slice(0, grid.ringVertices[grid.rings - 1][0]);
+    const lengths = disk.map(({ dx, dz }) => Math.hypot(dx, dz));
+    assert.ok(lengths.every(length => length <= amplitude + 1e-15));
+    // A uniform disk has a mean radius of 2/3 of its radius.
+    const meanLength = lengths.reduce((sum, length) => sum + length, 0) / lengths.length;
+    assert.ok(Math.abs(meanLength / amplitude - 2 / 3) < 0.01);
+    const meanDx = disk.reduce((sum, { dx }) => sum + dx, 0) / disk.length;
+    const meanDz = disk.reduce((sum, { dz }) => sum + dz, 0) / disk.length;
+    const varianceDx = disk.reduce((sum, { dx }) => sum + dx * dx, 0) / disk.length;
+    const varianceDz = disk.reduce((sum, { dz }) => sum + dz * dz, 0) / disk.length;
+    assert.ok(Math.abs(meanDx) < 0.01 * amplitude && Math.abs(meanDz) < 0.01 * amplitude);
+    assert.ok(Math.abs(varianceDx / varianceDz - 1) < 0.05);
+    assert.ok(offsets.slice(disk.length).every(({ dx, dz }) => dx === 0 && dz === 0));
+    const again = new TerrainGrid();
+    assert.ok(again.vertices.every((point, i) =>
+        point.x === grid.vertices[i].x && point.z === grid.vertices[i].z));
+});
+
+test('the initial terrain leaves the output-channel bed and flanks sand-free', () => {
+    const grid = new TerrainGrid();
+    const channel = grid.vertices.map((point, i) =>
+        point.z > 0 && grid.sandDepthFactorAt(i) === 0 ? i : -1).filter(i => i >= 0);
+    assert.ok(channel.length > 0);
+    for (const i of channel) assert.equal(grid.elevation[i], grid.bedrock[i]);
+    const transition = grid.vertices.findIndex((point, i) =>
+        point.z > 0 && grid.sandDepthFactorAt(i) > 0 && grid.sandDepthFactorAt(i) < 1);
+    assert.ok(transition >= 0);
+    assert.ok(grid.elevation[transition] > grid.bedrock[transition]);
 });
 
 test('water is reinjected inside the erodible disk around the entire boundary', () => {
@@ -376,6 +412,24 @@ test('evaporation on the fixed surround deposits on the underlying face', () => 
     assert.equal(grid.fromJSON(saved), true);
 });
 
+test('evaporation and transport do not deposit sand on the output-channel bed or flanks', () => {
+    const grid = new TerrainGrid();
+    const physics = new PhysicsEngine(grid);
+    const index = grid.vertices.findIndex((point, i) =>
+        point.z > 0 && grid.sandDepthFactorAt(i) === 0);
+    const { x, z } = grid.vertices[index];
+    const particle = { x, z, vx: 0, vz: 0, sediment: 0.1 };
+    const original = grid.elevation[index];
+    physics.depositEvaporatedSediment(particle);
+    assert.equal(grid.elevation[index], original);
+    assert.equal(particle.sediment, 0.1);
+    physics.g = 0;
+    physics.friction = 0;
+    physics.moveParticle(particle, 0.04);
+    assert.equal(grid.elevation[index], original);
+    assert.ok(particle.sediment > 0);
+});
+
 test('bursting particles do not collide with moving water', () => {
     const physics = new PhysicsEngine(new TerrainGrid());
     const fading = { x: 10, z: -5, vx: 0, vz: 0, sediment: 0, burstProgress: 0.5 };
@@ -460,6 +514,7 @@ test('sand avalanches at steep mesh edges without disturbing a stable slope', ()
     for (let i = 0; i < 20; i++) physics.relaxSand(0.04);
     assert.ok(grid.elevation[1] < peak - 2);
     assert.ok(grid.edges.every(edge =>
+        grid.sandDepthFactorAt(edge.a) === 0 || grid.sandDepthFactorAt(edge.b) === 0 ||
         Math.abs(grid.elevation[edge.a] - grid.elevation[edge.b]) / edge.length <
             physics.sandReposeSlope + 0.01));
     assert.ok(grid.elevation.every((height, i) => height >= grid.bedrock[i]));
@@ -476,7 +531,7 @@ test('saves from the previous planar bed are rejected, current ones round-trip',
     const legacy = { ...saved, vegetation: Array.from(grid.vegetation),
         flowHistory: Array.from(grid.flowHistory), microbeU: Array.from(grid.microbeU),
         microbeV: Array.from(grid.microbeV) };
-    assert.equal(saved.version, '12.0');
+    assert.equal(saved.version, '13.0');
     for (const version of ['5.0', '6.0', '7.0', '9.0']) assert.equal(grid.fromJSON({ ...saved, version }), false);
     assert.equal(grid.fromJSON(saved), true);
     grid.initialize();
@@ -591,22 +646,33 @@ test('erosion tapers at the disk edge without preventing deposition', () => {
 test('version 10 saves raise the surround without changing the sand or particles', () => {
     const grid = new TerrainGrid();
     const physics = new PhysicsEngine(grid);
-    grid.elevation[100] += 0.1;
+    const sandIndex = grid.vertices.findIndex((point, i) =>
+        i < grid.erodibleCount && grid.sandDepthFactorAt(i) === 1);
+    grid.elevation[sandIndex] += 0.1;
     physics.particles[0].sediment = 0.2;
     const saved = grid.toJSON();
     saved.version = '10.0';
     for (let i = 0; i < grid.vertices.length; i++) {
-        const point = grid.vertices[i];
+        // Older saves were made on the regular (unjittered) mesh.
+        const point = grid.regularVertices[i];
         saved.elevation[i] = grid.bedrockHeight(point.x, point.z, 0, 0) + grid.initialSandDepth;
     }
-    saved.elevation[100] += 0.1;
+    saved.elevation[sandIndex] += 0.1;
     const before = totalSediment(grid, physics);
     assert.equal(grid.fromJSON(saved), true);
-    assert.equal(grid.elevation[100], saved.elevation[100]);
+    const regular = grid.regularVertices[sandIndex];
+    assert.ok(Math.abs(grid.elevation[sandIndex] - grid.bedrock[sandIndex] -
+        (saved.elevation[sandIndex] - grid.bedrockHeight(regular.x, regular.z, 0, 0))) < 1e-12);
+    const channelIndex = grid.vertices.findIndex((point, i) =>
+        point.z > 0 && grid.sandDepthFactorAt(i) === 0);
+    assert.equal(grid.elevation[channelIndex], grid.bedrock[channelIndex]);
     assert.equal(physics.particles[0].sediment, 0.2);
     assert.ok(Math.abs(totalSediment(grid, physics) - before) < 1e-8);
-    assert.ok(grid.elevation.slice(grid.erodibleCount).every((height, j) =>
-        Math.abs(height - grid.bedrock[j + grid.erodibleCount] - grid.initialSandDepth) < 1e-12));
+    grid.elevation.forEach((height, i) => {
+        const savedDeposit = i === sandIndex ? 0.1 : 0;
+        assert.ok(Math.abs(height - grid.bedrock[i] -
+            grid.initialSandDepth * grid.sandDepthFactorAt(i) - savedDeposit) < 1e-12);
+    });
     saved.elevation[grid.erodibleCount] -= 0.1;
     assert.equal(grid.fromJSON(saved), false);
 });
@@ -619,7 +685,8 @@ test('version 11 saves retain sand and particles when the peripheral profile is 
     const index = grid.ringVertices[grid.rings - 5][0];
     saved.particles[0].sediment = 0.17;
     for (let i = 0; i < grid.vertices.length; i++) {
-        const point = grid.vertices[i];
+        // Older saves were made on the regular (unjittered) mesh.
+        const point = grid.regularVertices[i];
         saved.elevation[i] = grid.bedrockHeight(point.x, point.z, grid.surroundSlope, 0) + grid.initialSandDepth;
     }
     saved.elevation[index] += 0.2;

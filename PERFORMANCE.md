@@ -1,142 +1,76 @@
-# Performance Optimization Notes
+# Performance
 
-## Current Specifications
+## How time advances
 
-- **Grid size**: 64×64 cells (4,096 values)
-- **Simulation frequency**: 60 FPS (target)
-- **Time step**: 0.01s (physics), scaling via UI
-- **Rendering**: 3D mesh update + color remapping
+`Application.animate()` takes **one** physics step per `requestAnimationFrame`.
+With the defaults, the step is $\Delta t = 0.04$ sim s, split into 2 substeps. The
+simulation therefore advances $0.04 \times$ (frames per second) sim s per
+wall-clock second. A slow device does not lose accuracy, but its simulation runs
+more slowly. The **+**/**-** and **↑**/**↓** controls lengthen the step, and the
+number of substeps grows with it, so they do not make a frame cheaper.
 
-## Performance Metrics
+## Measured cost
 
-| Component | CPU Time | Notes |
-|-----------|----------|-------|
-| Physics step | ~2-3ms | Shallow water + sediment transport |
-| Mesh update | ~1-2ms | Geometry + vertex colors |
-| Rendering | ~3-5ms | Three.js + WebGL |
-| GitHub sync | <1ms | Async, no blocking |
-| **Total** | **~8-12ms** | Leaves ~20ms for OS (60 FPS budget) |
+Measured on 2026-11-17 by running the browser modules under Node.js 26 (V8) on one
+core of an Apple M3 Ultra. The code is single-threaded, the mesh jittered, and
+the averages are over 40 calls. Browsers use the same V8 or a comparable
+engine; rendering comes on top.
 
-## Why Float32Array?
+| Operation | Time | Per frame |
+| --- | --- | --- |
+| `PhysicsEngine.step()` (2 substeps) | 48 ms | 48 ms |
+| of which `relaxSand()` (4 sweeps × 150,005 edges) | 18 ms per substep | ≈ 36 ms |
+| of which `collideParticles()` | 1.3 ms per substep | ≈ 3 ms |
+| `BiologyGrid.step()`, averaged | 26 ms | 26 ms |
+| of which `updateColonies(0.16)` | 97 ms, every 4th frame | ≈ 24 ms |
+| `new TerrainGrid()` | 270 ms | once |
+| `new BiologyGrid()` | 90 ms | once |
 
-- **Memory efficient**: 4 bytes/value vs 8 bytes for JS numbers
-- **SIMD friendly**: GPU-ready format for future WebGL compute shaders
-- **Zero-copy**: Can be passed directly to WebGL uniforms
+Physics and biology alone take about **75 ms per frame**, so the frame rate is
+at most about 13 frames per second before rendering. Rendering adds, every
+frame:
 
-## WebGL Compute Shaders (Future)
+- the upload and `computeVertexNormals()` of the 50,264-vertex terrain;
+- in `elevation` mode, the same for the 65,536-vertex biology overlay;
+- 1,500 calls to `sample()`, which places the parcels on the bed.
 
-For grids > 128×128:
+To reproduce, load `js/terrain.js`, `js/physics.js` and `js/biology.js` into a
+`node:vm` context, as `tests/terrain-physics.test.js` does, and time the calls
+with `performance.now()`. In the browser, use DevTools → Performance and look
+for `step`, `relaxSand`, `updateColonies` and `updateTerrainMesh`.
 
-```glsl
-// Example compute shader for physics step
-layout(local_size_x = 8, local_size_y = 8) in;
-void main() {
-    // Parallel shallow water calculation
-    // Would run on GPU, 64x speedup possible
-}
-```
+## Where the time goes
 
-## Bottlenecks & Solutions
+1. **Sand relaxation.** Four full sweeps over all edges in every substep, even
+   where no slope exceeds the angle of repose. It is the largest single cost.
+2. **Colony update.** About 18 passes over 65,536 cells every 0.16 sim s: 4 flow
+   dilations, 12 plant dilations, then one habitat pass and one Euler pass.
+3. **Geometry upload.** Normals and colours are recomputed for every vertex every
+   frame.
+4. **Point location.** `locate()` scans the triangles of a 1 u bin and builds a
+   string key for each lookup, several times per parcel per substep.
 
-### 1. **Gradient calculations** (current)
-- Naïve finite differences: O(N²) per step
-- **Solution**: 2D convolution with SIMD or WebGL (future)
+## Options, from cheapest to most involved
 
-### 2. **Mesh update**
-- Full geometry re-upload every frame
-- **Solution**: Only update vertices that changed (vertex buffering)
-- **Fallback**: WebGL compute shader
+| Option | Expected gain | Caveat |
+| --- | --- | --- |
+| Run `relaxSand()` once per frame, or on edges near recent changes only | Up to ~30 ms per frame | Steeper transient slopes; check the avalanche tests |
+| Cache each parcel's triangle and walk to neighbours instead of `locate()` | Several ms | More state per parcel |
+| Integer bin keys instead of template strings | A few ms | — |
+| Update normals and colours every second or third frame | Several ms of rendering | Slightly delayed visuals |
+| Move physics and biology to a Web Worker | Frees the main thread | Needs transferable buffers for elevation and parcels |
+| Several physics steps per frame on fast devices | Faster simulated time | Costs proportionally more CPU |
+| WebGL/WebGPU compute for biology | Large | Major rewrite |
 
-### 3. **GitHub sync**
-- Network I/O: ~200-500ms per request
-- **Solution**: Async (non-blocking), already done ✓
-- **Optimization**: Batch multiple simulation frames between syncs
+None of these is implemented. Any change to the order of operations can alter
+sediment conservation; `npm test` checks it.
 
-## Optimization Checklist
+## Network and storage
 
-- [x] Use Float32Array for all numerical data
-- [x] Async GitHub sync (non-blocking)
-- [x] localStorage caching (avoid re-fetch)
-- [x] Single Three.js mesh (no per-cell objects)
-- [x] requestAnimationFrame for timing
-- [ ] WebGL compute shaders (64×64 not needed yet)
-- [ ] Spatial partitioning (for collision, not needed)
-- [ ] Multi-threading (Web Workers - future enhancement)
-
-## Testing Performance
-
-### Measure FPS
-```js
-console.log(`FPS: ${1 / deltaTime}`);
-```
-
-### Profile physics
-```js
-console.time('physics');
-physics.step();
-console.timeEnd('physics');
-```
-
-### Monitor memory
-```js
-console.log(performance.memory.usedJSHeapSize / 1e6, 'MB');
-```
-
-## Scaling Paths
-
-| Grid | Recommendation | Est. FPS |
-|------|-----------------|----------|
-| 32×32 | CPU (current) | 120+ |
-| **64×64** | **CPU (current)** | **60** ✓ |
-| 128×128 | CPU or WebGL | 30-60 |
-| 256×256 | **WebGL compute shaders** | 30-60 |
-| 512×512+ | GPU only | 15-30 |
-
-## Energy Calculation Optimization
-
-For convergence detection:
-
-```js
-// Current O(N²) - acceptable
-let energy = 0;
-for (let i = 0; i < width * height; i++) {
-    energy += (u[i]² + v[i]²) * h[i];
-}
-
-// Future: WebGL reduction shader
-// Would compute in parallel on GPU
-```
-
-## Recommendations for 128×128
-
-1. Keep physics on CPU (minimal overhead)
-2. Move mesh updates to WebGL compute if needed
-3. Reduce color remapping frequency (every 2-3 frames)
-4. Use normal maps for lighting instead of vertex colors
-
-## Debug Performance
-
-Enable performance overlay (add to index.html):
-
-```html
-<div id="debug-perf" style="position: fixed; top: 80px; right: 20px; 
-     background: rgba(0,0,0,0.8); color: #0f0; font-family: monospace; 
-     padding: 10px; font-size: 11px; z-index: 999;">
-    FPS: <span id="fps">--</span> | Physics: <span id="phys-time">--</span>ms
-</div>
-
-<script>
-let frameCount = 0, lastTime = performance.now();
-setInterval(() => {
-    const now = performance.now();
-    const fps = frameCount / ((now - lastTime) / 1000);
-    document.getElementById('fps').textContent = fps.toFixed(0);
-    frameCount = 0;
-    lastTime = now;
-}, 1000);
-</script>
-```
-
----
-
-**Conclusion**: Current implementation achieves target 60 FPS at 64×64 grid. Scaling to 256×256+ requires WebGL compute shaders, which is well-documented path for browser-based physics simulations.
+- A sync uploads a gzip-compressed float32 delta: 201,056 bytes before
+  compression, much less when most vertices did not change. The upload limit is
+  300,000 bytes.
+- A response that includes the terrain carries about 0.9 MB of JSON. Heartbeats
+  at the current version omit it.
+- Local saves are about 1.5 million characters (terrain) and 0.7 million
+  (biology).

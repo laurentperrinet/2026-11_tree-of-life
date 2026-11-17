@@ -70,20 +70,6 @@ class LocalStorageManager {
     }
     
     /**
-     * Clear localStorage
-     */
-    clear() {
-        try {
-            localStorage.removeItem(this.storageKey);
-            console.log('Cleared localStorage');
-            return true;
-        } catch (e) {
-            console.error('Failed to clear localStorage:', e);
-            return false;
-        }
-    }
-    
-    /**
      * Get size of stored data (approximate)
      */
     getSize() {
@@ -92,20 +78,6 @@ class LocalStorageManager {
             return stored ? stored.length : 0;
         } catch (e) {
             return 0;
-        }
-    }
-    
-    /**
-     * Check if storage is available
-     */
-    static isAvailable() {
-        try {
-            const test = '__localStorage_test__';
-            localStorage.setItem(test, test);
-            localStorage.removeItem(test);
-            return true;
-        } catch (e) {
-            return false;
         }
     }
 }
@@ -185,12 +157,5 @@ class SessionStorageManager {
         } catch (e) {
             return false;
         }
-    }
-    
-    /**
-     * Check if token exists
-     */
-    hasToken() {
-        return this.getToken() !== null;
     }
 }

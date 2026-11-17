@@ -1,278 +1,162 @@
-# 🗺️ Code Navigation Map
+# Code map
 
-## Quick Reference by Task
+Where each mechanism lives. The symbols are those of [README.md](README.md),
+section 1. Line numbers are omitted on purpose because they drift; search for the
+method name instead.
 
-### 🎮 "How do I change controls?"
-**File**: [`js/controls.js`](/js/controls.js)  
-**Lines**: 1-160  
-**What**: Keyboard (Q, E, V, H, D, S, R) and mouse input handling  
-**Key functions**: 
-- `handleKeyDown()` - Maps keys to physics parameters
-- `handleMouseMove()` - Rotate/zoom the 3D view
-- `displayHelp()` - Show available controls
+## Start-up and frame loop: `js/main.js`
 
----
+`Application`
 
-### 🌊 "How does the physics work?"
-**Files**: [`js/physics.js`](/js/physics.js) + [`js/terrain.js`](/js/terrain.js)  
-**Physics** (lines 1-290):
-- `calculateFlow()` - Shallow water momentum equations
-- `transportSediment()` - Exner equation for erosion
-- `erodeTerrain()` - Apply sediment transport
-- `checkCFLCondition()` - Ensure stability
+- `constructor()` builds, in order: `TerrainGrid` → `PhysicsEngine` →
+  `BiologyGrid` → `TerrainRenderer`. Then the stores (terrain, biology,
+  simulation time) and `CollaborativeSync`. Then `AuthManager` (client ID,
+  callback URL and Worker exchange URL are hard-coded here), `ResetManager`,
+  `UIManager` and `InputControls`.
+- `initialize()` runs the OAuth callback or restores the session, loads the local
+  terrain, then the local biology. Without a biology save, it imports the legacy
+  biology or starts fresh. It then runs a first sync (failures only show a toast),
+  builds the meshes and starts `animate()`.
+- `animate()` makes one `physics.step()` per `requestAnimationFrame`, then
+  `biology.step(dt)`. Every 5 s it saves the biology and the simulation time. It
+  then updates the renderer and the status bar.
+- `handleUrlParams()` handles `?reset=1[&hard=1]` one second after start-up, owner only.
 
-**State** (terrain.js lines 1-230):
-- `TerrainGrid` class - 2D arrays for h, u, v, c, z
-- `PhysicsEngine` reports mean rim-to-sink transit time and rolling recycled-sand throughput
-- `toJSON()` / `fromJSON()` - Serialization
+## Terrain: `js/terrain.js`
 
-**Key equations at**:
-- Line 60-90 (shallow water momentum)
-- Line 130-160 (sediment transport)
-- `js/physics.js` sink crossing (outflow metrics)
+`TerrainGrid`
 
----
+| Task | Method or field |
+| --- | --- |
+| Build rings, triangles, square surround | `constructor()` (ring loop, seam-closing merge of two sorted rings) |
+| Jitter the disk vertices ($j$, seed) | `jitterOffset(index)` with the module function `hashUint32` |
+| Bedrock $\beta$: cone, peripheral band, channel | `bedrockHeight(x, z, …)` |
+| Sand factor $\phi$ | `sandDepthFactor(x, z)`, `sandDepthFactorAt(i)` |
+| Initial sand, reset of per-vertex fields | `initialize()` |
+| Lumped areas $A_i$, unique edges, spatial bins | `vertexArea`, `edges`, `bins` (built in the constructor) |
+| Point location and barycentric weights | `locate(x, z)` |
+| Interpolated height and slope $\nabla\eta$ | `sample(x, z)` |
+| Mesh signature, save, load and migration | `meshSignature()`, `toJSON()`, `fromJSON(json)` |
+| Legacy per-vertex microbes | `seedMicrobes()`; `microbeSuitability()` is not called |
 
-### 🤝 "How does collaboration work?"
-**File**: [`js/github-sync.js`](/js/github-sync.js)  
-**Lines**: 1-300  
-**What**: Fetch terrain.json, merge changes, commit back  
-**Key functions**:
-- `syncLoop()` (line 270) - Main sync orchestrator
-- `fetchTerrainFromGitHub()` (line 70) - Get current state
-- `commitTerrainToGitHub()` (line 130) - Save new state
-- `mergeTerrains()` (line 150) - Max-elevation merge strategy
+`erodibleCount` is the index of the first edge-ring vertex. Vertices below it are
+erodible. `regularVertices` keeps the positions before the jitter, so that old
+saves can be read.
 
-**Timing**:
-- Line 240-250: Rate limiting (15s fetch, 60s commit)
-- Line 280: Async sync loop
+## Water and sediment: `js/physics.js`
 
----
+`PhysicsEngine`
 
-### 🔐 "How does authentication work?"
-**File**: [`js/auth.js`](/js/auth.js)  
-**Lines**: 1-230  
-**What**: GitHub OAuth and reset management  
-**Key functions**:
-- `startOAuthFlow()` (line 50) - Initialize OAuth redirect
-- `handleOAuthCallback()` (line 100) - Handle auth response
-- `canReset()` (line 120) - Check if user is @laurentperrinet
-- `softReset()` / `hardReset()` (line 150-180) - Reset terrain
+| Task | Method |
+| --- | --- |
+| Step size, substeps, projection to $h_i$, $c_i$, $\mathbf{u}_i$ | `step()` |
+| Gravity, friction, speed cap, sediment exchange, walls, sink | `moveParticle(particle, dt)` |
+| Burst hazard and fade | `updateParticle(particle, dt)` |
+| Deposit of an evaporated load | `depositEvaporatedSediment(particle)` |
+| Soft pressure between parcels (spatial hash of size $2a$) | `collideParticles(dt)` |
+| Angle-of-repose avalanches (4 sweeps) | `relaxSand(dt)` |
+| Erosion fade near the edge $e_j$ | `erosionFactor(index)` |
+| Reinjection inside the polygon edge | `reinject(particle)`, `arcBoundary(angle)` |
+| Initial parcels spread over the disk | `createParticles()` |
+| Transit time and particle flow | `recordSinkExit()`, `getMeanTransitTime()`, `getParticleThroughput()`; `getSandThroughput()` is tested but not displayed |
+| Reset parcels, statistics and terrain | `reset()` |
 
-**Reset triggers**:
-- URL: `?reset=1` (soft) or `?reset=1&hard=1` (hard)
-- Requires verified login
-- Soft: Clear cache, hard: Reinitialize cirque
+## Biology: `js/biology.js`
 
----
+`BiologyGrid`
 
-### 🎨 "How is it rendered?"
-**File**: [`js/renderer.js`](/js/renderer.js)  
-**Lines**: 1-340  
-**What**: Three.js 3D visualization  
-**Key functions**:
-- `initThreeJS()` (line 30) - Setup scene, camera, renderer
-- `updateMesh()` (line 100) - Update terrain geometry
-- `render()` (line 180) - Render loop
-- `setDisplayMode()` (line 200) - Switch visualization (elevation/flux/sediment)
+| Task | Method |
+| --- | --- |
+| Map grid cells to mesh triangles (`faces`, `weights`, `active`) | `constructor(terrain)` |
+| Seed patches $\Sigma$ and initial $U$, $V$ | `reset()` |
+| Interpolate a vertex field at a cell | `terrainValue(i, values)` |
+| Sand mask $m$ | `updateSand()` |
+| Flow memory $F$, colony timer | `step(dt)` |
+| Dilations $N$, $N_P$, habitat $H$, bank $B$, Euler steps of $P$, $I$, $U$, $V$ | `updateColonies(dt)` |
+| Import the former per-vertex biology | `importLegacy()` |
+| 16-bit base64 save | `toJSON()`, `fromJSON(json)` |
 
-**Display modes**:
-- Line 210: Height-based coloring
-- Line 220: Velocity magnitude
-- Line 230: Sediment concentration
+## Rendering: `js/renderer.js`
 
----
+`TerrainRenderer`
 
-### 📊 "How are stats displayed?"
-**File**: [`js/ui.js`](/js/ui.js)  
-**Lines**: 1-210  
-**What**: Status badge, toasts, notifications  
-**Key functions**:
-- `updateStatusBadge()` (line 30) - Show live statistics
-- `showToast()` (line 80) - Popup notifications
-- `updateAuthStatus()` (line 120) - Show login state
+| Task | Method |
+| --- | --- |
+| Scene, top-down camera, lights | `constructor(canvas)`, `onWindowResize()` (keeps the disk in view on portrait screens) |
+| Terrain geometry and colours per display mode | `createTerrainMesh()`, `updateTerrainMesh()`, `updateTerrainColors()` |
+| Biology overlay (`elevation` mode only) | `createBiologyMesh()`, `updateBiologyMesh()`, `volcanicColor()` |
+| Sand-depth colour map | `deepColor(t)`, `TerrainRenderer.DEEP`, `SAND_DEPTH_DISPLAY_MAX` |
+| Instanced parcels with a burst shader patch | `updateParticles(physics)` |
+| Mode order | `cycleDisplayMode()` |
 
-**Status badge shows**:
-- Contributor count
-- Last sync time
-- Current energy (E_t)
-- Stability status (< threshold = converged)
+## Collaboration: `js/collaboration.js`
 
----
+`CollaborativeSync`
 
-### 💾 "How is data persisted?"
-**Files**: [`js/local-storage.js`](/js/local-storage.js) + `data/terrain.json`  
-**localStorage** (js/local-storage.js, lines 1-145):
-- `cacheTerrainLocally()` - Save to browser storage
-- `getCachedTerrain()` - Load from cache
-- Size limit: 5-10 MB on most browsers
-- Fallback: Continue simulation if quota exceeded
+| Task | Method |
+| --- | --- |
+| Random browser ID in `localStorage` | `getClientId()` |
+| One request: delta, headers, response | `performSync()` (wrapped by `sync()`, which de-duplicates calls in flight) |
+| gzip with `CompressionStream` | `compress(delta)` |
+| Validate the response, adopt a new version, save locally | `applyState(data)` |
+| Timer, interval, exponential backoff | `start()`, `schedule()`, `stop()` |
+| Manual sync (**S**), never under the interval | `syncNow()` (alias `fetchAndMerge()`) |
+| Owner reset | `reset(token)` |
+| Status bar values | `getSecondsSinceSync()`, `getSecondsUntilSync()` |
 
-**GitHub Persistence** (data/terrain.json):
-- JSON format: arrays for h, u, v, c, z
-- Max 1 MB to avoid GitHub limits
-- Updated every 60 seconds (configurable)
-- Full history in git log
+`recordChange()` is an empty hook left from the GitHub version.
 
----
+## Authentication and reset: `js/auth.js`
 
-### 🚀 "How do I deploy this?"
-**Files**: 
-- [`index.html`](/index.html) - Entry point
-- [`js/main.js`](/js/main.js) (line ~15) - Configure OAuth Client ID
-- [`.github/workflows/deploy.yml`](/.github/workflows/deploy.yml) - Auto-deploy
+- `AuthManager`: `login()` stores a random `state` and redirects to GitHub.
+  `initialize()` checks `state` on return, then `exchangeCode()` posts the code
+  to the Worker. `fetchUser()` verifies the token with `api.github.com/user`.
+  `canReset()` compares the login with `laurentperrinet`. `isConfigured()`
+  requires HTTPS and an exact callback URL match.
+- `ResetManager`: `softReset()` calls the Worker reset, then resets the physics
+  and biology and saves both. `hardReset()` is the same operation behind a
+  confirmation flag. `getStatus()` is not called.
 
-**Steps**:
-1. Edit `js/main.js`: Add GitHub OAuth Client ID
-2. Push to GitHub
-3. Enable Pages (Settings → Pages → main branch)
-4. Auto-deployed by GitHub Actions
+## Interface: `js/ui.js`, `js/controls.js`, `index.html`, `css/style.css`
 
-See [DEPLOYMENT.md](DEPLOYMENT.md) for full setup.
+- `UIManager.updateStatus()` updates the six indicators at most once per second.
+  `updateAdminPanel()` shows the panel with `?admin`, and the controls once signed
+  in. `confirmReset()` needs a second **R** within 3 s.
+- `InputControls.onKeyDown()`: **D** for everyone. The other keys need sign-in
+  and `?admin`. Mouse drag orbits, the wheel zooms (10–100 u), and the camera
+  always looks at the origin.
+- `index.html` holds the status bar, the help dialogue (its text duplicates the
+  README status table) and the script order.
 
----
+## Persistence: `js/local-storage.js`
 
-## File Dependencies
+- `LocalStorageManager(key, maxAgeHours)`: JSON wrapper with a format version and
+  an age limit. Terrain: 24 h. Biology: no limit.
+- `SimulationTimeTracker`: one key per tab (`…-v1:<uuid>`). `getTotal()` sums all
+  tabs.
+- `SessionStorageManager`: the GitHub token.
 
-```
-index.html
-    ↓ (loads in order)
-├─→ js/main.js              (orchestrates all modules)
-│   ├─→ js/terrain.js       (state management)
-│   ├─→ js/physics.js       (simulation engine)
-│   ├─→ js/renderer.js      (3D visualization)
-│   ├─→ js/controls.js      (keyboard/mouse input)
-│   ├─→ js/github-sync.js   (collaboration)
-│   ├─→ js/auth.js          (authentication)
-│   ├─→ js/local-storage.js (offline persistence)
-│   └─→ js/ui.js            (user interface)
-├─→ css/style.css           (styling)
-└─→ Three.js (CDN)          (3D library)
-```
+## Worker: `worker/index.mjs`, `worker/mesh.mjs`
 
-**No build step required** - all JS runs directly in browser!
+| Task | Function |
+| --- | --- |
+| Routing, CORS (GitHub Pages origin only) | default export `fetch(request, env)` |
+| OAuth code exchange (uses `GITHUB_CLIENT_SECRET`) | `exchangeCode()` |
+| Owner check by numeric GitHub ID | `authenticateOwner()` |
+| Size-limited body and gzip decoding | `readStreamLimited()`, `readDelta()` |
+| Load, migrate or recreate the state | `Simulation.loadState()` |
+| Heartbeat, activity, validation, accumulation | `Simulation.sync()` |
+| Mean of the deltas, new version | `Simulation.finalizeContributions()` |
+| Response body | `Simulation.stateResponse()` |
+| Mesh, bedrock and sand mirrored from the browser | `createInitialMesh()`, `meshJitter()`, `hashUint32()`, `channelSandFactor()` |
+| Sync interval | `getSyncIntervalMs()` |
 
----
+## Tests
 
-## Code Statistics by File
-
-| File | Lines | Purpose | Key Exports |
-|------|-------|---------|--------------|
-| `js/main.js` | ~200 | Orchestration | App class |
-| `js/terrain.js` | ~230 | State | TerrainGrid class |
-| `js/physics.js` | ~290 | Simulation | PhysicsEngine class |
-| `js/renderer.js` | ~340 | Visualization | Renderer class |
-| `js/github-sync.js` | ~300 | Collaboration | GitHubSync, SyncLoop |
-| `js/auth.js` | ~230 | Authentication | AuthManager, ResetManager |
-| `js/controls.js` | ~160 | Input | ControlHandler class |
-| `js/local-storage.js` | ~145 | Persistence | LocalStorage class |
-| `js/ui.js` | ~210 | UI | UIManager class |
-| `css/style.css` | ~370 | Styling | - |
-| `index.html` | ~60 | DOM | - |
-| **Total** | **~2,200** | | |
-
----
-
-## Finding Specific Physics
-
-### Shallow Water Equations
-**File**: `js/physics.js`, lines 60-90  
-Implements: `∂u/∂t + u·∇u = -g∇h - c|u|u`
-
-### Sediment Transport (Exner)
-**File**: `js/physics.js`, lines 130-160  
-Implements: `∂z/∂t = -∇·q_s`
-
-### Convergence Detection
-**File**: `js/terrain.js`, lines 145-155  
-Uses energy: `E(t) = Σ(u² + v²)·h`
-
-### CFL Stability Check
-**File**: `js/physics.js`, lines 95-110  
-Ensures: `dt ≤ dx / max(|u|, |v|)`
-
-### Merge Strategy
-**File**: `js/github-sync.js`, lines 150-165  
-Rule: `h_new = max(h_old, h_contributed)`
-
----
-
-## Common Modifications
-
-### Change simulation resolution?
-- `js/terrain.js`, line ~20: Change `gridSize` (64 default)
-- Warning: Larger grids need more performance
-
-### Adjust physics parameters?
-- `js/main.js`, line ~30-50: Initial Q (flow rate), viscosity
-- `js/physics.js`, line ~20: Gravity constant, sediment coefficient
-
-### Change sync timing?
-- `js/github-sync.js`, line ~240-250: Adjust fetch/commit intervals
-- Warning: GitHub API limits (5000 calls/hour with token)
-
-### Modify UI colors/fonts?
-- `css/style.css`: All styling here
-- Dark theme by default (modify `--bg-dark`, `--text-light`)
-
-### Add new display mode?
-- `js/renderer.js`, line ~200-230: Add new mode in `setDisplayMode()`
-- Implement coloring function
-
----
-
-## Debugging Tips
-
-### Physics not working?
-→ Check `js/physics.js` `step()` function (line 30-50)  
-→ Verify CFL condition (line 95-110) isn't blocking  
-→ Check energy calculation (js/terrain.js line 145)
-
-### Sync not happening?
-→ Open browser console (F12) for error messages  
-→ Check network tab for GitHub API calls  
-→ Verify GitHub token in `js/auth.js` (line ~50)  
-→ See `js/github-sync.js` `syncLoop()` (line 270)
-
-### 3D rendering issues?
-→ Check WebGL support: `THREE.WebGLRenderer` in browser  
-→ Verify mesh update: `js/renderer.js` `updateMesh()` (line 100)  
-→ Check Three.js CDN loaded in `index.html`
-
-### Laggy performance?
-→ Reduce grid size (js/terrain.js line 20)  
-→ Check FPS in status badge (js/ui.js)  
-→ See PERFORMANCE.md for optimization guide
-
----
-
-## Reference: Physics Parameters
-
-**Default values** (adjustable via keyboard):
-
-| Parameter | Key | Default | Effect |
-|-----------|-----|---------|--------|
-| Flow Rate (Q) | Q + / Q - | 0.5 | Water input per step |
-| Viscosity (ν) | V + / V - | 0.01 | Friction coefficient |
-| Gravity | (fixed) | 9.81 | Determines pressure gradient |
-| Sediment Coeff (K) | (fixed) | 0.1 | Erosion rate |
-| Manning Coeff (c) | (fixed) | 0.03 | Friction |
-| dt (timestep) | (adaptive) | CFL-limited | Stability control |
-
-**Advanced**: Edit defaults in `js/main.js` lines 30-50
-
----
-
-## Contact the Code
-
-Have questions about a specific section? Here's where to look:
-
-- **"Why does the water flow that way?"** → `js/physics.js` lines 60-90
-- **"How does branching form?"** → `js/physics.js` + `js/renderer.js` (emergent from physics!)
-- **"What happens when two people edit?"** → `js/github-sync.js` lines 150-165
-- **"Can I add a new feature?"** → See PERFORMANCE.md for future extensions
-
----
-
-**Last updated**: November 16, 2026  
-**Status**: Complete & Production-Ready ✅
+| File | Covers |
+| --- | --- |
+| `tests/terrain-physics.test.js` | Mesh geometry and jitter, bedrock and channel, sand conservation, avalanches, recycling, save migrations, biology, colours |
+| `tests/collaboration.test.js` | Deltas once per version, mesh mismatch, intervals, countdown, reset during sync |
+| `tests/auth.test.js` | OAuth `state`, callback, admin view, reset failure handling |
+| `tests/ui.test.js` | Camera, display modes, status bar, simulation time, URL resets |
+| `worker/index.test.mjs` | Browser and Worker build the same mesh, migrations, averaging, validation, owner reset, CORS |
