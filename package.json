@@ -4,9 +4,13 @@
   "description": "Collaborative hydromorphodynamic terrain simulation with GitHub persistence",
   "main": "index.html",
   "scripts": {
-    "dev": "python3 -m http.server 8000",
+    "dev": "npx serve",
+    "dev:http": "npx http-server -c-1 -o",
+    "lint": "eslint js/ --fix",
+    "format": "prettier --write '**/*.{js,css,html,json,md}'",
     "build": "echo 'No build step needed - static files only'",
-    "deploy": "git push origin main"
+    "deploy": "git push origin main",
+    "test": "echo 'No automated tests configured yet'"
   },
   "keywords": [
     "simulation",
@@ -18,8 +22,12 @@
   ],
   "author": "Laurent Perrinet",
   "license": "MIT",
-  "dependencies": {},
-  "devDependencies": {},
+  "devDependencies": {
+    "eslint": "^8.54.0",
+    "prettier": "^3.1.0",
+    "http-server": "^14.1.1",
+    "serve": "^14.2.0"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/laurentperrinet/2026-11_tree-of-life.git"

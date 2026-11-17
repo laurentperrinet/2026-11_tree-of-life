@@ -1,325 +1,178 @@
 /**
- * Three.js renderer for 3D terrain visualization
+ * Three.js view of the erodible bed, fixed surround and water parcels.
  */
 class TerrainRenderer {
     constructor(canvas) {
         this.canvas = canvas;
         this.scene = new THREE.Scene();
         this.scene.background = new THREE.Color(0x0a0e27);
-        
-        // Camera setup
-        this.camera = new THREE.PerspectiveCamera(
-            75,
-            window.innerWidth / window.innerHeight,
-            0.1,
-            1000
-        );
-        this.camera.position.set(0, 30, 30);
-        this.camera.lookAt(0, 0, 0);
-        
-        // Renderer
+        this.camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 1000);
+        this.camera.position.set(0, 40, 35);
+        this.camera.lookAt(0, 0, -10);
         this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
         this.renderer.setSize(window.innerWidth, window.innerHeight);
-        this.renderer.shadowMap.enabled = true;
-        
-        // Lighting
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-        this.scene.add(ambientLight);
-        
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        directionalLight.position.set(20, 30, 20);
-        directionalLight.castShadow = true;
-        directionalLight.shadow.camera.left = -50;
-        directionalLight.shadow.camera.right = 50;
-        directionalLight.shadow.camera.top = 50;
-        directionalLight.shadow.camera.bottom = -50;
-        this.scene.add(directionalLight);
-        
-        // Terrain mesh
+        this.scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+        const light = new THREE.DirectionalLight(0xffffff, 0.85);
+        light.position.set(20, 40, 20);
+        this.scene.add(light);
         this.terrainMesh = null;
-        this.displayMode = 'elevation'; // elevation, flux, sediment
-        this.colorMap = this.createColorMap();
-        
-        // Animation loop tracking
-        this.animationFrameId = null;
-        
-        // Handle window resize
+        this.particleMesh = null;
+        this.displayMode = 'elevation';
+        this.dummy = new THREE.Object3D();
         window.addEventListener('resize', () => this.onWindowResize());
+        this.onWindowResize();
     }
-    
-    /**
-     * Create terrain mesh geometry
-     */
+
     createTerrainMesh(grid) {
-        const w = grid.width;
-        const h = grid.height;
-        const cs = grid.cellSize;
-        
-        // Remove old mesh
         if (this.terrainMesh) {
             this.scene.remove(this.terrainMesh);
-        }
-        
-        // Geometry
-        const geometry = new THREE.BufferGeometry();
-        
-        // Vertices
-        const vertices = [];
-        for (let y = 0; y < h; y++) {
-            for (let x = 0; x < w; x++) {
-                const idx = y * w + x;
-                vertices.push(
-                    (x - w / 2) * cs,           // x
-                    grid.elevation[idx],        // y (height)
-                    (y - h / 2) * cs            // z
-                );
-            }
-        }
-        geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(vertices), 3));
-        
-        // Indices (two triangles per cell)
-        const indices = [];
-        for (let y = 0; y < h - 1; y++) {
-            for (let x = 0; x < w - 1; x++) {
-                const a = y * w + x;
-                const b = y * w + (x + 1);
-                const c = (y + 1) * w + x;
-                const d = (y + 1) * w + (x + 1);
-                
-                indices.push(a, c, b);
-                indices.push(b, c, d);
-            }
-        }
-        geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(indices), 1));
-        geometry.computeVertexNormals();
-        
-        // Material
-        const material = new THREE.MeshPhongMaterial({
-            flatShading: false,
-            wireframe: false
-        });
-        
-        // Mesh
-        this.terrainMesh = new THREE.Mesh(geometry, material);
-        this.terrainMesh.castShadow = true;
-        this.terrainMesh.receiveShadow = true;
-        this.scene.add(this.terrainMesh);
-        
-        // Update colors
-        this.updateTerrainColors(grid);
-    }
-    
-    /**
-     * Update terrain mesh geometry and colors
-     */
-    updateTerrainMesh(grid) {
-        if (!this.terrainMesh) {
-            this.createTerrainMesh(grid);
-            return;
-        }
-        
-        const w = grid.width;
-        const h = grid.height;
-        const cs = grid.cellSize;
-        
-        // Update positions
-        const positions = this.terrainMesh.geometry.attributes.position.array;
-        let posIdx = 0;
-        for (let y = 0; y < h; y++) {
-            for (let x = 0; x < w; x++) {
-                const idx = y * w + x;
-                positions[posIdx++] = (x - w / 2) * cs;
-                positions[posIdx++] = grid.elevation[idx];
-                positions[posIdx++] = (y - h / 2) * cs;
-            }
-        }
-        this.terrainMesh.geometry.attributes.position.needsUpdate = true;
-        this.terrainMesh.geometry.computeVertexNormals();
-        
-        // Update colors
-        this.updateTerrainColors(grid);
-    }
-    
-    /**
-     * Update terrain vertex colors based on display mode
-     */
-    updateTerrainColors(grid) {
-        const w = grid.width;
-        const h = grid.height;
-        
-        const colors = [];
-        let minVal = Infinity;
-        let maxVal = -Infinity;
-        
-        // Calculate value range
-        for (let i = 0; i < w * h; i++) {
-            let val;
-            switch (this.displayMode) {
-                case 'elevation':
-                    val = grid.elevation[i];
-                    break;
-                case 'flux':
-                    val = Math.sqrt(grid.velocityX[i] ** 2 + grid.velocityY[i] ** 2) * grid.waterDepth[i];
-                    break;
-                case 'sediment':
-                    val = grid.sediment[i];
-                    break;
-                default:
-                    val = grid.elevation[i];
-            }
-            minVal = Math.min(minVal, val);
-            maxVal = Math.max(maxVal, val);
-        }
-        
-        if (maxVal === minVal) maxVal = minVal + 1;
-        
-        // Map values to colors
-        for (let i = 0; i < w * h; i++) {
-            let val;
-            switch (this.displayMode) {
-                case 'elevation':
-                    val = grid.elevation[i];
-                    break;
-                case 'flux':
-                    val = Math.sqrt(grid.velocityX[i] ** 2 + grid.velocityY[i] ** 2) * grid.waterDepth[i];
-                    break;
-                case 'sediment':
-                    val = grid.sediment[i];
-                    break;
-                default:
-                    val = grid.elevation[i];
-            }
-            
-            const normalized = (val - minVal) / (maxVal - minVal);
-            const color = this.getColorFromValue(normalized, this.displayMode);
-            colors.push(color.r, color.g, color.b);
-        }
-        
-        if (!this.terrainMesh.geometry.attributes.color) {
-            this.terrainMesh.geometry.setAttribute('color', 
-                new THREE.BufferAttribute(new Float32Array(colors), 3));
-            this.terrainMesh.material.vertexColors = true;
-        } else {
-            this.terrainMesh.geometry.attributes.color.array.set(colors);
-            this.terrainMesh.geometry.attributes.color.needsUpdate = true;
-        }
-    }
-    
-    /**
-     * Get color from normalized value [0,1]
-     */
-    getColorFromValue(t, mode) {
-        if (mode === 'elevation') {
-            // Blue (low) -> Red (high)
-            if (t < 0.25) {
-                return new THREE.Color().lerpColors(
-                    new THREE.Color(0x0033ff), // dark blue
-                    new THREE.Color(0x00ffff), // cyan
-                    t * 4
-                );
-            } else if (t < 0.5) {
-                return new THREE.Color().lerpColors(
-                    new THREE.Color(0x00ffff), // cyan
-                    new THREE.Color(0x00ff00), // green
-                    (t - 0.25) * 4
-                );
-            } else if (t < 0.75) {
-                return new THREE.Color().lerpColors(
-                    new THREE.Color(0x00ff00), // green
-                    new THREE.Color(0xffff00), // yellow
-                    (t - 0.5) * 4
-                );
-            } else {
-                return new THREE.Color().lerpColors(
-                    new THREE.Color(0xffff00), // yellow
-                    new THREE.Color(0xff0000), // red
-                    (t - 0.75) * 4
-                );
-            }
-        } else if (mode === 'flux') {
-            // Cyan (low) -> White (high)
-            return new THREE.Color().lerpColors(
-                new THREE.Color(0x00ffff),
-                new THREE.Color(0xffffff),
-                t
-            );
-        } else if (mode === 'sediment') {
-            // Black (low) -> Yellow (high)
-            return new THREE.Color().lerpColors(
-                new THREE.Color(0x000000),
-                new THREE.Color(0xffff00),
-                t
-            );
-        }
-        return new THREE.Color(0xffffff);
-    }
-    
-    /**
-     * Cycle display mode
-     */
-    cycleDisplayMode() {
-        const modes = ['elevation', 'flux', 'sediment'];
-        const currentIdx = modes.indexOf(this.displayMode);
-        this.displayMode = modes[(currentIdx + 1) % modes.length];
-        
-        if (this.terrainMesh) {
-            // Re-apply colors for new mode
-            const grid = window.app?.physics?.grid;
-            if (grid) {
-                this.updateTerrainColors(grid);
-            }
-        }
-    }
-    
-    /**
-     * Render frame
-     */
-    render() {
-        this.renderer.render(this.scene, this.camera);
-    }
-    
-    /**
-     * Handle window resize
-     */
-    onWindowResize() {
-        const width = window.innerWidth;
-        const height = window.innerHeight;
-        
-        this.camera.aspect = width / height;
-        this.camera.updateProjectionMatrix();
-        this.renderer.setSize(width, height);
-    }
-    
-    /**
-     * Create default color map
-     */
-    createColorMap() {
-        const canvas = document.createElement('canvas');
-        canvas.width = 256;
-        canvas.height = 1;
-        const ctx = canvas.getContext('2d');
-        
-        const gradient = ctx.createLinearGradient(0, 0, 256, 0);
-        gradient.addColorStop(0, '#0033ff');
-        gradient.addColorStop(0.25, '#00ffff');
-        gradient.addColorStop(0.5, '#00ff00');
-        gradient.addColorStop(0.75, '#ffff00');
-        gradient.addColorStop(1, '#ff0000');
-        
-        ctx.fillStyle = gradient;
-        ctx.fillRect(0, 0, 256, 1);
-        
-        return new THREE.CanvasTexture(canvas);
-    }
-    
-    /**
-     * Clean up
-     */
-    dispose() {
-        if (this.terrainMesh) {
             this.terrainMesh.geometry.dispose();
             this.terrainMesh.material.dispose();
         }
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(grid.vertices.length * 3);
+        grid.vertices.forEach((point, i) => {
+            positions[3 * i] = point.x;
+            positions[3 * i + 1] = grid.elevation[i];
+            positions[3 * i + 2] = point.z;
+        });
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(positions.length), 3));
+        geometry.setIndex(grid.triangles.flat());
+        geometry.computeVertexNormals();
+        this.terrainMesh = new THREE.Mesh(geometry, new THREE.MeshPhongMaterial({
+            vertexColors: true, side: THREE.DoubleSide, shininess: 8
+        }));
+        this.scene.add(this.terrainMesh);
+        this.createSurround(grid);
+        this.updateTerrainColors(grid);
+    }
+
+    createSurround(grid) {
+        const positions = [];
+        const indices = [];
+        for (let s = 0; s <= grid.sectors; s++) {
+            const angle = Math.PI * s / grid.sectors;
+            for (const radius of [grid.radius, grid.radius + 5]) {
+                positions.push(radius * Math.cos(angle), grid.radius * grid.slope + grid.initialSandDepth,
+                    -radius * Math.sin(angle));
+            }
+        }
+        for (let s = 0; s < grid.sectors; s++) {
+            const i = 2 * s;
+            indices.push(i, i + 1, i + 2, i + 2, i + 1, i + 3);
+        }
+        const apron = new THREE.BufferGeometry();
+        apron.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        apron.setIndex(indices);
+        apron.computeVertexNormals();
+        this.scene.add(new THREE.Mesh(apron, new THREE.MeshPhongMaterial({ color: 0x747c78, side: THREE.DoubleSide })));
+
+        const wallPositions = [];
+        const wallIndices = [];
+        for (const sign of [-1, 1]) {
+            const start = wallPositions.length / 3;
+            for (const x of [sign * grid.sinkRadius, sign * grid.radius]) {
+                const height = Math.abs(x) * grid.slope + grid.initialSandDepth;
+                wallPositions.push(x, height - 0.1, 0, x, height + 0.2, 0);
+            }
+            wallIndices.push(start, start + 1, start + 2, start + 2, start + 1, start + 3);
+        }
+        const wall = new THREE.BufferGeometry();
+        wall.setAttribute('position', new THREE.Float32BufferAttribute(wallPositions, 3));
+        wall.setIndex(wallIndices);
+        wall.computeVertexNormals();
+        this.scene.add(new THREE.Mesh(wall, new THREE.MeshPhongMaterial({ color: 0x555e5a, side: THREE.DoubleSide })));
+    }
+
+    updateTerrainMesh(grid) {
+        const positions = this.terrainMesh.geometry.attributes.position;
+        for (let i = 0; i < grid.elevation.length; i++) positions.array[3 * i + 1] = grid.elevation[i];
+        positions.needsUpdate = true;
+        this.terrainMesh.geometry.computeVertexNormals();
+        this.updateTerrainColors(grid);
+    }
+
+    updateTerrainColors(grid) {
+        const colors = this.terrainMesh.geometry.attributes.color;
+        let max = 0;
+        if (this.displayMode !== 'elevation') {
+            for (let i = 0; i < grid.elevation.length; i++) {
+                const value = this.displayMode === 'flux'
+                    ? grid.waterDepth[i] * Math.hypot(grid.velocityX[i], grid.velocityY[i])
+                    : grid.sediment[i];
+                max = Math.max(max, value);
+            }
+        }
+        const color = new THREE.Color();
+        for (let i = 0; i < grid.elevation.length; i++) {
+            if (this.displayMode === 'elevation') {
+                const t = Math.max(0, Math.min(1, (grid.elevation[i] - grid.initialSandDepth) /
+                    (grid.radius * grid.slope)));
+                if (grid.elevation[i] <= grid.bedrock[i] + 1e-8) {
+                    color.setRGB(0.29, 0.32, 0.32);
+                } else {
+                    const initialHeight = grid.bedrock[i] + grid.initialSandDepth;
+                    const erosion = Math.max(0, Math.min(1, (initialHeight - grid.elevation[i]) / 0.08));
+                    const shade = 1 - 0.6 * erosion;
+                    color.setRGB((0.30 + 0.30 * t) * shade, (0.25 + 0.29 * t) * shade,
+                        (0.16 + 0.20 * t) * shade);
+                }
+            } else {
+                const value = this.displayMode === 'flux'
+                    ? grid.waterDepth[i] * Math.hypot(grid.velocityX[i], grid.velocityY[i])
+                    : grid.sediment[i];
+                const t = max > 0 ? Math.sqrt(value / max) : 0;
+                if (this.displayMode === 'flux') color.setRGB(0.12 + 0.2 * t, 0.17 + 0.65 * t, 0.2 + 0.8 * t);
+                else color.setRGB(0.2 + 0.7 * t, 0.16 + 0.55 * t, 0.1);
+            }
+            colors.setXYZ(i, color.r, color.g, color.b);
+        }
+        colors.needsUpdate = true;
+    }
+
+    updateParticles(physics) {
+        if (!this.particleMesh) {
+            this.particleMesh = new THREE.InstancedMesh(
+                new THREE.SphereGeometry(physics.particleRadius, 8, 6),
+                new THREE.MeshPhongMaterial({ color: 0x32b9ff, emissive: 0x075080 }),
+                physics.particles.length
+            );
+            this.particleMesh.frustumCulled = false;
+            this.scene.add(this.particleMesh);
+        }
+        physics.particles.forEach((particle, i) => {
+            const sample = physics.grid.sample(particle.x, particle.z);
+            if (!sample) throw new Error('Cannot render particle outside the terrain mesh');
+            this.dummy.position.set(particle.x, sample.height + 0.13, particle.z);
+            this.dummy.updateMatrix();
+            this.particleMesh.setMatrixAt(i, this.dummy.matrix);
+        });
+        this.particleMesh.instanceMatrix.needsUpdate = true;
+    }
+
+    cycleDisplayMode() {
+        const modes = ['elevation', 'flux', 'sediment'];
+        this.displayMode = modes[(modes.indexOf(this.displayMode) + 1) % modes.length];
+    }
+
+    render() {
+        this.renderer.render(this.scene, this.camera);
+    }
+
+    onWindowResize() {
+        this.camera.aspect = window.innerWidth / window.innerHeight;
+        this.camera.fov = 2 * Math.atan(Math.tan(55 * Math.PI / 360) /
+            Math.min(1, this.camera.aspect)) * 180 / Math.PI;
+        this.camera.updateProjectionMatrix();
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    dispose() {
+        this.scene.traverse(object => {
+            if (object.geometry) object.geometry.dispose();
+            if (object.material) object.material.dispose();
+        });
         this.renderer.dispose();
     }
 }

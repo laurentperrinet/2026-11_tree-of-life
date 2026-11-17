@@ -1,211 +1,178 @@
 /**
- * TerrainGrid - 2D terrain state with water flow and sediment transport
- * Stores: elevation h(x,y), water depth w(x,y), sediment concentration c(x,y)
+ * Semi-circular triangular bed. Coordinates are in the horizontal x/z plane;
+ * the diameter is z = 0 and the outlet is at the origin.
  */
 class TerrainGrid {
-    constructor(width, height, cellSize = 1.0) {
-        this.width = width;
-        this.height = height;
-        this.cellSize = cellSize;
-        
-        // Main state arrays (flattened for performance)
-        this.elevation = new Float32Array(width * height);  // h(x,y) - terrain height
-        this.waterDepth = new Float32Array(width * height); // w(x,y) - water thickness
-        this.sediment = new Float32Array(width * height);   // c(x,y) - sediment concentration [0,1]
-        
-        // Velocity fields
-        this.velocityX = new Float32Array(width * height);  // u - x-component velocity
-        this.velocityY = new Float32Array(width * height);  // v - y-component velocity
-        
-        // Sediment flux fields
-        this.fluxX = new Float32Array(width * height);      // Qsx - x-flux
-        this.fluxY = new Float32Array(width * height);      // Qsy - y-flux
-        
-        // Temporary arrays for double-buffering
-        this.elevationNew = new Float32Array(width * height);
-        this.waterDepthNew = new Float32Array(width * height);
-        this.sedimentNew = new Float32Array(width * height);
-        
-        // Energy tracking for convergence detection
-        this.totalEnergy = 0;
-        this.energyHistory = [];
-        
-        // Initialization
-        this.initialize();
-    }
-    
-    /**
-     * Initialize terrain as a circular basin (cone-like cirque)
-     */
-    initialize() {
-        const cx = this.width / 2;
-        const cy = this.height / 2;
-        const R = Math.min(this.width, this.height) / 3;
-        const h_max = 2.0;
-        
-        for (let y = 0; y < this.height; y++) {
-            for (let x = 0; x < this.width; x++) {
-                const idx = y * this.width + x;
-                const dx = (x - cx) * this.cellSize;
-                const dy = (y - cy) * this.cellSize;
-                const r = Math.sqrt(dx * dx + dy * dy);
-                
-                // Cone terrain: peaks at edges, depression at center
-                if (r < R) {
-                    const t = r / R;
-                    this.elevation[idx] = h_max * (1 - t * t) * Math.cos(Math.atan2(dy, dx) * 4);
-                } else {
-                    this.elevation[idx] = -0.5 + (r - R) * 0.1; // Outer slopes down
-                }
-                
-                // Add small random perturbations to seed bifurcation
-                this.elevation[idx] += (Math.random() - 0.5) * 0.05 * h_max;
-                
-                // Inject water at top (center depression)
-                if (r < R * 0.15) {
-                    this.waterDepth[idx] = 0.3;
-                    this.sediment[idx] = 0.5;
-                }
+    constructor() {
+        this.radius = 25;
+        this.sectors = 64;
+        this.rings = 64;
+        this.sinkRadius = 0.8;
+        this.slope = 0.06;
+        this.initialSandDepth = 0.3;
+        this.vertices = [{ x: 0, z: 0 }];
+        this.triangles = [];
+
+        for (let r = 1; r <= this.rings; r++) {
+            for (let s = 0; s <= this.sectors; s++) {
+                const angle = Math.PI * s / this.sectors;
+                const radius = this.radius * r / this.rings;
+                this.vertices.push({ x: radius * Math.cos(angle), z: -radius * Math.sin(angle) });
             }
         }
-        
-        // Copy to new arrays
-        this.elevationNew.set(this.elevation);
-        this.waterDepthNew.set(this.waterDepth);
-        this.sedimentNew.set(this.sediment);
+        const vertex = (r, s) => 1 + (r - 1) * (this.sectors + 1) + s;
+        for (let s = 0; s < this.sectors; s++) {
+            this.triangles.push([0, vertex(1, s), vertex(1, s + 1)]);
+        }
+        for (let r = 1; r < this.rings; r++) {
+            for (let s = 0; s < this.sectors; s++) {
+                this.triangles.push([vertex(r, s), vertex(r + 1, s), vertex(r, s + 1)]);
+                this.triangles.push([vertex(r, s + 1), vertex(r + 1, s), vertex(r + 1, s + 1)]);
+            }
+        }
+
+        // Splitting 34 faces into three adds 68 faces to the 8,128-face mesh.
+        for (let i = 0; i < 34; i++) {
+            const ring = 2 + 3 * Math.floor(i / 2);
+            const sector = (17 * i) % this.sectors;
+            const faceIndex = this.sectors + 2 * ((ring - 1) * this.sectors + sector);
+            const face = this.triangles[faceIndex];
+            const a = this.vertices[face[0]];
+            const b = this.vertices[face[1]];
+            const c = this.vertices[face[2]];
+            const center = this.vertices.length;
+            this.vertices.push({ x: (a.x + b.x + c.x) / 3, z: (a.z + b.z + c.z) / 3 });
+            this.triangles[faceIndex] = [face[0], face[1], center];
+            this.triangles.push([face[1], face[2], center], [face[2], face[0], center]);
+        }
+
+        const count = this.vertices.length;
+        this.bedrock = new Float64Array(count);
+        this.vertices.forEach((point, i) => {
+            this.bedrock[i] = this.slope * Math.hypot(point.x, point.z);
+        });
+        this.elevation = new Float64Array(count);
+        this.waterDepth = new Float64Array(count);
+        this.sediment = new Float64Array(count);
+        this.velocityX = new Float64Array(count);
+        this.velocityY = new Float64Array(count);
+        this.vertexArea = new Float64Array(count);
+        this.bins = new Map();
+        this.binSize = 1;
+        this.triangles.forEach((face, index) => {
+            const points = face.map(i => this.vertices[i]);
+            const area = Math.abs((points[1].x - points[0].x) * (points[2].z - points[0].z) -
+                (points[2].x - points[0].x) * (points[1].z - points[0].z)) / 2;
+            face.forEach(i => { this.vertexArea[i] += area / 3; });
+            const minX = Math.floor(Math.min(...points.map(p => p.x)) / this.binSize);
+            const maxX = Math.floor(Math.max(...points.map(p => p.x)) / this.binSize);
+            const minZ = Math.floor(Math.min(...points.map(p => p.z)) / this.binSize);
+            const maxZ = Math.floor(Math.max(...points.map(p => p.z)) / this.binSize);
+            for (let x = minX; x <= maxX; x++) {
+                for (let z = minZ; z <= maxZ; z++) {
+                    const key = `${x},${z}`;
+                    if (!this.bins.has(key)) this.bins.set(key, []);
+                    this.bins.get(key).push(index);
+                }
+            }
+        });
+        this.energyHistory = [];
+        this.totalEnergy = 0;
+        this.particles = [];
+        this.initialize();
     }
-    
-    /**
-     * Get value at index, clamped to bounds
-     */
-    get(array, x, y) {
-        x = Math.max(0, Math.min(this.width - 1, x));
-        y = Math.max(0, Math.min(this.height - 1, y));
-        return array[y * this.width + x];
+
+    initialize() {
+        this.vertices.forEach((point, i) => { this.elevation[i] = this.bedrock[i] + this.initialSandDepth; });
+        this.waterDepth.fill(0);
+        this.sediment.fill(0);
+        this.velocityX.fill(0);
+        this.velocityY.fill(0);
+        this.energyHistory = [];
+        this.totalEnergy = 0;
     }
-    
-    /**
-     * Get gradient (for flow calculation)
-     */
-    getGradient(array, x, y) {
-        const dx = (this.get(array, x + 1, y) - this.get(array, x - 1, y)) / (2 * this.cellSize);
-        const dy = (this.get(array, x, y + 1) - this.get(array, x, y - 1)) / (2 * this.cellSize);
-        return { dx, dy };
+
+    locate(x, z) {
+        const key = `${Math.floor(x / this.binSize)},${Math.floor(z / this.binSize)}`;
+        for (const index of this.bins.get(key) || []) {
+            const face = this.triangles[index];
+            const a = this.vertices[face[0]], b = this.vertices[face[1]], c = this.vertices[face[2]];
+            const det = (b.z - c.z) * (a.x - c.x) + (c.x - b.x) * (a.z - c.z);
+            const wa = ((b.z - c.z) * (x - c.x) + (c.x - b.x) * (z - c.z)) / det;
+            const wb = ((c.z - a.z) * (x - c.x) + (a.x - c.x) * (z - c.z)) / det;
+            const wc = 1 - wa - wb;
+            if (wa >= -1e-9 && wb >= -1e-9 && wc >= -1e-9) {
+                return { face, weights: [wa, wb, wc], det };
+            }
+        }
+        return null;
     }
-    
-    /**
-     * Get surface elevation (terrain + water)
-     */
-    getSurfaceElevation(x, y) {
-        const idx = y * this.width + x;
-        return this.elevation[idx] + this.waterDepth[idx];
+
+    sample(x, z) {
+        const hit = this.locate(x, z);
+        if (!hit) return null;
+        const [ia, ib, ic] = hit.face;
+        const a = this.vertices[ia], b = this.vertices[ib], c = this.vertices[ic];
+        const ha = this.elevation[ia], hb = this.elevation[ib], hc = this.elevation[ic];
+        return {
+            ...hit,
+            height: hit.weights[0] * ha + hit.weights[1] * hb + hit.weights[2] * hc,
+            dx: (ha * (b.z - c.z) + hb * (c.z - a.z) + hc * (a.z - b.z)) / hit.det,
+            dz: (ha * (c.x - b.x) + hb * (a.x - c.x) + hc * (b.x - a.x)) / hit.det
+        };
     }
-    
-    /**
-     * Calculate total kinetic energy for convergence detection
-     */
+
     calculateEnergy() {
         let energy = 0;
-        for (let i = 0; i < this.width * this.height; i++) {
-            const u = this.velocityX[i];
-            const v = this.velocityY[i];
-            const h = this.waterDepth[i];
-            energy += (u * u + v * v) * h;
+        for (let i = 0; i < this.elevation.length; i++) {
+            energy += (this.velocityX[i] ** 2 + this.velocityY[i] ** 2) * this.waterDepth[i];
         }
         this.totalEnergy = energy;
-        
-        // Keep history for stability check
         this.energyHistory.push(energy);
-        if (this.energyHistory.length > 30) {
-            this.energyHistory.shift();
-        }
-        
+        if (this.energyHistory.length > 30) this.energyHistory.shift();
         return energy;
     }
-    
-    /**
-     * Check if terrain has converged (energy plateau)
-     * Returns: { converged: bool, stability: 0-100 }
-     */
+
     checkConvergence() {
-        if (this.energyHistory.length < 30) {
-            return { converged: false, stability: 0 };
-        }
-        
-        const recent = this.energyHistory.slice(-30);
-        const avgOld = recent.slice(0, 15).reduce((a, b) => a + b) / 15;
-        const avgNew = recent.slice(-15).reduce((a, b) => a + b) / 15;
-        
-        if (avgOld < 1e-6) {
-            return { converged: true, stability: 100 };
-        }
-        
-        const deltaE = Math.abs(avgNew - avgOld) / avgOld;
-        const stability = Math.max(0, 100 * (1 - Math.min(1, deltaE / 0.05)));
-        const converged = stability > 95;
-        
-        return { converged, stability };
+        if (this.energyHistory.length < 30) return { converged: false, stability: 0 };
+        const old = this.energyHistory.slice(0, 15).reduce((a, b) => a + b, 0) / 15;
+        const recent = this.energyHistory.slice(15).reduce((a, b) => a + b, 0) / 15;
+        const delta = Math.abs(recent - old) / Math.max(old, 1e-6);
+        const stability = Math.max(0, 100 * (1 - Math.min(1, delta / 0.05)));
+        return { converged: stability > 95, stability };
     }
-    
-    /**
-     * Serialize to JSON for GitHub persistence
-     */
+
     toJSON() {
         return {
-            version: "1.0",
+            version: '5.0',
+            topology: 'semicircle-8196',
             timestamp: new Date().toISOString(),
-            grid: {
-                width: this.width,
-                height: this.height,
-                cellSize: this.cellSize
-            },
             elevation: Array.from(this.elevation),
             waterDepth: Array.from(this.waterDepth),
             sediment: Array.from(this.sediment),
-            metadata: {
-                totalEnergy: this.totalEnergy,
-                convergenceChecked: this.checkConvergence()
-            }
+            particles: this.particles.map(p => ({ ...p })),
+            metadata: { totalEnergy: this.totalEnergy, convergenceChecked: this.checkConvergence() }
         };
     }
-    
-    /**
-     * Deserialize from JSON
-     */
+
     fromJSON(json) {
-        if (json.grid.width !== this.width || json.grid.height !== this.height) {
-            console.warn('Grid size mismatch, reinitializing');
+        const arrays = [json.elevation, json.waterDepth, json.sediment];
+        const validParticles = Array.isArray(json.particles) && json.particles.length === this.particles.length &&
+            json.particles.every(p => p && [p.x, p.z, p.vx, p.vz, p.sediment].every(Number.isFinite) &&
+                p.sediment >= 0 && this.locate(p.x, p.z));
+        if (json.version !== '5.0' || json.topology !== 'semicircle-8196' || !validParticles ||
+            arrays.some(a => !Array.isArray(a) || a.length !== this.elevation.length || !a.every(Number.isFinite))) {
+            console.warn('Saved terrain is incompatible with the semi-circular mesh');
             return false;
         }
-        
+        if (json.elevation.some((height, i) => height < this.bedrock[i])) {
+            console.warn('Saved terrain extends below the bedrock');
+            return false;
+        }
         this.elevation.set(json.elevation);
         this.waterDepth.set(json.waterDepth);
         this.sediment.set(json.sediment);
-        this.elevationNew.set(this.elevation);
-        this.waterDepthNew.set(this.waterDepth);
-        this.sedimentNew.set(this.sediment);
-        
+        this.particles.splice(0, this.particles.length, ...json.particles.map(p => ({ ...p })));
         return true;
-    }
-    
-    /**
-     * Merge contributions from another terrain (collaborative)
-     * Strategy: h_global = max(h_old, h_contrib)
-     */
-    mergeContribution(other) {
-        for (let i = 0; i < this.width * this.height; i++) {
-            // Take maximum elevation (erosion accumulates)
-            this.elevation[i] = Math.max(this.elevation[i], other.elevation[i]);
-            
-            // Reinject water at source
-            if (other.waterDepth[i] > 0) {
-                this.waterDepth[i] = Math.max(this.waterDepth[i], other.waterDepth[i] * 0.5);
-            }
-            
-            // Average sediment concentration
-            this.sediment[i] = (this.sediment[i] + other.sediment[i]) / 2;
-        }
-        
-        this.elevationNew.set(this.elevation);
     }
 }

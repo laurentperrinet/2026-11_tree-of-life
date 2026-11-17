@@ -1,16 +1,111 @@
 # 🌊 Tree of Life - Collaborative Hydromorphodynamic Simulation
 
+> **Current status:** The GitHub Pages site runs a local simulation. The
+> Cloudflare Worker in `worker/` is an experimental, locally tested backend;
+> it is not deployed or connected to the site. OAuth and collaborative
+> computation are not yet operational. Statements below about production
+> readiness, automatic GitHub synchronization, and deployment describe the
+> older prototype and should not be relied on.
+
+## Current browser simulation
+
+The browser models an erodible semicircular bed with exactly 8,196 triangular
+faces. The fixed, non-erodible base slopes uniformly in the radial direction
+from the arc to the sink at height zero. It is initially covered by a
+uniform layer of sand 0.3 simulation units deep; the simulated terrain
+elevation is the base height plus the sand thickness. The surrounding apron
+and raised edge are fixed; only the sand surface evolves.
+The outer mesh vertices lie on the arc; the straight edges between them
+approximate it by a polygon. Parcels are injected just inside, and reflected
+at, that same polygonal boundary.
+
+Blue spheres represent a fixed number of water parcels. Gravity follows the
+local slope of each triangle, with friction. The straight edge reflects water
+except at the sink. On reaching the sink, each parcel is reintroduced at a
+uniformly random position along the arc, retaining its sediment. The initial
+parcels are distributed across the bed so the flow is immediately visible.
+Transport capacity increases with speed: moving parcels pick up sand when
+below capacity, and slowing or stationary parcels deposit their load. Parcels
+push one another when they overlap; this approximate water pressure helps
+spread accumulations and keep water moving towards the sink. Collision impulses
+can deflect particles. The evolving
+bed affects subsequent paths, so flow can concentrate in eroded channels.
+The elevation view darkens areas actually eroded below their initial height.
+A fixed, sloping non-erodible layer limits erosion at each vertex; sediment
+can still accumulate on it. Exposed bedrock is shown in grey. Bed
+volume plus carried sediment is conserved by these exchanges and by recycling.
+
+`+`/`-` adjust the circulation rate and the arrow keys adjust simulation speed;
+`D` switches between elevation, flow and sediment views. This is a simplified
+particle model: it does not solve the shallow-water equations or model
+realistic fluid dynamics, and branching is not guaranteed. Remote terrain merges,
+if configured, are external modifications and do not conserve this local
+sediment balance.
+
+The mesh and particle state use version 5 of the `semicircle-8196` save
+format. Earlier saves with a different mesh are not loaded. The new
+local-storage key starts a fresh terrain without deleting the old save.
+Test the browser model with `node --test tests/terrain-physics.test.js`.
+
+## Experimental Cloudflare Worker
+
+The Worker coordinates a single 64 x 64 terrain with a SQLite-backed Durable
+Object. It divides each step into four row ranges, gives each contributor a
+60-second lease, and commits the next terrain only after all four results for
+the current version have arrived. Expired leases can be reassigned. An owner
+parameter change or reset invalidates all outstanding leases.
+
+`worker/physics.mjs` contains the matching row calculation. It preserves
+sediment updates across steps; it is not identical to the existing browser
+engine, which needs to be replaced or adapted before integration.
+
+Endpoints:
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /api/state` | Read the current terrain, parameters, and version |
+| `POST /api/tasks/claim` | Claim a row range and receive its input state |
+| `POST /api/tasks/submit` | Submit `{version, lease, result}` for that range |
+| `POST /api/auth/exchange` | Exchange a GitHub OAuth authorization code |
+| `POST /api/admin/parameters` | Set `{flow, speed}` as the GitHub owner |
+| `POST /api/admin/reset` | Reset the terrain as the GitHub owner |
+
+Administration uses a bearer token verified against GitHub's `/user` endpoint
+and the configured numeric `OWNER_GITHUB_ID`. The OAuth exchange requires
+`GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` as Worker bindings; the secret
+must never be committed or placed in browser code. The frontend must generate
+and verify a cryptographically random OAuth `state` before exchanging the code,
+use the exact GitHub Pages callback URL, and handle expired tokens. The
+existing frontend does not yet do this.
+
+Submitted arrays are bounded and one randomly chosen row is recalculated, but
+this sampling **does not prove an anonymous contribution is correct**. Leases
+also do not prevent intentional denial of service. Abuse controls and stronger
+result verification are required before accepting public contributions.
+The deployment needs a Cloudflare account, the Durable Object binding in
+`wrangler.toml`, and the three configuration values above. No secret
+should be shared in chat. Do not deploy this prototype as a production service.
+
+Run the local tests from the project root:
+
+```bash
+node --test worker/physics.test.mjs worker/index.test.mjs
+```
+
+These tests use a local mock, not the Cloudflare runtime or a deployed OAuth
+application. The GitHub Pages client still needs integration and end-to-end
+testing.
+
 An interactive web-based simulation of water-driven terrain erosion creating natural branching patterns, inspired by the "Tree of Life" photograph from Iceland. Each browser visitor contributes to building a shared terrain through a collaborative, persistent GitHub-backed system.
 
-**Status**: ✅ Production-ready | **Deploy Time**: ~15 minutes | **Version**: 1.0.0
+The current simulation is an exploratory particle model, not a validated hydrodynamic solver.
 
 ## 🎯 Quick Start (5 Minutes)
 
 ### For Users
 Just visit: **https://laurentperrinet.github.io/2026-11_tree-of-life/**
 - Press **?** to see all controls
-- Watch natural branching patterns emerge
-- Your erosion patterns sync to GitHub automatically!
+- Observe water parcels eroding and depositing sediment
 
 ### For Developers
 ```bash

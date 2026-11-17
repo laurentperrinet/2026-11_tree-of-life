@@ -1,272 +1,193 @@
 /**
- * Physics simulation - Shallow water equations + sediment transport
- * 
- * Equations:
- * ∂h/∂t = -∇·(h*u)           [continuity]
- * u = -g*∇(h+b)              [momentum (gravity-driven)]
- * Q_s = k*u*c                [sediment transport]
- * ∂b/∂t = -∇·Q_s             [Exner - terrain evolution]
+ * Lagrangian water parcels on a piecewise-linear triangular bed.
+ * Sediment exchanged with the bed is conserved as a volume.
  */
 class PhysicsEngine {
     constructor(grid) {
         this.grid = grid;
-        this.dt = 0.01;           // Time step (seconds)
-        this.g = 9.81;            // Gravity (m/s²)
-        this.friction = 0.02;     // Friction coefficient
-        this.k_transport = 0.1;   // Sediment transport coeff
-        this.Q_inlet = 0.5;       // Inlet flow rate (adjustable)
-        this.timeScale = 1.0;     // Simulation speed multiplier
+        this.dt = 0.04;
+        this.g = 9.81;
+        this.friction = 1.8;
+        this.Q_inlet = 0.5;
+        this.timeScale = 1;
+        this.particleCount = 500;
+        this.waterPerParticle = 0.02;
+        this.transportCapacity = 6;
+        this.particleRadius = 0.105;
+        this.maxSpeed = 3;
+        this.particles = [];
+        this.createParticles();
     }
-    
-    /**
-     * Main simulation step
-     */
+
+    createParticles() {
+        this.particles = Array.from({ length: this.particleCount }, (_, i) => {
+            const particle = { x: 0, z: 0, vx: 0, vz: 0, sediment: 0 };
+            this.reinject(particle, (i + Math.random()) / this.particleCount);
+            const radiusFraction = 0.1 + 0.9 * Math.random();
+            particle.x *= radiusFraction;
+            particle.z *= radiusFraction;
+            return particle;
+        });
+        this.grid.particles = this.particles;
+    }
+
+    reinject(particle, fraction = Math.random()) {
+        const angle = Math.PI * fraction;
+        const radius = this.arcBoundary(angle).radius * 0.999;
+        particle.x = radius * Math.cos(angle);
+        particle.z = -radius * Math.sin(angle);
+        particle.vx = 0;
+        particle.vz = 0;
+    }
+
+    arcBoundary(angle) {
+        const width = Math.PI / this.grid.sectors;
+        const sector = Math.min(this.grid.sectors - 1, Math.max(0, Math.floor(angle / width)));
+        const normalAngle = (sector + 0.5) * width;
+        return {
+            radius: this.grid.radius * Math.cos(width / 2) / Math.cos(angle - normalAngle),
+            nx: Math.cos(normalAngle),
+            nz: -Math.sin(normalAngle)
+        };
+    }
+
     step() {
         const grid = this.grid;
-        const w = grid.width;
-        const h = grid.height;
-        
-        // Step 1: Recycle water at inlet (top center)
-        this.injectWater();
-        
-        // Step 2: Calculate flow velocities
-        this.calculateFlow();
-        
-        // Step 3: Transport sediment
-        this.transportSediment();
-        
-        // Step 4: Erode/deposit terrain
-        this.erodeTerrain();
-        
-        // Step 5: Update water depth (continuity)
-        this.updateWaterDepth();
-        
-        // Step 6: Drain outlet (bottom)
-        this.drainOutlet();
-        
-        // Step 7: Swap buffers
-        let temp;
-        temp = grid.elevation;
-        grid.elevation = grid.elevationNew;
-        grid.elevationNew = temp;
-        
-        temp = grid.waterDepth;
-        grid.waterDepth = grid.waterDepthNew;
-        grid.waterDepthNew = temp;
-        
-        temp = grid.sediment;
-        grid.sediment = grid.sedimentNew;
-        grid.sedimentNew = temp;
-        
-        // Track energy for convergence detection
+        grid.waterDepth.fill(0);
+        grid.sediment.fill(0);
+        grid.velocityX.fill(0);
+        grid.velocityY.fill(0);
+        const dt = this.dt * this.timeScale * this.Q_inlet / 0.5;
+        // Keep travel per substep smaller than a particle radius.
+        const steps = Math.max(1, Math.ceil(dt / (this.particleRadius / this.maxSpeed)));
+        const subDt = dt / steps;
+        for (let sub = 0; sub < steps; sub++) {
+            if (subDt > 0) this.collideParticles(subDt);
+            for (const particle of this.particles) this.moveParticle(particle, subDt);
+        }
+        for (const particle of this.particles) {
+            const sample = grid.sample(particle.x, particle.z);
+            if (!sample) throw new Error('Water particle outside the terrain mesh');
+            sample.face.forEach((index, i) => {
+                const weight = Math.max(0, sample.weights[i]);
+                grid.waterDepth[index] += this.waterPerParticle * weight / grid.vertexArea[index];
+                grid.sediment[index] += particle.sediment * weight / grid.vertexArea[index];
+                grid.velocityX[index] += particle.vx * weight;
+                grid.velocityY[index] += particle.vz * weight;
+            });
+        }
         grid.calculateEnergy();
     }
-    
-    /**
-     * Inject water at top inlet (center of domain)
-     */
-    injectWater() {
-        const grid = this.grid;
-        const cx = Math.floor(grid.width / 2);
-        const cy = Math.floor(grid.height / 8);
-        
-        const inletRadius = 3;
-        const sedimentConc = 0.3; // Initial sediment concentration
-        
-        for (let dy = -inletRadius; dy <= inletRadius; dy++) {
-            for (let dx = -inletRadius; dx <= inletRadius; dx++) {
-                const x = cx + dx;
-                const y = cy + dy;
-                
-                if (x >= 0 && x < grid.width && y >= 0 && y < grid.height) {
-                    const idx = y * grid.width + x;
-                    grid.waterDepth[idx] += this.Q_inlet * this.dt;
-                    grid.sediment[idx] = Math.min(1.0, grid.sediment[idx] + sedimentConc * this.dt * 0.1);
+
+    collideParticles(dt) {
+        const diameter = 2 * this.particleRadius;
+        const bins = new Map();
+        for (let i = 0; i < this.particles.length; i++) {
+            const particle = this.particles[i];
+            const bx = Math.floor(particle.x / diameter);
+            const bz = Math.floor(particle.z / diameter);
+            for (let x = bx - 1; x <= bx + 1; x++) {
+                for (let z = bz - 1; z <= bz + 1; z++) {
+                    for (const j of bins.get(`${x},${z}`) || []) {
+                        const other = this.particles[j];
+                        let dx = particle.x - other.x;
+                        let dz = particle.z - other.z;
+                        const distance = Math.hypot(dx, dz);
+                        if (distance >= diameter) continue;
+                        if (distance < 1e-12) {
+                            const angle = (i * 2.399963229728653 + j) % (2 * Math.PI);
+                            dx = Math.cos(angle);
+                            dz = Math.sin(angle);
+                        } else {
+                            dx /= distance;
+                            dz /= distance;
+                        }
+                        const relativeSpeed = (particle.vx - other.vx) * dx + (particle.vz - other.vz) * dz;
+                        // Equal and opposite impulses provide a soft pressure for overlapping parcels.
+                        const impulse = Math.min(0.25, 6 * (diameter - distance) * dt) +
+                            Math.max(0, -relativeSpeed) * 0.55;
+                        particle.vx += impulse * dx;
+                        particle.vz += impulse * dz;
+                        other.vx -= impulse * dx;
+                        other.vz -= impulse * dz;
+                    }
                 }
             }
+            const key = `${bx},${bz}`;
+            if (!bins.has(key)) bins.set(key, []);
+            bins.get(key).push(i);
         }
     }
-    
-    /**
-     * Calculate flow velocities (shallow water momentum)
-     */
-    calculateFlow() {
+
+    moveParticle(particle, dt) {
+        if (dt === 0) return;
         const grid = this.grid;
-        const w = grid.width;
-        const h = grid.height;
-        const g = this.g;
-        const friction = this.friction;
-        const cs = grid.cellSize;
-        
-        for (let y = 1; y < h - 1; y++) {
-            for (let x = 1; x < w - 1; x++) {
-                const idx = y * w + x;
-                
-                // Total surface elevation (bed + water)
-                const surfH = grid.getSurfaceElevation(x, y);
-                const surfH_xp = grid.getSurfaceElevation(x + 1, y);
-                const surfH_xm = grid.getSurfaceElevation(x - 1, y);
-                const surfH_yp = grid.getSurfaceElevation(x, y + 1);
-                const surfH_ym = grid.getSurfaceElevation(x, y - 1);
-                
-                // Gradient of surface elevation
-                const gradX = (surfH_xp - surfH_xm) / (2 * cs);
-                const gradY = (surfH_yp - surfH_ym) / (2 * cs);
-                
-                // Gravity-driven flow
-                let u = -g * gradX;
-                let v = -g * gradY;
-                
-                // Friction damping
-                const speed = Math.sqrt(u * u + v * v);
-                const damping = 1 - friction * this.dt;
-                u *= damping;
-                v *= damping;
-                
-                // Limit velocity (stability)
-                const maxU = 2.0;
-                if (speed > maxU) {
-                    const scale = maxU / (speed + 1e-6);
-                    u *= scale;
-                    v *= scale;
-                }
-                
-                grid.velocityX[idx] = u;
-                grid.velocityY[idx] = v;
+        const sample = grid.sample(particle.x, particle.z);
+        if (!sample) throw new Error('Water particle outside the terrain mesh');
+        const previousSpeed = Math.hypot(particle.vx, particle.vz);
+        const damping = Math.exp(-this.friction * dt);
+        particle.vx = (particle.vx - this.g * sample.dx * dt) * damping;
+        particle.vz = (particle.vz - this.g * sample.dz * dt) * damping;
+        let speed = Math.hypot(particle.vx, particle.vz);
+        if (speed > this.maxSpeed) {
+            particle.vx *= this.maxSpeed / speed;
+            particle.vz *= this.maxSpeed / speed;
+            speed = this.maxSpeed;
+        }
+        const capacity = this.waterPerParticle * this.transportCapacity * Math.max(0, speed - 0.1);
+        const exchangeRate = speed < 0.1 ? 2 : 0.3;
+        let exchange = (capacity - particle.sediment) * (1 - Math.exp(-exchangeRate * dt));
+        if (speed < previousSpeed && particle.sediment > 0) {
+            const slowingDeposit = particle.sediment * (1 - speed / previousSpeed);
+            exchange = Math.min(exchange, -slowingDeposit);
+        }
+        if (exchange < 0) exchange = -Math.min(particle.sediment, -exchange);
+        let actualExchange = 0;
+        sample.face.forEach((index, i) => {
+            const amount = exchange * Math.max(0, sample.weights[i]);
+            const previousHeight = grid.elevation[index];
+            const height = Math.max(grid.bedrock[index], previousHeight - amount / grid.vertexArea[index]);
+            grid.elevation[index] = height;
+            actualExchange += (previousHeight - height) * grid.vertexArea[index];
+        });
+        // Floating-point rounding can leave an exhausted load just below zero.
+        particle.sediment = Math.max(0, particle.sediment + actualExchange);
+
+        let x = particle.x + particle.vx * dt;
+        let z = particle.z + particle.vz * dt;
+        // Check the whole path up to the straight edge, not just its endpoint.
+        const edgeFraction = z >= 0 ? -particle.z / (z - particle.z) : 1;
+        const dx = (x - particle.x) * edgeFraction;
+        const dz = (z - particle.z) * edgeFraction;
+        const lengthSquared = dx * dx + dz * dz;
+        const closest = lengthSquared > 0
+            ? Math.max(0, Math.min(1, -(particle.x * dx + particle.z * dz) / lengthSquared))
+            : 0;
+        if (Math.hypot(particle.x + closest * dx, particle.z + closest * dz) < grid.sinkRadius) {
+            this.reinject(particle);
+            return;
+        }
+        if (z >= 0) {
+            z = -0.000001;
+            particle.vz = -Math.abs(particle.vz);
+        }
+        const radius = Math.hypot(x, z);
+        const boundary = this.arcBoundary(Math.atan2(-z, x));
+        if (radius > boundary.radius * 0.999999) {
+            x *= boundary.radius * 0.999999 / radius;
+            z *= boundary.radius * 0.999999 / radius;
+            const outward = particle.vx * boundary.nx + particle.vz * boundary.nz;
+            if (outward > 0) {
+                particle.vx -= 2 * outward * boundary.nx;
+                particle.vz -= 2 * outward * boundary.nz;
             }
         }
-        
-        // Boundary conditions: zero velocity at edges
-        for (let x = 0; x < w; x++) {
-            grid.velocityX[0 * w + x] = 0;
-            grid.velocityY[0 * w + x] = 0;
-            grid.velocityX[(h - 1) * w + x] = 0;
-            grid.velocityY[(h - 1) * w + x] = 0;
-        }
-        for (let y = 0; y < h; y++) {
-            grid.velocityX[y * w + 0] = 0;
-            grid.velocityY[y * w + 0] = 0;
-            grid.velocityX[y * w + (w - 1)] = 0;
-            grid.velocityY[y * w + (w - 1)] = 0;
-        }
+        particle.x = x;
+        particle.z = z;
     }
-    
-    /**
-     * Transport sediment based on flow
-     * Q_s = k * u * c (sediment flux)
-     */
-    transportSediment() {
-        const grid = this.grid;
-        const w = grid.width;
-        const h = grid.height;
-        const k = this.k_transport;
-        const cs = grid.cellSize;
-        
-        // Calculate sediment flux at cell centers
-        for (let y = 0; y < h; y++) {
-            for (let x = 0; x < w; x++) {
-                const idx = y * w + x;
-                const u = grid.velocityX[idx];
-                const v = grid.velocityY[idx];
-                const c = grid.sediment[idx];
-                
-                // Sediment capacity ~ velocity magnitude
-                const speed = Math.sqrt(u * u + v * v);
-                const capacity = k * speed;
-                
-                // Limit concentration
-                grid.sediment[idx] = Math.min(1.0, c + capacity * this.dt);
-                
-                // Store flux components
-                grid.fluxX[idx] = u * c;
-                grid.fluxY[idx] = v * c;
-            }
-        }
-    }
-    
-    /**
-     * Erode/deposit based on sediment flux divergence
-     * ∂b/∂t = -∇·Q_s (Exner equation)
-     */
-    erodeTerrain() {
-        const grid = this.grid;
-        const w = grid.width;
-        const h = grid.height;
-        const cs = grid.cellSize;
-        const dt = this.dt * this.timeScale;
-        
-        for (let y = 1; y < h - 1; y++) {
-            for (let x = 1; x < w - 1; x++) {
-                const idx = y * w + x;
-                
-                // Divergence of sediment flux
-                const divFluxX = (grid.fluxX[y * w + (x + 1)] - grid.fluxX[y * w + (x - 1)]) / (2 * cs);
-                const divFluxY = (grid.fluxY[(y + 1) * w + x] - grid.fluxY[(y - 1) * w + x]) / (2 * cs);
-                const divFlux = divFluxX + divFluxY;
-                
-                // Update bed elevation (erosion if div > 0, deposition if div < 0)
-                grid.elevationNew[idx] = grid.elevation[idx] - divFlux * dt;
-                
-                // Constrain elevation
-                grid.elevationNew[idx] = Math.max(-5.0, grid.elevationNew[idx]);
-            }
-        }
-    }
-    
-    /**
-     * Update water depth from continuity equation
-     * ∂h/∂t = -∇·(h*u)
-     */
-    updateWaterDepth() {
-        const grid = this.grid;
-        const w = grid.width;
-        const h = grid.height;
-        const cs = grid.cellSize;
-        const dt = this.dt * this.timeScale;
-        
-        for (let y = 1; y < h - 1; y++) {
-            for (let x = 1; x < w - 1; x++) {
-                const idx = y * w + x;
-                
-                // Water volume flux
-                const wh = grid.waterDepth[idx];
-                const u = grid.velocityX[idx];
-                const v = grid.velocityY[idx];
-                
-                // Divergence of volume flux
-                const whxp = grid.waterDepth[y * w + (x + 1)] * grid.velocityX[y * w + (x + 1)];
-                const whxm = grid.waterDepth[y * w + (x - 1)] * grid.velocityX[y * w + (x - 1)];
-                const whyp = grid.waterDepth[(y + 1) * w + x] * grid.velocityY[(y + 1) * w + x];
-                const whym = grid.waterDepth[(y - 1) * w + x] * grid.velocityY[(y - 1) * w + x];
-                
-                const divFlux = ((whxp - whxm) / (2 * cs)) + ((whyp - whym) / (2 * cs));
-                
-                // Update water depth
-                grid.waterDepthNew[idx] = Math.max(0.001, grid.waterDepth[idx] - divFlux * dt);
-            }
-        }
-    }
-    
-    /**
-     * Drain outlet at bottom (recycle to inlet)
-     */
-    drainOutlet() {
-        const grid = this.grid;
-        const w = grid.width;
-        const h = grid.height;
-        const bottomRow = h - 3;
-        
-        // Drain water from bottom rows
-        for (let x = 0; x < w; x++) {
-            const idx = bottomRow * w + x;
-            grid.waterDepthNew[idx] = Math.max(0, grid.waterDepthNew[idx] * 0.8);
-        }
-    }
-    
-    /**
-     * Reset simulation (for recovery from bad convergence)
-     */
+
     reset() {
         this.grid.initialize();
+        this.createParticles();
     }
 }

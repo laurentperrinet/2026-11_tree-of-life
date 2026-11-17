@@ -6,7 +6,7 @@ class Application {
         this.canvas = document.getElementById('canvas');
         
         // Create core systems
-        this.grid = new TerrainGrid(64, 64, 1.0);
+        this.grid = new TerrainGrid();
         this.physics = new PhysicsEngine(this.grid);
         this.renderer = new TerrainRenderer(this.canvas);
         
@@ -96,10 +96,11 @@ class Application {
                 // Try to fetch from GitHub
                 const remote = await this.github.fetchTerrain();
                 if (remote) {
-                    this.grid.fromJSON(remote);
+                    if (!this.grid.fromJSON(remote)) {
+                        this.ui.showToast('Saved terrain is incompatible; starting a new bed', 'warning');
+                    }
                 } else {
-                    // Use initialized grid (cirque)
-                    this.ui.showToast('No saved terrain found, using fresh cirque', 'info');
+                    this.ui.showToast('No saved terrain found, using a fresh bed', 'info');
                 }
             }
             
@@ -142,6 +143,7 @@ class Application {
         
         // Update renderer
         this.renderer.updateTerrainMesh(this.grid);
+        this.renderer.updateParticles(this.physics);
         
         // Update UI
         this.ui.updateStatus(this.grid, this.github, this.syncLoop);

@@ -142,8 +142,9 @@ class GitHubSync {
         if (!local) return remote;
         
         // Ensure same dimensions
-        if (local.elevation.length !== remote.elevation.length) {
-            console.warn('Grid size mismatch in merge, using local');
+        if (remote.version !== local.version || remote.topology !== local.topology || !Array.isArray(remote.elevation) ||
+            local.elevation.length !== remote.elevation.length || !remote.elevation.every(Number.isFinite)) {
+            console.warn('Incompatible terrain in merge, using local');
             return local;
         }
         
@@ -153,24 +154,8 @@ class GitHubSync {
         for (let i = 0; i < local.elevation.length; i++) {
             merged.elevation[i] = Math.max(
                 local.elevation[i],
-                remote.elevation[i] || 0
+                remote.elevation[i]
             );
-        }
-        
-        // Merge water depth (max for continuity)
-        for (let i = 0; i < local.waterDepth.length; i++) {
-            merged.waterDepth[i] = Math.max(
-                local.waterDepth[i],
-                remote.waterDepth[i] || 0
-            );
-        }
-        
-        // Average sediment concentration
-        for (let i = 0; i < local.sediment.length; i++) {
-            merged.sediment[i] = (
-                (local.sediment[i] || 0) +
-                (remote.sediment[i] || 0)
-            ) / 2;
         }
         
         // Update metadata
@@ -228,6 +213,7 @@ class SyncLoop {
         
         this.lastFetchTime = 0;
         this.lastCommitTime = 0;
+        this.lastSaveTime = 0;
         this.pendingChanges = 0;
         
         this.running = false;
@@ -263,7 +249,10 @@ class SyncLoop {
         }
         
         // Save to localStorage periodically
-        this.localStore.save(this.terrain);
+        if (now - this.lastSaveTime > 5000) {
+            this.lastSaveTime = now;
+            this.localStore.save(this.terrain);
+        }
         
         // Continue loop
         requestAnimationFrame(() => this.syncLoop());
@@ -278,9 +267,13 @@ class SyncLoop {
         if (remote) {
             const local = this.terrain.toJSON();
             const merged = this.github.mergeTerrain(local, remote);
+            if (merged === local) return;
             
             // Apply merged terrain
-            this.terrain.fromJSON(merged);
+            if (!this.terrain.fromJSON(merged)) {
+                console.error('Merged terrain could not be applied');
+                return;
+            }
             
             // Track pending changes
             this.pendingChanges = 0;

@@ -8,8 +8,8 @@ class InputControls {
         
         // Mouse controls
         this.mouse = { x: 0, y: 0, down: false };
-        this.cameraRotation = { x: 0, y: 0 };
-        this.cameraDistance = 40;
+        this.cameraRotation = { x: 0.65, y: 0 };
+        this.cameraDistance = 57;
         
         // Setup listeners
         this.setupKeyboardListener();
@@ -158,10 +158,10 @@ class InputControls {
         const theta = this.cameraRotation.y;
         
         this.camera.position.x = distance * Math.sin(theta) * Math.cos(phi);
-        this.camera.position.y = distance * Math.sin(phi) + 10;
-        this.camera.position.z = distance * Math.cos(theta) * Math.cos(phi);
+        this.camera.position.y = distance * Math.sin(phi);
+        this.camera.position.z = -10 + distance * Math.cos(theta) * Math.cos(phi);
         
-        this.camera.lookAt(0, 0, 0);
+        this.camera.lookAt(0, 0, -10);
     }
     
     /**
