@@ -42,6 +42,7 @@ class UIManager {
         
         if (this.auth.isAuthenticated) {
             const login = this.auth.getUserLogin();
+            statusEl.hidden = false;
             statusEl.textContent = `🔒 ${login}`;
             statusEl.className = 'authenticated';
             statusEl.classList.remove('pending', 'denied');
@@ -55,7 +56,8 @@ class UIManager {
                 resetContainer.style.display = 'none';
             }
         } else {
-            statusEl.textContent = '🔓 Not authenticated';
+            statusEl.hidden = true;
+            statusEl.textContent = '';
             statusEl.className = 'unauthenticated';
             
             authButton.textContent = this.auth.isConfigured()

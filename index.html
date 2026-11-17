@@ -15,8 +15,23 @@
         <div>Contributors: <span id="contrib-count">1</span></div>
         <div>Last sync: <span id="last-sync">--</span>s ago</div>
         <div>Energy: <span id="energy-level">--</span>%</div>
-        <div id="auth-status">🔓 Not authenticated</div>
+        <div id="auth-status" hidden></div>
         <div id="convergence-indicator" class="convergence-unknown">⊙ Stability: --</div>
+        <details class="status-help">
+            <summary aria-label="Explain energy and stability">?</summary>
+            <div class="status-help-content">
+                <p><strong>Energy</strong> is a relative motion indicator, calculated as
+                    the sum of water depth times the squared velocity components at each
+                    mesh vertex. The display multiplies it by 100, rounds it and caps it
+                    at 100%; it is not a physical energy percentage.</p>
+                <p><strong>Stability</strong> compares the average energy of the latest
+                    15 simulation steps with the preceding 15. It starts at 0% until
+                    30 samples are available. An unchanged average gives 100%, while
+                    a relative change of 5% or more gives 0%. Values above 95% are
+                    marked stable. This measures energy variation, not proof that the
+                    terrain has converged.</p>
+            </div>
+        </details>
     </div>
 
     <!-- Help panel (bottom-left) -->

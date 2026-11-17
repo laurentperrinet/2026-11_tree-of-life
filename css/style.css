@@ -71,6 +71,32 @@ canvas {
     color: #ffa726;
 }
 
+.status-help summary {
+    cursor: pointer;
+    color: #90caf9;
+    list-style: none;
+    width: fit-content;
+}
+
+.status-help summary::-webkit-details-marker {
+    display: none;
+}
+
+.status-help summary:focus-visible {
+    outline: 2px solid #90caf9;
+}
+
+.status-help-content {
+    width: min(300px, calc(100vw - 72px));
+    max-height: 45vh;
+    overflow-y: auto;
+    white-space: normal;
+}
+
+.status-help-content p + p {
+    margin-top: 8px;
+}
+
 /* Help panel */
 .help-panel {
     position: fixed;

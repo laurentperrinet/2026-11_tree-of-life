@@ -223,8 +223,13 @@ No explicit branching code—it emerges from physics!
 Shows real-time statistics:
 - **Contributors**: How many unique GitHub users have synced
 - **Last Sync**: Seconds since last GitHub update
-- **Energy**: Current kinetic energy (E = Σ(u²+v²)h)
-- **Status**: "Running", "Converged", or "Syncing"
+- **Energy**: Relative motion indicator, Σ(u²+v²)h; the displayed percentage is
+  rounded and capped at 100%, not a physical energy percentage.
+- **Stability**: Comparison of the last 15 energy samples with the previous 15.
+  The display is 0% until 30 samples are available; a relative change of 5%
+  or more gives 0%, and a value above 95% is marked stable.
+
+Open the **?** in the status badge for details on these indicators.
 
 When **Converged**, you can press **R** to reset terrain.
 
