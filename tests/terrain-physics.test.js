@@ -42,16 +42,66 @@ test('local colonies grow on wet sandy banks and microbes diffuse only through s
 test('local biology round-trips independently of the shared terrain', () => {
     const grid = new TerrainGrid();
     const biology = new BiologyGrid(grid);
+    assert.ok(biology.active.reduce((sum, value) => sum + value, 0) > grid.erodibleCount);
     const i = biology.active.findIndex(value => value);
     biology.plants[i] = 0.5;
+    biology.inhibitor[i] = 0.2;
     biology.microbeV[i] = 0.3;
     const saved = biology.toJSON();
     assert.equal(grid.toJSON().vegetation, undefined);
+    assert.equal(grid.toJSON().microbeV, undefined);
     biology.reset();
     assert.equal(biology.fromJSON(saved), true);
     assert.ok(Math.abs(biology.plants[i] - 0.5) <= 1 / 65535);
+    assert.ok(Math.abs(biology.inhibitor[i] - 0.2) <= 1 / 65535);
     assert.ok(Math.abs(biology.microbeV[i] - 0.3) <= 1 / 65535);
     assert.equal(biology.fromJSON({ ...saved, size: 2 }), false);
+});
+
+test('crowded plant centers fade while the colony edge remains brighter', () => {
+    const biology = Object.create(BiologyGrid.prototype);
+    biology.size = 25;
+    for (const name of ['active', 'sand', 'flow', 'plants', 'inhibitor', 'microbeU', 'microbeV',
+        'nearby', 'scratch', 'nextPlants', 'nextInhibitor', 'nextU', 'nextV', 'habitat']) {
+        biology[name] = new Float32Array(625);
+    }
+    biology.active.fill(1);
+    biology.sand.fill(1);
+    biology.microbeU.fill(1);
+    for (let z = 0; z < biology.size; z++) {
+        biology.flow[z * biology.size + 8] = 0.03;
+        for (let x = 0; x < biology.size; x++) {
+            if ((x - 11) ** 2 + (z - 12) ** 2 <= 4) biology.plants[z * biology.size + x] = 0.8;
+        }
+    }
+    const center = 12 * biology.size + 11;
+    const edge = center - 1;
+    for (let i = 0; i < 10; i++) biology.updateColonies(0.2);
+    assert.ok(biology.inhibitor[center] > 0.1);
+    assert.ok(biology.plants[center] < 0.6);
+    assert.ok(biology.plants[edge] > biology.plants[center] + 0.05);
+    biology.sand[center] = 0;
+    const before = biology.plants[center];
+    biology.updateColonies(0.2);
+    assert.ok(biology.plants[center] < before);
+});
+
+test('microorganisms spread farther than plants under the same conditions', () => {
+    const biology = Object.create(BiologyGrid.prototype);
+    biology.size = 7;
+    for (const name of ['active', 'sand', 'flow', 'plants', 'inhibitor', 'microbeU', 'microbeV',
+        'nearby', 'scratch', 'nextPlants', 'nextInhibitor', 'nextU', 'nextV', 'habitat']) {
+        biology[name] = new Float32Array(49);
+    }
+    biology.active.fill(1);
+    biology.sand.fill(1);
+    biology.microbeU.fill(1);
+    const center = 3 * biology.size + 3;
+    biology.plants[center] = 0.1;
+    biology.microbeV[center] = 0.1;
+    biology.updateColonies(0.2);
+    assert.ok(biology.plants[center + 1] > 0);
+    assert.ok(biology.microbeV[center + 1] > 2 * biology.plants[center + 1]);
 });
 
 test('microorganism colors appear on sand without hiding plants or high-flow ground', () => {
@@ -73,6 +123,10 @@ test('microorganism colors appear on sand without hiding plants or high-flow gro
     assert.ok(color.r < 0.1 && color.b < 0.1);
     grid.plants[0] = 0;
     grid.flow[0] = 0.04;
+    renderer.volcanicColor(grid, 0, normals, color);
+    assert.ok(color.r < 0.1 && color.b < 0.1);
+    grid.sand[0] = 0;
+    grid.plants[0] = 1;
     renderer.volcanicColor(grid, 0, normals, color);
     assert.ok(color.r < 0.1 && color.b < 0.1);
 });

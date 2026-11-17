@@ -147,7 +147,7 @@ class TerrainRenderer {
     }
 
     volcanicColor(biology, i, normals, color) {
-        const growth = biology.plants[i];
+        const growth = biology.sand[i] ? biology.plants[i] : 0;
         const ny = normals.getY(i);
         const nx = normals.getX(i);
         const facing = Math.max(0, Math.min(1, 0.5 + 0.9 * (nx * 0.4 + ny - 0.85)));

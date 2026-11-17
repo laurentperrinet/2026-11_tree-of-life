@@ -130,13 +130,16 @@ protocol test command.
 An interactive web-based simulation of water-driven terrain erosion creating natural branching patterns, inspired by the "Tree of Life" photograph from Iceland. Browsers contribute elevation changes to shared terrain through a Cloudflare Worker.
 
 The current simulation is an exploratory particle model, not a validated hydrodynamic solver.
-In the elevation view, vegetation grows on sandy mesh vertices near sustained
-water flow but away from its strongest paths. It remains rooted as water moves;
-its coverage and recent flow history are saved with the terrain and cleared on reset.
+In the elevation view, vegetation grows rapidly on sandy ground near sustained
+water flow but away from its strongest paths. Its reaction–diffusion model
+suppresses crowded centers while colony edges continue to grow.
 Ochre-to-purple microorganisms form a separate Gray–Scott reaction–diffusion
-pattern on sandy, low-flow ground between plants. New colonies start as diffuse,
-faint patches that concentrate as the reaction develops. Their two concentrations
-are saved with the terrain; reset starts the pattern again from seeded patches.
+pattern on sandy, low-flow ground between plants and spread farther than the
+vegetation. New colonies start as diffuse,
+faint patches that concentrate as the reaction develops. Both use a 256×256
+biological grid finer than the terrain mesh. Each visitor's biology is saved
+locally between visits and is never synchronized with shared terrain; resetting
+the terrain also resets that visitor's biology.
 
 ## 🎯 Quick Start (5 Minutes)
 

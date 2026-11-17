@@ -174,13 +174,14 @@ class BiologyGrid {
                         Math.min(1, Math.max(0, (0.8 - this.flow[i] / Math.max(nearby[i], 1e-12)) / 0.6));
                     const reaction = u * v * v * habitat;
                     this.nextPlants[i] = Math.max(0, Math.min(1, p + step *
-                        (0.15 * lapP + bank * (0.04 + 0.8 * p) * (1 - p) - 0.55 * inhibitor * p)));
+                        (0.15 * lapP + bank * (0.04 + 0.8 * p) * (1 - p) -
+                            (0.55 * inhibitor + (this.sand[i] ? 0 : 0.2)) * p)));
                     this.nextInhibitor[i] = Math.max(0, Math.min(1, inhibitor + step *
                         (0.08 * lapI + 0.12 * p - 0.04 * inhibitor)));
                     this.nextU[i] = Math.max(0, Math.min(1, u + step *
-                        (0.64 * lapU - reaction + 0.035 * (1 - u))));
+                        (0.9 * lapU - reaction + 0.035 * (1 - u))));
                     this.nextV[i] = Math.max(0, Math.min(1, v + step *
-                        (0.32 * lapV + reaction - (0.097 + 0.15 * (1 - habitat)) * v)));
+                        (0.45 * lapV + reaction - (0.097 + 0.15 * (1 - habitat)) * v)));
                 }
             }
             [this.plants, this.nextPlants] = [this.nextPlants, this.plants];
