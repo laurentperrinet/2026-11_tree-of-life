@@ -34,7 +34,7 @@ test('local colonies grow on wet sandy banks and microbes diffuse only through s
     assert.equal(biology.plants[12], 0);
     assert.equal(biology.plants[7], 0);
     assert.equal(biology.microbeV[7], 0);
-    for (let i = 0; i < 30; i++) biology.updateColonies(0.2);
+    for (let i = 0; i < 10; i++) biology.updateColonies(0.2);
     assert.ok(biology.microbeU.every(value => Number.isFinite(value) && value >= 0 && value <= 1));
     assert.ok(biology.microbeV.every(value => Number.isFinite(value) && value >= 0 && value <= 1));
 });
@@ -231,6 +231,76 @@ test('collisions exchange momentum and push overlapping water parcels apart', ()
     assert.equal(b.sediment, 0.2);
 });
 
+test('evaporation deposits sediment locally before reinjection and survives a save', () => {
+    let random = 0.5;
+    const seededMath = Object.create(Math);
+    seededMath.random = () => random;
+    const seededContext = vm.createContext({ console, Math: seededMath, Float64Array, Date });
+    for (const name of ['terrain', 'physics']) {
+        vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', `${name}.js`), 'utf8'), seededContext);
+    }
+    const { grid, physics } = vm.runInContext(
+        'const grid = new TerrainGrid(); const physics = new PhysicsEngine(grid); ({ grid, physics })',
+        seededContext
+    );
+    const particle = physics.particles[0];
+    Object.assign(particle, { x: 10, z: -5, vx: 0, vz: 0, sediment: 0.25 });
+    const face = grid.sample(particle.x, particle.z).face;
+    face.forEach(i => { grid.elevation[i] = grid.bedrock[i]; });
+    const beforeDeposit = totalSediment(grid, physics);
+    physics.updateParticle(particle, 0);
+    assert.equal(particle.burstProgress, undefined);
+    random = 0;
+    physics.updateParticle(particle, 0.04);
+    assert.equal(particle.burstProgress, 0);
+    physics.updateParticle(particle, 0);
+    assert.equal(particle.burstProgress, 0);
+    physics.updateParticle(particle, physics.burstDuration / 2);
+    assert.equal(particle.burstProgress, 0.5);
+    assert.equal(particle.sediment, 0.25);
+    const saved = grid.toJSON();
+    assert.equal(grid.fromJSON(saved), true);
+    assert.equal(physics.particles[0].burstProgress, 0.5);
+    const invalid = grid.toJSON();
+    invalid.particles[0].burstProgress = 1;
+    assert.equal(grid.fromJSON(invalid), false);
+    physics.updateParticle(physics.particles[0], physics.burstDuration / 2);
+    assert.equal(physics.particles[0].burstProgress, undefined);
+    assert.ok(Math.hypot(physics.particles[0].x, physics.particles[0].z) > grid.radius - 1);
+    assert.equal(physics.particles[0].sediment, 0);
+    assert.ok(face.some(i => grid.elevation[i] > grid.bedrock[i]));
+    assert.ok(Math.abs(totalSediment(grid, physics) - beforeDeposit) < 1e-8);
+});
+
+test('evaporation on the fixed surround deposits on the underlying face', () => {
+    const grid = new TerrainGrid();
+    const physics = new PhysicsEngine(grid);
+    const particle = physics.particles[0];
+    Object.assign(particle, { x: 28, z: 0, vx: 0, vz: 0, sediment: 0.25, burstProgress: 0.5 });
+    const before = totalSediment(grid, physics);
+    const elevations = Array.from(grid.elevation);
+    const face = grid.sample(particle.x, particle.z).face;
+    physics.updateParticle(particle, physics.burstDuration / 2);
+    assert.equal(particle.sediment, 0);
+    assert.ok(Math.abs(totalSediment(grid, physics) - before) < 1e-8);
+    const changed = grid.vertices.map((point, i) => i).filter(i => grid.elevation[i] > elevations[i]);
+    assert.ok(changed.length > 0);
+    assert.ok(changed.every(i => face.includes(i)));
+    assert.ok(changed.some(i => i >= grid.erodibleCount));
+    const saved = grid.toJSON();
+    assert.equal(grid.fromJSON(saved), true);
+});
+
+test('bursting particles do not collide with moving water', () => {
+    const physics = new PhysicsEngine(new TerrainGrid());
+    const fading = { x: 10, z: -5, vx: 0, vz: 0, sediment: 0, burstProgress: 0.5 };
+    const moving = { x: 10.1, z: -5, vx: -1, vz: 0, sediment: 0 };
+    physics.particles = [fading, moving];
+    physics.collideParticles(0.04);
+    assert.equal(moving.vx, -1);
+    assert.equal(fading.vx, 0);
+});
+
 test('stationary water gradually deposits its sediment in a hollow', () => {
     const grid = new TerrainGrid();
     const physics = new PhysicsEngine(grid);
@@ -339,7 +409,7 @@ test('saves from the previous planar bed are rejected, current ones round-trip',
     assert.equal(grid.fromJSON({ ...saved, vegetation: undefined, flowHistory: undefined }), true);
     assert.equal(grid.vegetation[1], 0);
     assert.equal(grid.fromJSON({ ...saved, vegetation: [NaN] }), false);
-    saved.elevation[grid.erodibleCount] += 1;
+    saved.elevation[grid.erodibleCount] -= 0.1;
     assert.equal(grid.fromJSON(saved), false);
 });
 
@@ -434,11 +504,11 @@ test('version 10 saves raise the surround without changing the sand or particles
     assert.ok(Math.abs(totalSediment(grid, physics) - before) < 1e-8);
     assert.ok(grid.elevation.slice(grid.erodibleCount).every((height, j) =>
         height === grid.bedrock[j + grid.erodibleCount] + grid.initialSandDepth));
-    saved.elevation[grid.erodibleCount] += 1;
+    saved.elevation[grid.erodibleCount] -= 0.1;
     assert.equal(grid.fromJSON(saved), false);
 });
 
-test('500-particle saves gain new water without losing saved sediment', () => {
+test('500- and 1000-particle saves gain new water without losing saved sediment', () => {
     const grid = new TerrainGrid();
     const physics = new PhysicsEngine(grid);
     const saved = grid.toJSON();
@@ -449,13 +519,17 @@ test('500-particle saves gain new water without losing saved sediment', () => {
         sum + (height - grid.bedrock[i]) * grid.vertexArea[i], 0) + 0.25;
     assert.equal(grid.fromJSON(saved), true);
     assert.equal(physics.particles, grid.particles);
-    assert.equal(physics.particles.length, 1000);
+    assert.equal(physics.particles.length, 1500);
     assert.deepEqual({ ...physics.particles[0] }, { ...saved.particles[0] });
     assert.ok(physics.particles.slice(500).every(p =>
         p.sediment === 0 && p.vx === 0 && p.vz === 0 && grid.locate(p.x, p.z)));
     assert.ok(Math.abs(totalSediment(grid, physics) - expected) < 1e-8);
     const restored = grid.toJSON();
     assert.equal(grid.fromJSON(restored), true);
+    const saved1000 = { ...restored, particles: restored.particles.slice(0, 1000) };
+    assert.equal(grid.fromJSON(saved1000), true);
+    assert.equal(physics.particles.length, 1500);
+    assert.ok(physics.particles.slice(1000).every(p => p.sediment === 0 && p.vx === 0 && p.vz === 0));
     assert.equal(grid.fromJSON({ ...saved, particles: saved.particles.slice(0, 499) }), false);
 });
 

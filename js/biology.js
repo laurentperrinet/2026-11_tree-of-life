@@ -69,11 +69,11 @@ class BiologyGrid {
                 for (let cx = cellX - 1; cx <= cellX + 1; cx++) {
                     for (let cz = cellZ - 1; cz <= cellZ + 1; cz++) {
                         const hash = (Math.imul(cx, 73856093) ^ Math.imul(cz, 19349663)) >>> 0;
-                        if (hash % 3 !== 0) continue;
+                        if (hash % 2 !== 0) continue;
                         const dx = px - 3 * (cx + 0.3 + ((hash >>> 4) % 40) / 100);
                         const dz = pz - 3 * (cz + 0.3 + ((hash >>> 12) % 40) / 100);
                         const distance = dx * dx + dz * dz;
-                        if (distance < 9) concentration = Math.max(concentration, 0.15 * Math.exp(-distance / 2.42));
+                        if (distance < 9) concentration = Math.max(concentration, 0.25 * Math.exp(-distance / 4));
                     }
                 }
                 this.microbeV[i] = concentration;
@@ -169,19 +169,19 @@ class BiologyGrid {
                         lapU += weight * (this.microbeU[j] - u) / 4;
                         lapV += weight * (this.microbeV[j] - v) / 4;
                     }
-                    const wetness = Math.min(1, Math.max(0, (nearby[i] - 0.002) / 0.013));
+                    const wetness = Math.min(1, Math.max(0, (nearby[i] - 0.0008) / 0.008));
                     const bank = this.sand[i] * wetness *
                         Math.min(1, Math.max(0, (0.8 - this.flow[i] / Math.max(nearby[i], 1e-12)) / 0.6));
                     const reaction = u * v * v * habitat;
                     this.nextPlants[i] = Math.max(0, Math.min(1, p + step *
-                        (0.15 * lapP + bank * (0.04 + 0.8 * p) * (1 - p) -
-                            (0.55 * inhibitor + (this.sand[i] ? 0 : 0.2)) * p)));
+                        (0.15 * lapP + bank * (0.06 + 0.8 * p) * (1 - p) -
+                            (0.9 * inhibitor + (this.sand[i] ? 0 : 0.2)) * p)));
                     this.nextInhibitor[i] = Math.max(0, Math.min(1, inhibitor + step *
-                        (0.08 * lapI + 0.12 * p - 0.04 * inhibitor)));
+                        (0.02 * lapI + 0.1 * p - 0.05 * inhibitor)));
                     this.nextU[i] = Math.max(0, Math.min(1, u + step *
-                        (0.9 * lapU - reaction + 0.035 * (1 - u))));
+                        (0.9 * lapU - reaction + 0.046 * (1 - u))));
                     this.nextV[i] = Math.max(0, Math.min(1, v + step *
-                        (0.45 * lapV + reaction - (0.097 + 0.15 * (1 - habitat)) * v)));
+                        (0.45 * lapV + reaction - (0.109 + 0.05 * (1 - habitat)) * v)));
                 }
             }
             [this.plants, this.nextPlants] = [this.nextPlants, this.plants];

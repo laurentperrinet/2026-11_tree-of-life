@@ -103,8 +103,8 @@ longer reads or writes `data/terrain.json`.
    returns the shared terrain.
 3. Confirm the Worker has the `SIMULATION` Durable Object binding and the
    configured owner ID.
-4. In the admin view, press **S** to request a sync. Manual sync still respects
-   the adaptive interval.
+4. Open the admin view, sign in with GitHub, then press **S** to request a sync.
+   Manual sync still respects the adaptive interval.
 
 The active-browser count is approximate and expires after 24 hours. The
 80,000-request daily target is based on normal browser sync cadence; it is not

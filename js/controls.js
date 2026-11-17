@@ -29,7 +29,8 @@ class InputControls {
      */
     onKeyDown(event) {
         const app = window.app;
-        if (!app || !new URLSearchParams(window.location.search).has('admin')) return;
+        if (!app || !app.auth?.isAuthenticated ||
+            !new URLSearchParams(window.location.search).has('admin')) return;
         
         // Prevent defaults for control keys
         if (['ArrowUp', 'ArrowDown', '+', '-', 'd', 's', 'r', 'D', 'S', 'R', '?'].includes(event.key)) {

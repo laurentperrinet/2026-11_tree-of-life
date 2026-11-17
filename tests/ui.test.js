@@ -94,24 +94,34 @@ test('authentication status is hidden until a user signs in', () => {
     assert.equal(elements['reset-container'].style.display, 'none');
 });
 
-test('admin panel and keyboard shortcuts require the admin URL', () => {
+test('admin panel and keyboard shortcuts require the admin URL and GitHub authentication', () => {
     const panel = { hidden: true };
+    const controlsPanel = { hidden: true };
+    const accessMessage = { hidden: true };
     const location = { search: '' };
+    const auth = { isAuthenticated: false };
     let cycles = 0;
     let prevented = 0;
     const app = {
+        auth,
         ui: { showToast() {} },
         renderer: { cycleDisplayMode() { cycles++; }, displayMode: 'flux' }
     };
     const context = vm.createContext({
         URLSearchParams, window: { location, app },
-        document: { getElementById: () => panel }
+        document: {
+            getElementById: id => ({
+                'help-panel': panel,
+                'admin-controls': controlsPanel,
+                'admin-access-message': accessMessage
+            })[id]
+        }
     });
     for (const file of ['ui.js', 'controls.js']) {
         vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', file), 'utf8'), context);
     }
     const { UIManager, InputControls } = vm.runInContext('({ UIManager, InputControls })', context);
-    const ui = new UIManager({}, {});
+    const ui = new UIManager(auth, {});
     const controls = Object.create(InputControls.prototype);
     controls.renderer = app.renderer;
     const event = { key: 'd', preventDefault() { prevented++; } };
@@ -126,12 +136,29 @@ test('admin panel and keyboard shortcuts require the admin URL', () => {
     ui.updateAdminPanel();
     controls.onKeyDown(event);
     assert.equal(panel.hidden, false);
+    assert.equal(controlsPanel.hidden, true);
+    assert.equal(accessMessage.hidden, false);
+    assert.equal(cycles, 0);
+    assert.equal(prevented, 0);
+
+    auth.isAuthenticated = true;
+    ui.updateAdminPanel();
+    controls.onKeyDown(event);
+    assert.equal(controlsPanel.hidden, false);
+    assert.equal(accessMessage.hidden, true);
     assert.equal(cycles, 1);
     assert.equal(prevented, 1);
     controls.onKeyDown({ key: '?', preventDefault() {} });
     assert.equal(panel.hidden, true);
     controls.onKeyDown({ key: '?', preventDefault() {} });
     assert.equal(panel.hidden, false);
+
+    auth.isAuthenticated = false;
+    ui.updateAdminPanel();
+    controls.onKeyDown(event);
+    assert.equal(controlsPanel.hidden, true);
+    assert.equal(accessMessage.hidden, false);
+    assert.equal(cycles, 1);
 });
 
 test('reset URL cleanup retains the admin view and unrelated parameters', async () => {

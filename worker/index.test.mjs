@@ -141,6 +141,28 @@ test('contributions from the same version are averaged once per browser', async 
     }
 });
 
+test('surround deposits are accepted and persisted without allowing erosion', async () => {
+    const { request } = harness();
+    const initial = await request('/api/state');
+    const index = createInitialMesh().erodibleCount;
+    const realNow = Date.now;
+    const now = 3_000_000;
+    Date.now = () => now;
+    try {
+        const deposit = await request('/api/sync', {
+            method: 'POST', clientId: clientA, version: 0, encoding: 'gzip',
+            body: await compressedDelta(initial.body.terrain.elevation.length, { [index]: 0.1 })
+        });
+        equal(deposit.body.accepted, true);
+        Date.now = () => now + 300_001;
+        const finalized = await request('/api/sync', { method: 'POST', clientId: clientB });
+        ok(Math.abs(finalized.body.terrain.elevation[index] -
+            initial.body.terrain.elevation[index] - 0.1) < 1e-6);
+    } finally {
+        Date.now = realNow;
+    }
+});
+
 test('stale versions and malformed collaborator data do not alter the terrain', async () => {
     const { request } = harness();
     equal((await request('/api/sync', { method: 'POST' })).status, 400);
@@ -159,7 +181,7 @@ test('stale versions and malformed collaborator data do not alter the terrain', 
     equal(accepted.body.accepted, true);
 
     const outOfBounds = new Float32Array(length);
-    outOfBounds[length - 1] = 0.1;
+    outOfBounds[length - 1] = -0.1;
     const invalidBoundary = await request('/api/sync', {
         method: 'POST', clientId: clientB, version: 0, encoding: 'gzip',
         body: new Response(new Blob([outOfBounds.buffer]).stream()

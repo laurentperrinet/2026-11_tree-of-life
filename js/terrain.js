@@ -259,9 +259,11 @@ class TerrainGrid {
         const arrays = [json.elevation, json.waterDepth, json.sediment];
         const validParticles = Array.isArray(json.particles) &&
             (json.particles.length === this.particles.length ||
-                (json.particles.length === 500 && this.particles.length === 1000)) &&
+                ([500, 1000].includes(json.particles.length) && this.particles.length === 1500)) &&
             json.particles.every(p => p && [p.x, p.z, p.vx, p.vz, p.sediment].every(Number.isFinite) &&
-                p.sediment >= 0 && this.locate(p.x, p.z));
+                p.sediment >= 0 && (p.burstProgress === undefined ||
+                    (Number.isFinite(p.burstProgress) && p.burstProgress >= 0 && p.burstProgress < 1)) &&
+                this.locate(p.x, p.z));
         if (!['10.0', '11.0'].includes(json.version) || json.topology !== 'disk-square-polar-v1' || !validParticles ||
             arrays.some(a => !Array.isArray(a) || a.length !== this.elevation.length || !a.every(Number.isFinite))) {
             console.warn('Saved terrain is incompatible with the circular mesh');
@@ -276,8 +278,8 @@ class TerrainGrid {
             return false;
         }
         if (json.elevation.some((height, i) =>
-            i >= this.erodibleCount && height !== savedBedrock(i) + this.initialSandDepth)) {
-            console.warn('Saved terrain modifies the fixed surround');
+            i >= this.erodibleCount && height < savedBedrock(i) + this.initialSandDepth)) {
+            console.warn('Saved terrain erodes the fixed surround');
             return false;
         }
         for (const [name, max] of [['flowHistory', Infinity], ['vegetation', 1]]) {
@@ -305,7 +307,8 @@ class TerrainGrid {
         this.elevation.set(json.elevation);
         if (oldSurround) {
             for (let i = this.erodibleCount; i < this.elevation.length; i++) {
-                this.elevation[i] = this.bedrock[i] + this.initialSandDepth;
+                const deposited = json.elevation[i] - (savedBedrock(i) + this.initialSandDepth);
+                this.elevation[i] = this.bedrock[i] + this.initialSandDepth + deposited;
             }
         }
         this.waterDepth.set(json.waterDepth);

@@ -119,6 +119,11 @@ canvas {
     color: #90caf9;
 }
 
+.admin-access-message {
+    font-size: 11px;
+    line-height: 1.5;
+}
+
 .help-panel ul {
     list-style: none;
     font-size: 11px;

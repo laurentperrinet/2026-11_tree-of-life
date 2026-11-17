@@ -10,8 +10,15 @@ class UIManager {
     }
 
     updateAdminPanel() {
+        const adminRequested = new URLSearchParams(window.location.search).has('admin');
         const panel = document.getElementById('help-panel');
-        if (panel) panel.hidden = !new URLSearchParams(window.location.search).has('admin');
+        if (panel) panel.hidden = !adminRequested;
+
+        const authenticated = adminRequested && this.auth.isAuthenticated;
+        const controls = document.getElementById('admin-controls');
+        const accessMessage = document.getElementById('admin-access-message');
+        if (controls) controls.hidden = !authenticated;
+        if (accessMessage) accessMessage.hidden = authenticated;
     }
     
     /**
@@ -171,6 +178,7 @@ class UIManager {
     logout() {
         this.auth.logout();
         this.updateAuthStatus();
+        this.updateAdminPanel();
         this.showToast('Logged out', 'info');
     }
     

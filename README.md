@@ -15,20 +15,25 @@ The browser models an erodible circular bed within a fixed square surround.
 Its solid base forms an inverted cone of radial slope 0.09, except for a
 channel that widens towards the bottom of the square and slopes down from the
 centre to the sink. Initially the bed is covered by a uniform layer of sand
-0.3 simulation units deep; only the interior of the disk evolves. The outer
-ring and square surround remain fixed. The circular edge is a polygon whose
+0.3 simulation units deep. The outer ring and square surround cannot be eroded,
+but can receive sediment left by evaporating water. The circular edge is a polygon whose
 vertices lie on the disk boundary. The black, non-erodible surround rises
 outwards so water on it flows back towards the disk; the outlet channel remains
 open and slopes down to the sink.
 
-Blue spheres represent 1,000 water parcels, each carrying the same volume as
-before, doubling the circulating water relative to the 500-parcel model.
-Older 500-parcel saves retain their water and sediment and receive 500
-additional sediment-free parcels. Gravity follows the
+Blue spheres represent 1,500 water parcels, each carrying the same volume as
+before. Older 500- or 1,000-parcel saves retain their water and sediment and
+receive additional sediment-free parcels. Gravity follows the
 local slope of each triangle, with friction. The square boundary reflects water
 except at the sink in the middle of its bottom edge. On reaching the sink, each
 parcel is reintroduced three mesh rings inside the disk at a uniformly random angle,
-retaining its sediment. Parcels can also move over the fixed surround, but
+retaining its sediment. Independently of the sink, each parcel has a constant
+random hazard of bursting (mean waiting time 90 simulation time units). It
+turns white and fades for 0.8 simulation time units, then is reinjected with
+no sediment. The sand is deposited on the mesh where the parcel evaporated,
+including on the fixed surround. Pausing the
+simulation also pauses this process.
+Parcels can also move over the fixed surround, but
 cannot exchange sand with it. The initial
 parcels are distributed across the bed so the flow is immediately visible.
 Transport capacity increases with speed: moving parcels pick up sand when
@@ -148,8 +153,9 @@ Just visit: **https://laurentperrinet.github.io/2026-11_tree-of-life/**
 - Observe water parcels eroding and depositing sediment
 - The initial view looks straight down at the center of the disk; drag or scroll to adjust it
 - Open [the admin view](https://laurentperrinet.github.io/2026-11_tree-of-life/?admin)
-  for the control panel and keyboard shortcuts. Reset still requires signing in
-  as the authorized GitHub owner; the URL itself grants no permissions.
+  and sign in with GitHub to access the control panel and keyboard shortcuts.
+  The URL itself grants no permissions; resetting still requires the authorized
+  GitHub owner.
 
 ### For Developers
 ```bash
@@ -218,7 +224,9 @@ No explicit branching code is used.
 
 ### Keyboard Shortcuts
 
-The control panel and keyboard shortcuts are available with `?admin`.
+The control panel appears with `?admin`; sign in with GitHub before its
+simulation controls and keyboard shortcuts become available. Reset remains
+restricted to the authorized GitHub owner.
 
 | Key | Action | Notes |
 |-----|--------|-------|

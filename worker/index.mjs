@@ -307,7 +307,7 @@ export class Simulation {
                     for (let i = 0; i < delta.length; i++) {
                         const value = delta[i];
                         if (!Number.isFinite(value) || Math.abs(value) > MAX_DELTA ||
-                            (i >= state.erodibleCount && value !== 0)) {
+                            (i >= state.erodibleCount && value < 0)) {
                             throw new HttpError(400, 'Contribution contains invalid terrain changes');
                         }
                     }
@@ -337,7 +337,6 @@ export class Simulation {
         const count = state.contributionIds.length;
         if (count > 0) {
             for (let i = 0; i < state.elevation.length; i++) {
-                if (i >= state.erodibleCount) continue;
                 state.elevation[i] = Math.max(
                     state.bedrock[i],
                     state.elevation[i] + state.sumDelta[i] / count

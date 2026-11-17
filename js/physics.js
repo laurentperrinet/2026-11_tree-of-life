@@ -10,12 +10,14 @@ class PhysicsEngine {
         this.friction = 1.8;
         this.Q_inlet = 0.5;
         this.timeScale = 1;
-        this.particleCount = 1000;
+        this.particleCount = 1500;
         this.waterPerParticle = 0.02;
         this.transportCapacity = 6;
         this.erosionBorderWidth = 2;
         this.particleRadius = 0.105;
         this.maxSpeed = 3;
+        this.particleHazardRate = 1 / 90;
+        this.burstDuration = 0.8;
         this.sandReposeSlope = Math.tan(34 * Math.PI / 180);
         this.particles = [];
         this.createParticles();
@@ -40,6 +42,7 @@ class PhysicsEngine {
         particle.z = -radius * Math.sin(angle);
         particle.vx = 0;
         particle.vz = 0;
+        delete particle.burstProgress;
     }
 
     arcBoundary(angle) {
@@ -73,7 +76,7 @@ class PhysicsEngine {
         const subDt = dt / steps;
         for (let sub = 0; sub < steps; sub++) {
             if (subDt > 0) this.collideParticles(subDt);
-            for (const particle of this.particles) this.moveParticle(particle, subDt);
+            for (const particle of this.particles) this.updateParticle(particle, subDt);
             if (subDt > 0) this.relaxSand(subDt);
         }
         for (const particle of this.particles) {
@@ -121,6 +124,7 @@ class PhysicsEngine {
         const bins = new Map();
         for (let i = 0; i < this.particles.length; i++) {
             const particle = this.particles[i];
+            if (particle.burstProgress !== undefined) continue;
             const bx = Math.floor(particle.x / diameter);
             const bz = Math.floor(particle.z / diameter);
             for (let x = bx - 1; x <= bx + 1; x++) {
@@ -154,6 +158,44 @@ class PhysicsEngine {
             if (!bins.has(key)) bins.set(key, []);
             bins.get(key).push(i);
         }
+    }
+
+    updateParticle(particle, dt) {
+        if (dt <= 0) return;
+        if (particle.burstProgress !== undefined) {
+            const progress = particle.burstProgress + dt / this.burstDuration;
+            if (progress >= 1) {
+                this.depositEvaporatedSediment(particle);
+                this.reinject(particle);
+            } else {
+                particle.burstProgress = progress;
+            }
+            return;
+        }
+        if (Math.random() < -Math.expm1(-this.particleHazardRate * dt)) {
+            particle.burstProgress = 0;
+            particle.vx = 0;
+            particle.vz = 0;
+            return;
+        }
+        this.moveParticle(particle, dt);
+    }
+
+    depositEvaporatedSediment(particle) {
+        if (particle.sediment === 0) return;
+        const grid = this.grid;
+        const sample = grid.sample(particle.x, particle.z);
+        if (!sample) throw new Error('Evaporating particle outside the terrain mesh');
+        const weights = sample.weights.map(weight => Math.max(0, weight));
+        const total = weights.reduce((sum, weight) => sum + weight, 0);
+        if (total < 1e-12) throw new Error('No terrain for sediment deposit');
+        for (let i = 0; i < sample.face.length; i++) {
+            if (weights[i] > 0) {
+                const index = sample.face[i];
+                grid.elevation[index] += particle.sediment * weights[i] / total / grid.vertexArea[index];
+            }
+        }
+        particle.sediment = 0;
     }
 
     moveParticle(particle, dt) {

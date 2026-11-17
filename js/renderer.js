@@ -179,14 +179,35 @@ class TerrainRenderer {
 
     updateParticles(physics) {
         if (!this.particleMesh) {
+            const geometry = new THREE.SphereGeometry(physics.particleRadius * 0.5, 8, 6);
+            geometry.setAttribute('burstProgress', new THREE.InstancedBufferAttribute(
+                new Float32Array(physics.particles.length), 1));
+            const material = new THREE.MeshPhongMaterial({
+                color: 0x567b88, shininess: 12, transparent: true, depthWrite: false
+            });
+            material.onBeforeCompile = shader => {
+                shader.vertexShader = shader.vertexShader.replace('#include <common>',
+                    '#include <common>\nattribute float burstProgress;\nvarying float vBurstProgress;');
+                shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
+                    '#include <begin_vertex>\nvBurstProgress = burstProgress;');
+                shader.fragmentShader = shader.fragmentShader.replace('#include <common>',
+                    '#include <common>\nvarying float vBurstProgress;');
+                shader.fragmentShader = shader.fragmentShader.replace('#include <dithering_fragment>', `
+                    float rim = pow(1.0 - abs(dot(normal, normalize(vViewPosition))), 2.0);
+                    gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(1.0),
+                        smoothstep(0.0, 0.35, vBurstProgress));
+                    gl_FragColor.a *= (1.0 - smoothstep(0.45, 1.0, vBurstProgress)) *
+                        mix(1.0, 0.25 + 0.75 * rim, smoothstep(0.35, 0.7, vBurstProgress));
+                    #include <dithering_fragment>`);
+            };
             this.particleMesh = new THREE.InstancedMesh(
-                new THREE.SphereGeometry(physics.particleRadius * 0.5, 8, 6),
-                new THREE.MeshPhongMaterial({ color: 0x567b88, shininess: 12 }),
+                geometry, material,
                 physics.particles.length
             );
             this.particleMesh.frustumCulled = false;
             this.scene.add(this.particleMesh);
         }
+        const bursts = this.particleMesh.geometry.attributes.burstProgress;
         physics.particles.forEach((particle, i) => {
             const sample = physics.grid.sample(particle.x, particle.z);
             if (!sample) throw new Error('Cannot render particle outside the terrain mesh');
@@ -194,8 +215,10 @@ class TerrainRenderer {
             this.dummy.scale.set(1, 0.3, 1);
             this.dummy.updateMatrix();
             this.particleMesh.setMatrixAt(i, this.dummy.matrix);
+            bursts.setX(i, particle.burstProgress ?? 0);
         });
         this.particleMesh.instanceMatrix.needsUpdate = true;
+        bursts.needsUpdate = true;
     }
 
     cycleDisplayMode() {
