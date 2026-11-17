@@ -47,7 +47,6 @@ class UIManager {
             statusEl.classList.remove('pending', 'denied');
             
             authButton.textContent = '🔒 Logout';
-            authButton.onclick = () => this.logout();
             
             // Show reset button if user is author
             if (this.reset.canReset()) {
@@ -59,8 +58,8 @@ class UIManager {
             statusEl.textContent = '🔓 Not authenticated';
             statusEl.className = 'unauthenticated';
             
-            authButton.textContent = '🔓 Sign in with GitHub';
-            authButton.onclick = () => this.login();
+            authButton.textContent = this.auth.isConfigured()
+                ? '🔓 Sign in with GitHub' : '🔓 GitHub sign-in unavailable';
             
             resetContainer.style.display = 'none';
         }
@@ -151,7 +150,12 @@ class UIManager {
      * Handle login
      */
     login() {
-        this.auth.login();
+        try {
+            this.auth.login();
+        } catch (error) {
+            console.error('GitHub sign-in unavailable:', error);
+            this.showToast(error.message, 'error', 8000);
+        }
     }
     
     /**
@@ -159,6 +163,7 @@ class UIManager {
      */
     logout() {
         this.auth.logout();
+        if (window.app) window.app.github.setToken(null);
         this.updateAuthStatus();
         this.showToast('Logged out', 'info');
     }

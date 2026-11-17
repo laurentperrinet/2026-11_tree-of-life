@@ -4,9 +4,11 @@
  */
 class AuthManager {
     constructor(config = {}) {
-        this.clientId = config.clientId || 'YOUR_GITHUB_CLIENT_ID'; // Will be set in deployment
-        this.redirectUri = config.redirectUri || window.location.origin;
+        this.clientId = config.clientId || '';
+        this.redirectUri = config.redirectUri || '';
+        this.exchangeUrl = config.exchangeUrl || '';
         this.scopes = config.scopes || ['user:email'];
+        this.stateKey = 'tree-of-life-oauth-state';
         
         this.user = null;
         this.token = null;
@@ -21,10 +23,25 @@ class AuthManager {
         const params = new URLSearchParams(window.location.search);
         const code = params.get('code');
         
-        if (code) {
+        const oauthError = params.get('error');
+        if (code || oauthError) {
+            const state = params.get('state');
+            const expected = sessionStorage.getItem(this.stateKey);
+            sessionStorage.removeItem(this.stateKey);
+            params.delete('code');
+            params.delete('state');
+            params.delete('error');
+            params.delete('error_description');
+            params.delete('error_uri');
+            const query = params.toString();
+            window.history.replaceState({}, document.title,
+                window.location.pathname + (query ? `?${query}` : '') + window.location.hash);
+            if (!state || !expected || state !== expected) {
+                throw new Error('GitHub sign-in failed: invalid OAuth state');
+            }
+            if (oauthError) throw new Error('GitHub sign-in was declined or failed');
+            if (!this.isConfigured()) throw new Error('GitHub sign-in is not configured for this page');
             await this.exchangeCode(code);
-            // Clean URL
-            window.history.replaceState({}, document.title, window.location.pathname);
             return;
         }
         
@@ -34,21 +51,36 @@ class AuthManager {
         
         if (token) {
             this.token = token;
-            this.isAuthenticated = true;
-            await this.fetchUser();
+            if (!await this.fetchUser()) {
+                this.logout();
+                throw new Error('Stored GitHub session could not be verified');
+            }
+        }
+    }
+
+    isConfigured() {
+        if (!this.clientId || !this.redirectUri || !this.exchangeUrl) return false;
+        try {
+            const callback = new URL(this.redirectUri);
+            const endpoint = new URL(this.exchangeUrl);
+            return callback.protocol === 'https:' && endpoint.protocol === 'https:' &&
+                callback.origin === window.location.origin && callback.pathname === window.location.pathname;
+        } catch (error) {
+            console.error('Invalid GitHub OAuth configuration:', error);
+            return false;
         }
     }
     
     /**
      * Get OAuth login URL
      */
-    getLoginUrl() {
+    getLoginUrl(state) {
         const params = new URLSearchParams({
             client_id: this.clientId,
             redirect_uri: this.redirectUri,
             scope: this.scopes.join(' '),
             allow_signup: 'false',
-            state: this.generateRandomState()
+            state
         });
         
         return `https://github.com/login/oauth/authorize?${params.toString()}`;
@@ -58,46 +90,39 @@ class AuthManager {
      * Start OAuth flow
      */
     login() {
-        if (!this.clientId || this.clientId === 'YOUR_GITHUB_CLIENT_ID') {
-            console.error('GitHub Client ID not configured');
-            return;
-        }
-        
-        window.location.href = this.getLoginUrl();
+        if (!this.isConfigured()) throw new Error('GitHub sign-in requires a configured OAuth Worker and HTTPS callback');
+        const state = this.generateRandomState();
+        sessionStorage.setItem(this.stateKey, state);
+        window.location.href = this.getLoginUrl(state);
     }
     
     /**
-     * Exchange authorization code for access token
-     * NOTE: In production, this should be done server-side to avoid exposing tokens
+     * Exchange the code using the configured server-side Worker.
      */
     async exchangeCode(code) {
-        try {
-            // For demo/testing, we'll use a backend endpoint
-            // In real implementation, use Netlify functions or similar
-            const response = await fetch('/api/auth/github/callback', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ code })
-            });
-            
-            if (!response.ok) {
-                console.error('Token exchange failed');
-                return false;
-            }
-            
-            const data = await response.json();
-            this.token = data.access_token;
-            
-            // Store in session storage (not localStorage!)
-            const sessionMgr = new SessionStorageManager();
-            sessionMgr.saveToken(this.token);
-            
-            // Fetch user info to verify
-            this.isAuthenticated = await this.fetchUser();
-            return this.isAuthenticated;
-        } catch (error) {
-            console.error('Error exchanging code:', error);
-            return false;
+        const response = await fetch(this.exchangeUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code })
+        });
+
+        if (!response.ok) {
+            throw new Error(`GitHub token exchange failed (${response.status})`);
+        }
+
+        const data = await response.json();
+        if (typeof data.access_token !== 'string' || !data.access_token) {
+            throw new Error('GitHub token exchange returned no token');
+        }
+        this.token = data.access_token;
+        if (!await this.fetchUser()) {
+            this.logout();
+            throw new Error('GitHub identity verification failed');
+        }
+        const sessionMgr = new SessionStorageManager();
+        if (!sessionMgr.saveToken(this.token)) {
+            this.logout();
+            throw new Error('Could not save GitHub session');
         }
     }
     
@@ -122,7 +147,12 @@ class AuthManager {
                 return false;
             }
             
-            this.user = await response.json();
+            const user = await response.json();
+            if (!user || typeof user.login !== 'string' || !user.login) {
+                console.error('GitHub returned an invalid user identity');
+                return false;
+            }
+            this.user = user;
             this.isAuthenticated = true;
             
             console.log(`Authenticated as ${this.user.login}`);
@@ -163,7 +193,8 @@ class AuthManager {
      * Generate random state for OAuth security
      */
     generateRandomState() {
-        return Math.random().toString(36).substring(2, 15);
+        const bytes = crypto.getRandomValues(new Uint8Array(32));
+        return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
     }
 }
 

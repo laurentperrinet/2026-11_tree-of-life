@@ -21,8 +21,9 @@ class Application {
         
         // Auth and reset
         this.auth = new AuthManager({
-            clientId: 'YOUR_GITHUB_OAUTH_CLIENT_ID', // Set in deployment
-            redirectUri: window.location.origin
+            clientId: 'Ov23liPHpc4sc5qUGMVx',
+            redirectUri: 'https://laurentperrinet.github.io/2026-11_tree-of-life/',
+            exchangeUrl: 'https://2026-11-tree-of-life.laurent-perrinet.workers.dev/api/auth/exchange'
         });
         this.reset = new ResetManager(this.auth, this.grid, this.physics, this.localStore, this.github);
         
@@ -56,7 +57,7 @@ class Application {
             setTimeout(async () => {
                 if (!this.reset.canReset()) {
                     this.ui.showToast('Reset requires authentication', 'error');
-                    this.auth.login(); // Redirect to login
+                    this.ui.login();
                     return;
                 }
                 
@@ -86,7 +87,13 @@ class Application {
         
         try {
             // Initialize auth
-            await this.auth.initialize();
+            let authError = null;
+            try {
+                await this.auth.initialize();
+            } catch (error) {
+                console.error('GitHub authentication failed:', error);
+                authError = error;
+            }
             this.ui.updateAuthStatus();
             
             // Try to load from localStorage
@@ -116,7 +123,8 @@ class Application {
             this.syncLoop.start();
             
             this.ui.showLoading(false);
-            this.ui.showToast('✓ Simulation ready', 'success');
+            this.ui.showToast(authError ? authError.message : '✓ Simulation ready',
+                authError ? 'error' : 'success', authError ? 8000 : 3000);
             
             // Start main loop
             this.animate();
