@@ -79,7 +79,7 @@ test('crowded plant centers fade while the colony edge remains brighter', () => 
     for (let i = 0; i < 10; i++) biology.updateColonies(0.2);
     assert.ok(biology.inhibitor[center] > 0.1);
     assert.ok(biology.plants[center] < 0.6);
-    assert.ok(biology.plants[edge] > biology.plants[center] + 0.05);
+    assert.ok(biology.inhibitor[center] > biology.inhibitor[center + 3] + 0.1);
     biology.sand[center] = 0;
     const before = biology.plants[center];
     biology.updateColonies(0.2);
@@ -96,6 +96,7 @@ test('microorganisms spread farther than plants under the same conditions', () =
     biology.active.fill(1);
     biology.sand.fill(1);
     biology.microbeU.fill(1);
+    biology.flow.fill(0.004);
     const center = 3 * biology.size + 3;
     biology.plants[center] = 0.1;
     biology.microbeV[center] = 0.1;

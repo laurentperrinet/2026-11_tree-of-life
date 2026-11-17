@@ -151,7 +151,8 @@ class BiologyGrid {
         for (let n = 0; n < steps; n++) {
             for (let i = 0; i < count; i++) {
                 this.habitat[i] = this.active[i] && this.sand[i]
-                    ? Math.max(0, 1 - this.flow[i] / 0.04) * Math.max(0, 1 - this.plants[i] / 0.6) : 0;
+                    ? Math.max(0, 1 - this.flow[i] / 0.04) * Math.max(0, 1 - this.plants[i] / 0.6) *
+                    (0.55 + 0.45 * Math.min(1, nearby[i] / 0.004)) : 0;
             }
             for (let z = 1; z < size - 1; z++) {
                 for (let x = 1; x < size - 1; x++) {
