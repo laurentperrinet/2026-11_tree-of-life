@@ -226,7 +226,7 @@ class ResetManager {
     }
     
     /**
-     * Perform soft reset (clear cache + reload from GitHub)
+     * Reset shared terrain, local particles, and biology.
      */
     async softReset() {
         if (!this.canReset()) {
@@ -235,13 +235,13 @@ class ResetManager {
         }
         
         try {
-            this.physics.reset();
             await this.collaboration.reset(this.auth.token);
+            this.physics.reset();
             if (this.biology) {
                 this.biology.reset();
                 if (!this.biologyStore.save(this.biology)) throw new Error('Could not save reset biology');
             }
-            this.localStore.clear();
+            if (!this.localStore.save(this.terrain)) throw new Error('Could not save reset terrain');
             
             console.log('Shared terrain reset complete');
             return true;

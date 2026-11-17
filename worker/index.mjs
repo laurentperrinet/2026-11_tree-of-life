@@ -2,9 +2,9 @@ import { createInitialMesh, getSyncIntervalMs } from './mesh.mjs';
 
 const ACTIVE_CLIENT_MS = 24 * 60 * 60 * 1000;
 const DAILY_REQUEST_BUDGET = 80_000;
-const MAX_COMPRESSED_BYTES = 100_000;
+const MAX_COMPRESSED_BYTES = 300_000;
 const MAX_DELTA = 10;
-const STATE_SCHEMA_VERSION = 1;
+const STATE_SCHEMA_VERSION = 2;
 const ORIGIN = 'https://laurentperrinet.github.io';
 const FRONTEND_URL = `${ORIGIN}/2026-11_tree-of-life/`;
 

@@ -99,7 +99,7 @@ longer reads or writes `data/terrain.json`.
 
 **Check**:
 1. Open DevTools (F12) → Console and look for Worker or CORS errors.
-2. Confirm `https://2026-11-tree-of-life.laurent-perrinet.workers.dev/api/state`
+2. Confirm `https://tree-of-life.laurent-perrinet.workers.dev/api/state`
    returns the shared terrain.
 3. Confirm the Worker has the `SIMULATION` Durable Object binding and the
    configured owner ID.

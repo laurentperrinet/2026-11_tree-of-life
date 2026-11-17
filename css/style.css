@@ -119,9 +119,10 @@ canvas {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 20px;
-    height: 20px;
+    gap: 4px;
+    min-height: 20px;
     color: #90caf9;
+    text-decoration: none;
 }
 
 .status-source-link:hover {

@@ -26,7 +26,7 @@ npx wrangler deploy
 ```
 
 The Worker URL configured by the frontend is
-`https://2026-11-tree-of-life.laurent-perrinet.workers.dev`.
+`https://tree-of-life.laurent-perrinet.workers.dev`.
 Check `GET /api/state` after deployment. The GitHub OAuth callback must remain
 `https://laurentperrinet.github.io/2026-11_tree-of-life/`.
 

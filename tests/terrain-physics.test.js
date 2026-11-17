@@ -523,8 +523,8 @@ test('raised fixed surround returns water to the disk while leaving the outlet d
 test('erosion tapers at the disk edge without preventing deposition', () => {
     const grid = new TerrainGrid();
     const physics = new PhysicsEngine(grid);
-    const inside = grid.ringVertices[grid.rings - 10][0];
-    const transition = grid.ringVertices[grid.rings - 5][0];
+    const inside = grid.ringVertices[grid.rings - 2 - Math.ceil(physics.erosionBorderWidth / grid.spacing)][0];
+    const transition = grid.ringVertices[grid.rings - 1 - Math.ceil(physics.erosionBorderWidth / (2 * grid.spacing))][0];
     const edge = grid.ringVertices[grid.rings - 1][0];
     assert.equal(physics.erosionFactor(inside), 1);
     assert.ok(physics.erosionFactor(transition) > 0 && physics.erosionFactor(transition) < 1);

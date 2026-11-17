@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import { deepStrictEqual, equal, ok } from 'node:assert/strict';
 import worker, { Simulation } from './index.mjs';
 import { createInitialMesh, getSyncIntervalMs } from './mesh.mjs';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
 
 function harness(initialState) {
     const values = new Map(initialState ? [['state', structuredClone(initialState)]] : []);
@@ -64,6 +66,51 @@ test('mesh initialization follows the circular site topology and request budget'
     equal(getSyncIntervalMs(1), 300_000);
     equal(getSyncIntervalMs(1000), 2_160_000);
     ok(state.body.dailyRequestBudget < 100_000);
+});
+
+test('browser and Worker initialize the same higher-resolution terrain', () => {
+    const context = vm.createContext({ console });
+    vm.runInContext(readFileSync(new URL('../js/terrain.js', import.meta.url), 'utf8'), context);
+    const grid = vm.runInContext('new TerrainGrid()', context);
+    const mesh = createInitialMesh();
+    ok(grid.triangles.length > 64_100);
+    equal(grid.vertices.length, mesh.elevation.length);
+    equal(grid.erodibleCount, mesh.erodibleCount);
+    deepStrictEqual(Array.from(grid.bedrock), Array.from(mesh.bedrock));
+    deepStrictEqual(Array.from(grid.elevation), Array.from(mesh.elevation));
+});
+
+test('version 1 shared terrain is reset once when the mesh schema changes', async () => {
+    const old = {
+        schemaVersion: 1, version: 12,
+        elevation: new Float64Array([42]), bedrock: new Float64Array([0]),
+        sumDelta: new Float64Array([2]), activeClients: {}, contributions: { [clientA]: true },
+        contributionIds: [clientA], windowEndsAt: 1
+    };
+    const { request } = harness(old);
+    const state = await request('/api/state');
+    equal(state.status, 200);
+    equal(state.body.version, 13);
+    equal(state.body.acceptedContributions, 0);
+    deepStrictEqual(state.body.terrain.elevation, Array.from(createInitialMesh().elevation));
+    equal((await request('/api/state')).body.version, 13);
+});
+
+test('large realistic compressed contributions fit the higher-resolution mesh', async () => {
+    const { request } = harness();
+    const mesh = createInitialMesh();
+    const delta = new Float32Array(mesh.elevation.length);
+    let random = 123456789;
+    for (let i = 0; i < delta.length; i++) {
+        random = (Math.imul(random, 1664525) + 1013904223) >>> 0;
+        delta[i] = random / 0x100000000;
+    }
+    const body = await new Response(new Blob([delta.buffer]).stream()
+        .pipeThrough(new CompressionStream('gzip'))).arrayBuffer();
+    ok(body.byteLength > 100_000);
+    equal((await request('/api/sync', {
+        method: 'POST', clientId: clientA, version: 0, encoding: 'gzip', body
+    })).body.accepted, true);
 });
 
 test('legacy Durable Object state migrates to the triangular mesh schema', async () => {

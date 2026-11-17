@@ -3,7 +3,7 @@
  * Implements save/load with version checking
  */
 class LocalStorageManager {
-    constructor(storageKey = 'tree-of-life-terrain-disk-v10', maxAgeHours = 24) {
+    constructor(storageKey = 'tree-of-life-terrain-disk-v12', maxAgeHours = 24) {
         this.storageKey = storageKey;
         this.maxAgeHours = maxAgeHours;
         this.version = '1.0';

@@ -5,8 +5,8 @@ class TerrainGrid {
     constructor() {
         this.radius = 25;
         this.halfSize = 30;
-        this.rings = 100;
-        this.spacing = 0.25;
+        this.rings = 125;
+        this.spacing = 0.2;
         this.sinkRadius = 0.8;
         this.slope = 0.09;
         this.surroundSlope = 0.3;
@@ -221,7 +221,7 @@ class TerrainGrid {
     toJSON() {
         return {
             version: '11.0',
-            topology: 'disk-square-polar-v1',
+            topology: 'disk-square-polar-v2',
             timestamp: new Date().toISOString(),
             elevation: Array.from(this.elevation),
             waterDepth: Array.from(this.waterDepth),
@@ -241,7 +241,7 @@ class TerrainGrid {
                 (p.burstProgress === undefined ||
                     (Number.isFinite(p.burstProgress) && p.burstProgress >= 0 && p.burstProgress < 1)) &&
                 this.locate(p.x, p.z));
-        if (!['10.0', '11.0'].includes(json.version) || json.topology !== 'disk-square-polar-v1' || !validParticles ||
+        if (!['10.0', '11.0'].includes(json.version) || json.topology !== 'disk-square-polar-v2' || !validParticles ||
             arrays.some(a => !Array.isArray(a) || a.length !== this.elevation.length || !a.every(Number.isFinite))) {
             console.warn('Saved terrain is incompatible with the circular mesh');
             return false;

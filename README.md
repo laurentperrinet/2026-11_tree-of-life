@@ -62,17 +62,19 @@ sediment balance.
 
 The terrain uses a polar mesh with staggered, variable-density rings and
 approximately hexagonal spacing inspired by sunflower seed patterns. It has
-over 4,096 vertices and the `disk-square-polar-v1` save topology; saves
-from older meshes are not loaded. Version 10 saves are migrated by raising
-only the fixed surround, preserving the sand and particle state.
+50,264 vertices and 99,742 triangles, with 125 rings and the
+`disk-square-polar-v2` save topology. Older terrain and local biology saves
+are not loaded, so this resolution change starts a fresh map.
 Test the browser model with `node --test tests/terrain-physics.test.js`.
 
 ## Cloudflare collaboration Worker
 
 The Worker stores the shared elevation array for the browser's
-`disk-square-polar-v1` mesh in a SQLite-backed Durable Object. Its
+`disk-square-polar-v2` mesh in a SQLite-backed Durable Object. Its
 `worker/mesh.mjs` initialization mirrors the mesh vertex order and initial
 bedrock/sand profile used by `js/terrain.js`.
+Deploy the Worker and browser update together: the Worker resets its shared
+terrain on first use of the new schema, and older clients are incompatible.
 
 Each browser has a random local ID. A single `POST /api/sync` request both
 submits a compressed elevation delta and returns the latest shared state.
@@ -108,7 +110,7 @@ and verify a cryptographically random OAuth `state` before exchanging the code,
 use the exact GitHub Pages callback URL, and handle expired tokens. The
 frontend verifies OAuth `state` and uses the exact GitHub Pages callback. To
 enable sign-in, the Worker at
-`https://2026-11-tree-of-life.laurent-perrinet.workers.dev` must have
+`https://tree-of-life.laurent-perrinet.workers.dev` must have
 `GITHUB_CLIENT_SECRET` configured as a Cloudflare secret (never in source
 code). The frontend points to its `/api/auth/exchange` endpoint.
 Sign-in requires the GitHub Pages origin; `file://` and localhost cannot use

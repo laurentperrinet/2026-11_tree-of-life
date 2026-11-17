@@ -207,6 +207,7 @@ test('reset URL cleanup retains the admin view and unrelated parameters', async 
         window: { location, addEventListener() {}, history: { replaceState: (s, t, url) => { cleaned = url; } } },
         setTimeout: fn => { callback = fn; }
     });
+
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'main.js'), 'utf8'), context);
     const Application = vm.runInContext('Application', context);
     Application.prototype.handleUrlParams.call({
@@ -216,4 +217,37 @@ test('reset URL cleanup retains the admin view and unrelated parameters', async 
     await callback();
     assert.equal(resets, 1);
     assert.equal(cleaned, '/app/?admin=&keep=ok#view');
+});
+
+test('URL resets are scheduled only after application initialization finishes', async () => {
+    const context = vm.createContext({
+        URLSearchParams, console,
+        document: { title: 'test' },
+        window: { addEventListener() {} }
+    });
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'main.js'), 'utf8'), context);
+    const Application = vm.runInContext('Application', context);
+    let finishSync, markStarted;
+    const started = new Promise(resolve => { markStarted = resolve; });
+    let scheduled = false;
+    const app = {
+        ui: { showLoading() {}, updateAdminPanel() {}, updateAuthStatus() {}, showToast() {} },
+        auth: { initialize: async () => {} },
+        localStore: { load: () => false },
+        biologyStore: { load: () => true },
+        collaboration: { start: () => new Promise(resolve => {
+            finishSync = resolve;
+            markStarted();
+        }) },
+        biology: { updateSand() {} },
+        renderer: { createTerrainMesh() {} },
+        handleUrlParams: () => { scheduled = true; },
+        animate() {}
+    };
+    const initializing = Application.prototype.initialize.call(app);
+    await started;
+    assert.equal(scheduled, false);
+    finishSync();
+    await initializing;
+    assert.equal(scheduled, true);
 });

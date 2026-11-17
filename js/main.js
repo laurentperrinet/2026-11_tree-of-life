@@ -13,14 +13,14 @@ class Application {
         
         // Storage and sync
         this.localStore = new LocalStorageManager();
-        this.biologyStore = new LocalStorageManager('tree-of-life-local-biology-v1', null);
+        this.biologyStore = new LocalStorageManager('tree-of-life-local-biology-v2', null);
         this.collaboration = new CollaborativeSync(this.grid, this.localStore);
         
         // Auth and reset
         this.auth = new AuthManager({
             clientId: 'Ov23liPHpc4sc5qUGMVx',
             redirectUri: 'https://laurentperrinet.github.io/2026-11_tree-of-life/',
-            exchangeUrl: 'https://2026-11-tree-of-life.laurent-perrinet.workers.dev/api/auth/exchange'
+            exchangeUrl: 'https://tree-of-life.laurent-perrinet.workers.dev/api/auth/exchange'
         });
         this.reset = new ResetManager(
             this.auth, this.grid, this.physics, this.localStore, this.collaboration,
@@ -41,8 +41,6 @@ class Application {
         this.frameCount = 0;
         this.fps = 60;
         
-        // Check URL params
-        this.handleUrlParams();
     }
     
     /**
@@ -56,7 +54,7 @@ class Application {
         if (params.has('reset')) {
             const isHard = params.has('hard');
             
-            // Trigger after UI is ready
+            // Allow the ready notification to be displayed before resetting.
             setTimeout(async () => {
                 if (!this.reset.canReset()) {
                     this.ui.showToast('Reset requires authentication', 'error');
@@ -68,11 +66,15 @@ class Application {
                     const result = await this.reset.hardReset(true);
                     if (result === true) {
                         this.ui.showToast('Hard reset executed', 'success');
+                    } else {
+                        this.ui.showToast('Hard reset failed', 'error');
                     }
                 } else {
                     const success = await this.reset.softReset();
                     if (success) {
                         this.ui.showToast('Soft reset executed', 'success');
+                    } else {
+                        this.ui.showToast('Soft reset failed', 'error');
                     }
                 }
                 
@@ -126,6 +128,7 @@ class Application {
             this.ui.showToast(authError ? authError.message : '✓ Simulation ready',
                 authError ? 'error' : 'success', authError ? 8000 : 3000);
             
+            this.handleUrlParams();
             // Start main loop
             this.animate();
         } catch (error) {

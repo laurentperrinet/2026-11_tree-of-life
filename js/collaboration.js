@@ -6,7 +6,7 @@ class CollaborativeSync {
         this.terrain = terrain;
         this.localStore = localStore;
         this.endpoint = config.endpoint ||
-            'https://2026-11-tree-of-life.laurent-perrinet.workers.dev/api/sync';
+            'https://tree-of-life.laurent-perrinet.workers.dev/api/sync';
         this.resetEndpoint = this.endpoint.replace(/\/api\/sync$/, '/api/admin/reset');
         this.clientId = this.getClientId();
         this.version = null;
@@ -19,6 +19,7 @@ class CollaborativeSync {
         this.timer = null;
         this.inFlight = null;
         this.failureCount = 0;
+        this.resetting = false;
     }
 
     getClientId() {
@@ -61,6 +62,7 @@ class CollaborativeSync {
     }
 
     async sync() {
+        if (this.resetting) throw new Error('Terrain reset is in progress');
         if (this.inFlight) return this.inFlight;
         this.inFlight = this.performSync();
         try {
@@ -140,18 +142,25 @@ class CollaborativeSync {
     }
 
     async reset(token) {
-        const response = await fetch(this.resetEndpoint, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${token}` }
-        });
-        if (!response.ok) {
-            const details = await response.json().catch(() => ({}));
-            throw new Error(details.error || `Terrain reset failed (${response.status})`);
+        if (this.resetting) throw new Error('Terrain reset is already in progress');
+        this.resetting = true;
+        try {
+            if (this.inFlight) await this.inFlight;
+            const response = await fetch(this.resetEndpoint, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            if (!response.ok) {
+                const details = await response.json().catch(() => ({}));
+                throw new Error(details.error || `Terrain reset failed (${response.status})`);
+            }
+            const data = await response.json();
+            this.applyState(data);
+            this.lastSyncTime = Date.now();
+            return true;
+        } finally {
+            this.resetting = false;
         }
-        const data = await response.json();
-        this.applyState(data);
-        this.lastSyncTime = Date.now();
-        return true;
     }
 
     getSecondsSinceSync() {

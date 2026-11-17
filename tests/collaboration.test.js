@@ -86,3 +86,17 @@ test('manual sync does not bypass the adaptive minimum interval', async () => {
     assert.equal(await h.sync.syncNow(), false);
     assert.equal(h.requests.length, 1);
 });
+
+test('reset waits for an in-flight sync and blocks new synchronization', async () => {
+    const h = harness();
+    let finish;
+    h.sync.inFlight = new Promise(resolve => { finish = resolve; });
+    const reset = h.sync.reset('token');
+    await assert.rejects(h.sync.sync(), /reset is in progress/);
+    assert.equal(h.requests.length, 0);
+    finish();
+    await reset;
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.requests[0].url, 'https://worker.example/api/admin/reset');
+    assert.equal(h.sync.resetting, false);
+});

@@ -41,7 +41,8 @@ function harness(search = '') {
         redirectUri: `${location.origin}${location.pathname}`,
         exchangeUrl: 'https://worker.example/api/auth/exchange'
     };
-    return { auth: new AuthManager(config), storage, location, requests, config, AuthManager };
+    const ResetManager = vm.runInContext('ResetManager', context);
+    return { auth: new AuthManager(config), storage, location, requests, config, AuthManager, ResetManager };
 }
 
 test('sign-in requires a Worker and creates an unpredictable stored state', () => {
@@ -89,4 +90,28 @@ test('admin view survives a verified OAuth callback without granting reset permi
     await assert.rejects(bad.auth.initialize(), /invalid OAuth state/);
     assert.equal(bad.location.cleaned, '/2026-11_tree-of-life/#view');
     assert.equal(bad.storage.has('tree-of-life-oauth-admin-view'), false);
+});
+
+test('reset preserves local state on remote failure and saves it after success', async () => {
+    const { ResetManager } = harness();
+    const calls = [];
+    let rejectReset = true;
+    const manager = new ResetManager(
+        { canReset: () => true, token: 'test-token' },
+        {},
+        { reset: () => calls.push('physics') },
+        { save: () => { calls.push('terrain save'); return true; } },
+        { reset: async () => {
+            calls.push('remote');
+            if (rejectReset) throw new Error('offline');
+        } },
+        { reset: () => calls.push('biology') },
+        { save: () => { calls.push('biology save'); return true; } }
+    );
+    assert.equal(await manager.softReset(), false);
+    assert.deepEqual(calls, ['remote']);
+    calls.length = 0;
+    rejectReset = false;
+    assert.equal(await manager.softReset(), true);
+    assert.deepEqual(calls, ['remote', 'physics', 'biology', 'biology save', 'terrain save']);
 });

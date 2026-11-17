@@ -1,7 +1,7 @@
 export const MESH_RADIUS = 25;
 export const MESH_HALF_SIZE = 30;
-export const MESH_RINGS = 100;
-export const MESH_SPACING = 0.25;
+export const MESH_RINGS = 125;
+export const MESH_SPACING = 0.2;
 export const MESH_SINK_RADIUS = 0.8;
 export const MESH_SLOPE = 0.09;
 export const MESH_SURROUND_SLOPE = 0.3;
