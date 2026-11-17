@@ -18,6 +18,7 @@ class CollaborativeSync {
         this.running = false;
         this.timer = null;
         this.nextSyncAt = null;
+        this.nextMergeAt = null;
         this.inFlight = null;
         this.failureCount = 0;
         this.resetting = false;
@@ -45,6 +46,10 @@ class CollaborativeSync {
         this.running = true;
         try {
             await this.sync();
+        } catch (error) {
+            // Count the failure so the retry backs off as for scheduled attempts.
+            this.failureCount++;
+            throw error;
         } finally {
             this.schedule();
         }
@@ -58,6 +63,7 @@ class CollaborativeSync {
             this.schedule();
             return true;
         } catch (error) {
+            this.failureCount++;
             this.schedule();
             throw error;
         }
@@ -127,6 +133,11 @@ class CollaborativeSync {
             !Number.isFinite(data.syncIntervalMs) || data.syncIntervalMs < 1) {
             throw new Error('Collaboration Worker returned invalid synchronization metadata');
         }
+        // Older Workers omit mergeInMs; null means no contribution is waiting to be merged.
+        const mergeInMs = data.mergeInMs ?? null;
+        if (mergeInMs !== null && !(Number.isFinite(mergeInMs) && mergeInMs >= 0)) {
+            throw new Error('Collaboration Worker returned an invalid merge delay');
+        }
         const signature = this.terrain.meshSignature();
         if (data.meshSignature === undefined
             ? signature !== LEGACY_TERRAIN_MESH_SIGNATURE
@@ -147,6 +158,7 @@ class CollaborativeSync {
             if (this.localStore) this.localStore.save(this.terrain);
         }
         this.activeCollaborators = data.activeCollaborators;
+        this.nextMergeAt = mergeInMs === null ? null : Date.now() + mergeInMs;
         this.syncIntervalMs = Math.max(300_000, data.syncIntervalMs);
         this.meshSignatureSupported = data.meshSignature !== undefined;
     }
@@ -180,6 +192,19 @@ class CollaborativeSync {
     getSecondsUntilSync() {
         return this.nextSyncAt === null || this.inFlight
             ? null : Math.max(0, Math.ceil((this.nextSyncAt - Date.now()) / 1000));
+    }
+
+    /**
+     * Seconds until the Worker's collection window closes, as last reported by it.
+     *
+     * The merge itself is applied by the first request after the window closes, and
+     * this browser receives the merged terrain at its own next sync. The value is
+     * refreshed only by syncs, so a window opened meanwhile by another browser
+     * appears at the next sync.
+     */
+    getSecondsUntilMerge() {
+        return this.nextMergeAt === null
+            ? null : Math.max(0, Math.ceil((this.nextMergeAt - Date.now()) / 1000));
     }
 
     fetchAndMerge() {

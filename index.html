@@ -22,6 +22,9 @@
             <div class="status-metric" role="group" title="Time until the next scheduled sync">
                 <span aria-hidden="true">⌛</span><span id="next-sync">--</span>s
             </div>
+            <div class="status-metric" role="group" title="Time until the Worker merges pending contributions">
+                <span aria-hidden="true">🔀</span><span id="next-merge">--</span>s
+            </div>
             <div class="status-metric" role="group" title="Cumulative simulation time in this browser">
                 <span aria-hidden="true">🕰️</span><span id="simulation-time">--</span> sim s
             </div>
@@ -59,6 +62,11 @@
         <p>⌛ <strong>Next sync:</strong> wall-clock seconds until the next scheduled attempt;
             retry delays increase after errors. “--” appears while syncing or when no
             attempt is scheduled.</p>
+        <p>🔀 <strong>Next merge:</strong> wall-clock seconds until the Worker closes its
+            collection window and averages the pending contributions, as reported at the
+            last sync. 0 means the merge will be applied at the next request from any
+            browser; this browser receives the merged terrain at its next sync. “--” means
+            no contribution is pending.</p>
         <p>🕰️ <strong>Simulation time:</strong> cumulative simulated seconds in this browser,
             saved locally every five seconds and summed across its open tabs. It is not
             shared between browsers and starts counting from this feature's introduction.

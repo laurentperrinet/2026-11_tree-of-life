@@ -11,8 +11,11 @@ function harness() {
     let responseVersion = 4;
     let accepted = false;
     let responseSignature = 'test mesh';
+    let mergeInMs;
+    const clock = { now: 1_000_000 };
     const context = vm.createContext({
         console,
+        Date: { now: () => clock.now },
         crypto: webcrypto,
         localStorage: {
             getItem: key => stored.get(key) ?? null,
@@ -33,7 +36,8 @@ function harness() {
                 activeCollaborators: 2,
                 syncIntervalMs: 120_000,
                 accepted,
-                dailyRequestBudget: 80_000
+                dailyRequestBudget: 80_000,
+                mergeInMs
             };
             if (options.headers['X-Terrain-Version'] !== String(responseVersion)) {
                 data.terrain = { elevation: [1, 2] };
@@ -53,7 +57,8 @@ function harness() {
         endpoint: 'https://worker.example/api/sync'
     });
     return {
-        sync, terrain, requests,
+        sync, terrain, requests, clock,
+        setMergeInMs(value) { mergeInMs = value; },
         setAccepted(value) { accepted = value; },
         setVersion(value) { responseVersion = value; },
         setSignature(value) { responseSignature = value; }
@@ -140,6 +145,51 @@ test('next sync countdown follows the scheduled retry and clears on stop', () =>
     sync.inFlight = null;
     sync.stop();
     assert.equal(sync.getSecondsUntilSync(), null);
+});
+
+test('a failed first or manual sync backs off the next retry', async () => {
+    let now = 1000;
+    let delay;
+    const context = vm.createContext({
+        console, crypto: webcrypto,
+        localStorage: { getItem: () => null, setItem() {} },
+        Date: { now: () => now },
+        fetch: async () => { throw new Error('offline'); },
+        setTimeout: (callback, ms) => { delay = ms; return 1; },
+        clearTimeout() {}
+    });
+    vm.runInContext(
+        fs.readFileSync(path.join(__dirname, '..', 'js', 'collaboration.js'), 'utf8'), context
+    );
+    const CollaborativeSync = vm.runInContext('CollaborativeSync', context);
+    const sync = new CollaborativeSync({ meshSignature: () => 'test mesh' }, null);
+    await assert.rejects(sync.start(), /offline/);
+    assert.equal(sync.failureCount, 1);
+    assert.equal(delay, 600_000);
+    assert.equal(sync.getSecondsUntilSync(), 600);
+    now += 300_000;
+    await assert.rejects(sync.syncNow(), /offline/);
+    assert.equal(sync.failureCount, 2);
+    assert.equal(delay, 1_200_000);
+});
+
+test('next merge countdown follows the Worker collection window', async () => {
+    const h = harness();
+    await h.sync.sync();
+    assert.equal(h.sync.getSecondsUntilMerge(), null);
+    h.setMergeInMs(120_000);
+    h.clock.now += 1;
+    await h.sync.sync();
+    assert.equal(h.sync.getSecondsUntilMerge(), 120);
+    h.clock.now += 30_500;
+    assert.equal(h.sync.getSecondsUntilMerge(), 90);
+    h.clock.now += 200_000;
+    assert.equal(h.sync.getSecondsUntilMerge(), 0);
+    h.setMergeInMs(-1);
+    await assert.rejects(h.sync.sync(), /invalid merge delay/);
+    h.setMergeInMs(null);
+    await h.sync.sync();
+    assert.equal(h.sync.getSecondsUntilMerge(), null);
 });
 
 test('reset waits for an in-flight sync and blocks new synchronization', async () => {

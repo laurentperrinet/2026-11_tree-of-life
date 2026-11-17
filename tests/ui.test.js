@@ -141,6 +141,7 @@ test('status metrics update at most once per second', () => {
         'contrib-count': { textContent: '' },
         'last-sync': { textContent: '' },
         'next-sync': { textContent: '' },
+        'next-merge': { textContent: '' },
         'simulation-time': { textContent: '' },
         'mean-transit-time': { textContent: '' },
         'particle-throughput': { textContent: '' },
@@ -155,7 +156,13 @@ test('status metrics update at most once per second', () => {
     const ui = new UIManager(auth, { canReset: () => false });
     let transitReads = 0;
     let fluxReads = 0;
-    const collaboration = { activeCollaborators: 6, getSecondsSinceSync: () => 12, getSecondsUntilSync: () => 288 };
+    let secondsUntilMerge = 42;
+    const collaboration = {
+        activeCollaborators: 6,
+        getSecondsSinceSync: () => 12,
+        getSecondsUntilSync: () => 288,
+        getSecondsUntilMerge: () => secondsUntilMerge
+    };
     const simulationTime = { getTotal: () => 123.9 };
     const physics = {
         getMeanTransitTime: () => { transitReads++; return 12.36; },
@@ -169,11 +176,14 @@ test('status metrics update at most once per second', () => {
     assert.equal(elements['mean-transit-time'].textContent, '12.4');
     assert.equal(elements['particle-throughput'].textContent, '0.13');
     assert.equal(elements['next-sync'].textContent, '288');
+    assert.equal(elements['next-merge'].textContent, '42');
     assert.equal(elements['simulation-time'].textContent, 123);
 
+    secondsUntilMerge = null;
     ui.updateStatus(collaboration, physics, 1000, simulationTime);
     assert.equal(transitReads, 2);
     assert.equal(fluxReads, 2);
+    assert.equal(elements['next-merge'].textContent, '--');
 });
 
 test('cumulative simulation time persists across sessions and sums concurrent tabs', () => {

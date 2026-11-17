@@ -39,6 +39,8 @@ class UIManager {
         document.getElementById('last-sync').textContent = syncText;
         const nextSync = collaboration.getSecondsUntilSync();
         document.getElementById('next-sync').textContent = nextSync === null ? '--' : `${nextSync}`;
+        const nextMerge = collaboration.getSecondsUntilMerge();
+        document.getElementById('next-merge').textContent = nextMerge === null ? '--' : `${nextMerge}`;
         try {
             document.getElementById('simulation-time').textContent = Math.floor(simulationTime.getTotal());
             this.simulationTimeReadFailed = false;

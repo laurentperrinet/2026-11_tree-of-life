@@ -394,6 +394,10 @@ export class Simulation {
             acceptedContributions: state.contributionIds.length,
             syncIntervalMs: getSyncIntervalMs(activeCollaborators, DAILY_REQUEST_BUDGET),
             dailyRequestBudget: DAILY_REQUEST_BUDGET,
+            // Relative delay, so browsers with a skewed clock still count down correctly.
+            // Zero means the window has closed and the next request will apply the merge.
+            mergeInMs: state.windowEndsAt === null
+                ? null : Math.max(0, state.windowEndsAt - Date.now()),
             ...extra
         };
         if (includeTerrain) result.terrain = { elevation: Array.from(state.elevation) };

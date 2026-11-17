@@ -235,6 +235,7 @@ test('contributions from the same version are averaged once per browser', async 
         });
         equal(a.body.version, 0);
         equal(b.body.version, 0);
+        equal(b.body.mergeInMs, null);
 
         const first = await request('/api/sync', {
             method: 'POST', clientId: clientA, version: 0, encoding: 'gzip',
@@ -242,6 +243,7 @@ test('contributions from the same version are averaged once per browser', async 
         });
         equal(first.body.accepted, true);
         equal(first.body.terrain, undefined);
+        equal(first.body.mergeInMs, 300_000);
 
         const duplicate = await request('/api/sync', {
             method: 'POST', clientId: clientA, version: 0, encoding: 'gzip',
@@ -257,11 +259,17 @@ test('contributions from the same version are averaged once per browser', async 
         equal(second.body.accepted, true);
         equal(second.body.acceptedContributions, 2);
 
+        Date.now = () => now + 120_000;
+        equal((await request('/api/state')).body.mergeInMs, 180_000);
         Date.now = () => now + 300_001;
+        const due = await request('/api/state');
+        equal(due.body.mergeInMs, 0);
+        equal(due.body.version, 0);
         const finalized = await request('/api/sync', {
             method: 'POST', clientId: clientC
         });
         equal(finalized.body.version, 1);
+        equal(finalized.body.mergeInMs, null);
         equal(finalized.body.activeCollaborators, 3);
         equal(finalized.body.acceptedContributions, 0);
         ok(Math.abs(finalized.body.terrain.elevation[0] - (initial.body.terrain.elevation[0] + 0.1)) < 1e-6);
