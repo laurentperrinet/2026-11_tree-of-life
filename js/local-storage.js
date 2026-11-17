@@ -110,6 +110,39 @@ class LocalStorageManager {
     }
 }
 
+class SimulationTimeTracker {
+    constructor() {
+        this.prefix = 'tree-of-life-simulation-time-v1:';
+        this.key = this.prefix + crypto.randomUUID();
+        this.sessionTime = 0;
+        this.savedTime = 0;
+    }
+
+    add(dt) {
+        this.sessionTime += dt;
+    }
+
+    save() {
+        localStorage.setItem(this.key, String(this.sessionTime));
+        this.savedTime = this.sessionTime;
+    }
+
+    getTotal() {
+        let total = this.sessionTime - this.savedTime;
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (!key?.startsWith(this.prefix)) continue;
+            const raw = localStorage.getItem(key);
+            const value = Number(raw);
+            if (raw === null || raw.trim() === '' || !Number.isFinite(value) || value < 0) {
+                throw new Error('Invalid saved simulation time');
+            }
+            total += value;
+        }
+        return total;
+    }
+}
+
 /**
  * Session storage for OAuth token
  */

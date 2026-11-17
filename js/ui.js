@@ -9,6 +9,7 @@ class UIManager {
         this.resetConfirmPending = false;
         this.lastStatusUpdate = -Infinity;
         this.displayModeTimer = null;
+        this.simulationTimeReadFailed = false;
     }
 
     updateAdminPanel() {
@@ -26,7 +27,7 @@ class UIManager {
     /**
      * Update status badge
      */
-    updateStatus(collaboration, physics, now) {
+    updateStatus(collaboration, physics, now, simulationTime) {
         if (now - this.lastStatusUpdate < 1000) return;
         this.lastStatusUpdate = now;
 
@@ -36,6 +37,19 @@ class UIManager {
         
         document.getElementById('contrib-count').textContent = contribCount;
         document.getElementById('last-sync').textContent = syncText;
+        const nextSync = collaboration.getSecondsUntilSync();
+        document.getElementById('next-sync').textContent = nextSync === null ? '--' : `${nextSync}`;
+        try {
+            document.getElementById('simulation-time').textContent = Math.floor(simulationTime.getTotal());
+            this.simulationTimeReadFailed = false;
+        } catch (error) {
+            document.getElementById('simulation-time').textContent = '--';
+            if (!this.simulationTimeReadFailed) {
+                console.error('Could not read simulation time:', error);
+                this.showToast('Could not read simulation time', 'error', 8000);
+            }
+            this.simulationTimeReadFailed = true;
+        }
 
         const transitTime = physics.getMeanTransitTime();
         document.getElementById('mean-transit-time').textContent =
@@ -178,6 +192,14 @@ class UIManager {
      * Setup event listeners for UI elements
      */
     setupEventListeners(auth, reset) {
+        const statusHelp = document.getElementById('status-help-dialog');
+        const statusHelpButton = document.getElementById('status-help-button');
+        const statusHelpClose = document.getElementById('status-help-close');
+        if (statusHelp && statusHelpButton && statusHelpClose) {
+            statusHelpButton.addEventListener('click', () => statusHelp.showModal());
+            statusHelpClose.addEventListener('click', () => statusHelp.close());
+        }
+
         const displayModeButton = document.getElementById('display-mode-button');
         if (displayModeButton) {
             displayModeButton.addEventListener('click', () => window.app?.controls?.cycleDisplayMode());

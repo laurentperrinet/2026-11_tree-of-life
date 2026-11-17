@@ -109,6 +109,39 @@ test('manual sync does not bypass the adaptive minimum interval', async () => {
     assert.equal(h.requests.length, 1);
 });
 
+test('next sync countdown follows the scheduled retry and clears on stop', () => {
+    let now = 1000;
+    let delay;
+    const context = vm.createContext({
+        console, crypto: webcrypto,
+        localStorage: { getItem: () => null, setItem() {} },
+        Date: { now: () => now },
+        setTimeout: (callback, ms) => { delay = ms; return 1; },
+        clearTimeout() {}
+    });
+    vm.runInContext(
+        fs.readFileSync(path.join(__dirname, '..', 'js', 'collaboration.js'), 'utf8'), context
+    );
+    const CollaborativeSync = vm.runInContext('CollaborativeSync', context);
+    const sync = new CollaborativeSync({}, null);
+    assert.equal(sync.getSecondsUntilSync(), null);
+    sync.running = true;
+    sync.schedule();
+    assert.equal(delay, 300_000);
+    assert.equal(sync.getSecondsUntilSync(), 300);
+    now += 10_500;
+    assert.equal(sync.getSecondsUntilSync(), 290);
+    sync.failureCount = 1;
+    sync.schedule();
+    assert.equal(delay, 600_000);
+    assert.equal(sync.getSecondsUntilSync(), 600);
+    sync.inFlight = Promise.resolve();
+    assert.equal(sync.getSecondsUntilSync(), null);
+    sync.inFlight = null;
+    sync.stop();
+    assert.equal(sync.getSecondsUntilSync(), null);
+});
+
 test('reset waits for an in-flight sync and blocks new synchronization', async () => {
     const h = harness();
     let finish;

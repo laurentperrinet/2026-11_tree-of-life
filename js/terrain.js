@@ -12,6 +12,8 @@ class TerrainGrid {
         this.sinkRadius = 0.8;
         this.slope = 0.09;
         this.surroundSlope = 0.3;
+        this.peripheralSlope = 0.06;
+        this.peripheralWidth = 4;
         this.initialSandDepth = 0.3;
         this.channelFlare = 0.12;
         this.vertices = [{ x: 0, z: 0 }];
@@ -138,10 +140,12 @@ class TerrainGrid {
         this.initialize();
     }
 
-    bedrockHeight(x, z, surroundSlope = this.surroundSlope) {
+    bedrockHeight(x, z, surroundSlope = this.surroundSlope, peripheralSlope = this.peripheralSlope) {
         const radius = Math.hypot(x, z);
         const cone = this.slope * Math.min(this.radius, radius) +
-            surroundSlope * Math.max(0, radius - this.radius);
+            surroundSlope * Math.max(0, radius - this.radius) +
+            peripheralSlope * Math.max(0, Math.min(this.peripheralWidth,
+                radius - this.radius + this.peripheralWidth));
         if (z <= 0) return cone;
         const width = this.sinkRadius + this.channelFlare * z;
         const t = Math.max(0, Math.min(1, Math.abs(x) / width));
@@ -226,7 +230,7 @@ class TerrainGrid {
 
     toJSON() {
         return {
-            version: '11.0',
+            version: '12.0',
             topology: 'disk-square-polar-v2',
             meshSignature: this.meshSignature(),
             timestamp: new Date().toISOString(),
@@ -249,15 +253,16 @@ class TerrainGrid {
                     (Number.isFinite(p.burstProgress) && p.burstProgress >= 0 && p.burstProgress < 1)) &&
                 this.locate(p.x, p.z));
         const savedMeshSignature = json.meshSignature ?? LEGACY_TERRAIN_MESH_SIGNATURE;
-        if (!['10.0', '11.0'].includes(json.version) || json.topology !== 'disk-square-polar-v2' ||
+        if (!['10.0', '11.0', '12.0'].includes(json.version) || json.topology !== 'disk-square-polar-v2' ||
             savedMeshSignature !== this.meshSignature() || !validParticles ||
             arrays.some(a => !Array.isArray(a) || a.length !== this.elevation.length || !a.every(Number.isFinite))) {
             console.warn('Saved terrain is incompatible with the circular mesh');
             return false;
         }
         const oldSurround = json.version === '10.0';
-        const savedBedrock = (i) => oldSurround
-            ? this.bedrockHeight(this.vertices[i].x, this.vertices[i].z, 0)
+        const oldProfile = json.version !== '12.0';
+        const savedBedrock = (i) => oldProfile
+            ? this.bedrockHeight(this.vertices[i].x, this.vertices[i].z, oldSurround ? 0 : this.surroundSlope, 0)
             : this.bedrock[i];
         if (json.elevation.some((height, i) => height < savedBedrock(i))) {
             console.warn('Saved terrain extends below the bedrock');
@@ -291,10 +296,9 @@ class TerrainGrid {
             }
         }
         this.elevation.set(json.elevation);
-        if (oldSurround) {
-            for (let i = this.erodibleCount; i < this.elevation.length; i++) {
-                const deposited = json.elevation[i] - (savedBedrock(i) + this.initialSandDepth);
-                this.elevation[i] = this.bedrock[i] + this.initialSandDepth + deposited;
+        if (oldProfile) {
+            for (let i = 0; i < this.elevation.length; i++) {
+                this.elevation[i] = this.bedrock[i] + (json.elevation[i] - savedBedrock(i));
             }
         }
         this.waterDepth.set(json.waterDepth);

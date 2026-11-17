@@ -19,6 +19,12 @@
             <div class="status-metric" role="group" title="Time since last successful sync">
                 <span aria-hidden="true">🔄</span><span id="last-sync">--</span>s
             </div>
+            <div class="status-metric" role="group" title="Time until the next scheduled sync">
+                <span aria-hidden="true">⌛</span><span id="next-sync">--</span>s
+            </div>
+            <div class="status-metric" role="group" title="Cumulative simulation time in this browser">
+                <span aria-hidden="true">🕰️</span><span id="simulation-time">--</span> sim s
+            </div>
             <div class="status-metric" role="group" title="Mean rim-to-sink water transit time">
                 <span aria-hidden="true">⏱️</span><span id="mean-transit-time">--</span> sim s
             </div>
@@ -30,30 +36,8 @@
         <div class="status-tools">
             <button id="display-mode-button" class="display-mode-button" type="button"
                 title="Change display mode (D)" aria-label="Change display mode">View</button>
-            <details class="status-help">
-                <summary aria-label="Explain transit time and particle flow">❔</summary>
-                <div class="status-help-content">
-                    <p><strong>Mean transit time</strong> is the average model time from
-                        a water parcel entering at the rim to reaching the sink, over the
-                        last 100 completed trips. Evaporated parcels are not counted.
-                        “sim s” means simulation seconds, not wall-clock seconds.</p>
-                    <p><strong>Particle flow</strong> counts water parcels crossing the
-                        sink per simulation second over the last 60 simulation seconds
-                        (or since the start, if less). Evaporated parcels are excluded.
-                        Water and its sediment are recycled.</p>
-                </div>
-            </details>
-            <details class="status-help">
-                <summary aria-label="Explain collaboration">ℹ️</summary>
-                <div class="status-help-content">
-                    <p>Each browser is counted for 24 hours after its last sync. To stay
-                        under the 80,000-request daily target, the Worker lengthens the
-                        interval as the collaborator count grows, with a five-minute
-                        minimum. It averages one elevation-change contribution per
-                        browser at each mesh vertex. Water, sediment, particles and
-                        vegetation remain local.</p>
-                </div>
-            </details>
+            <button id="status-help-button" class="status-help-button" type="button"
+                aria-label="Explain simulation status" title="Explain simulation status">❔</button>
             <a class="status-source-link" href="https://github.com/laurentperrinet/2026-11_tree-of-life"
                 target="_blank" rel="noopener noreferrer" aria-label="Open source code on GitHub"
                 title="Source code on GitHub">
@@ -64,6 +48,35 @@
             </a>
         </div>
     </div>
+
+    <dialog id="status-help-dialog" class="status-help-dialog" aria-labelledby="status-help-title">
+        <div class="status-help-heading">
+            <h2 id="status-help-title">Simulation status</h2>
+            <button id="status-help-close" type="button" aria-label="Close status help">×</button>
+        </div>
+        <p>👥 <strong>Collaborators:</strong> browser IDs seen by the Worker in the last 24 hours.</p>
+        <p>🔄 <strong>Last sync:</strong> wall-clock seconds since this browser last synchronized successfully.</p>
+        <p>⌛ <strong>Next sync:</strong> wall-clock seconds until the next scheduled attempt;
+            retry delays increase after errors. “--” means no attempt is currently scheduled.</p>
+        <p>🕰️ <strong>Simulation time:</strong> cumulative simulated seconds in this browser,
+            saved locally every five seconds and summed across its open tabs. It is not
+            shared between browsers and starts counting from this feature's introduction.
+            Clearing browser storage erases it.</p>
+        <p>⏱️ <strong>Mean transit time:</strong> average simulated time from the rim to
+            the sink over the last 100 completed trips. Evaporated parcels are excluded.</p>
+        <p>💧 <strong>Particle flow:</strong> water parcels reaching the sink per simulated
+            second over the last 60 simulated seconds, or since startup if less.
+            Evaporated parcels are excluded; water and sediment are recycled.</p>
+        <p>“sim s” denotes simulation seconds, not wall-clock seconds.</p>
+        <p>The Worker averages accepted elevation changes per browser and vertex.
+            Contributions based on an older terrain version are discarded. Water, sediment,
+            particles, vegetation and microorganisms remain local to each browser.</p>
+        <p>The adaptive interval is at least five minutes and targets 80,000
+            synchronization-related requests per day; it is not a hard request limit.
+            The next sync may occur later if the browser suspends this tab.</p>
+        <p><strong>View</strong> or <kbd>D</kbd> changes the display mode.
+            🔒 identifies a signed-in GitHub account. The GitHub link opens the source code.</p>
+    </dialog>
 
     <!-- Help panel (bottom-left) -->
     <div id="help-panel" class="help-panel" hidden>

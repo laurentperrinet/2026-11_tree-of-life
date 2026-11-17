@@ -5,6 +5,8 @@ export const MESH_SPACING = 0.2;
 export const MESH_SINK_RADIUS = 0.8;
 export const MESH_SLOPE = 0.09;
 export const MESH_SURROUND_SLOPE = 0.3;
+export const MESH_PERIPHERAL_SLOPE = 0.06;
+export const MESH_PERIPHERAL_WIDTH = 4;
 export const MESH_INITIAL_SAND_DEPTH = 0.3;
 export const MESH_CHANNEL_FLARE = 0.12;
 export const MAX_REQUESTS_PER_SYNC = 2;
@@ -12,7 +14,7 @@ export const MESH_SIGNATURE = JSON.stringify([
     'disk-square-polar-v2', MESH_RADIUS, MESH_HALF_SIZE, MESH_RINGS, MESH_SPACING
 ]);
 
-export function createInitialMesh() {
+export function createInitialMesh(peripheralSlope = MESH_PERIPHERAL_SLOPE) {
     const vertices = [{ x: 0, z: 0 }];
     let outer = [];
 
@@ -44,7 +46,9 @@ export function createInitialMesh() {
         const { x, z } = vertices[i];
         const radius = Math.hypot(x, z);
         const cone = MESH_SLOPE * Math.min(MESH_RADIUS, radius) +
-            MESH_SURROUND_SLOPE * Math.max(0, radius - MESH_RADIUS);
+            MESH_SURROUND_SLOPE * Math.max(0, radius - MESH_RADIUS) +
+            peripheralSlope * Math.max(0, Math.min(MESH_PERIPHERAL_WIDTH,
+                radius - MESH_RADIUS + MESH_PERIPHERAL_WIDTH));
         if (z <= 0) {
             bedrock[i] = cone;
             continue;

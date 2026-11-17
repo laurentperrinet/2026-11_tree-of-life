@@ -17,6 +17,7 @@ class CollaborativeSync {
         this.lastSyncTime = 0;
         this.running = false;
         this.timer = null;
+        this.nextSyncAt = null;
         this.inFlight = null;
         this.failureCount = 0;
         this.resetting = false;
@@ -176,6 +177,11 @@ class CollaborativeSync {
         return this.lastSyncTime ? Math.floor((Date.now() - this.lastSyncTime) / 1000) : null;
     }
 
+    getSecondsUntilSync() {
+        return this.nextSyncAt === null || this.inFlight
+            ? null : Math.max(0, Math.ceil((this.nextSyncAt - Date.now()) / 1000));
+    }
+
     recordChange() {}
 
     fetchAndMerge() {
@@ -188,7 +194,10 @@ class CollaborativeSync {
         const backoff = this.failureCount
             ? Math.min(this.syncIntervalMs * (2 ** this.failureCount), 6 * 60 * 60 * 1000)
             : this.syncIntervalMs;
+        this.nextSyncAt = Date.now() + backoff;
         this.timer = setTimeout(async () => {
+            this.timer = null;
+            this.nextSyncAt = null;
             try {
                 await this.sync();
             } catch (error) {
@@ -203,5 +212,7 @@ class CollaborativeSync {
     stop() {
         this.running = false;
         clearTimeout(this.timer);
+        this.timer = null;
+        this.nextSyncAt = null;
     }
 }

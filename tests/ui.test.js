@@ -140,6 +140,8 @@ test('status metrics update at most once per second', () => {
     const elements = {
         'contrib-count': { textContent: '' },
         'last-sync': { textContent: '' },
+        'next-sync': { textContent: '' },
+        'simulation-time': { textContent: '' },
         'mean-transit-time': { textContent: '' },
         'particle-throughput': { textContent: '' },
         'auth-status': { hidden: true, textContent: '', className: '' },
@@ -153,22 +155,101 @@ test('status metrics update at most once per second', () => {
     const ui = new UIManager(auth, { canReset: () => false });
     let transitReads = 0;
     let fluxReads = 0;
-    const collaboration = { activeCollaborators: 6, getSecondsSinceSync: () => 12 };
+    const collaboration = { activeCollaborators: 6, getSecondsSinceSync: () => 12, getSecondsUntilSync: () => 288 };
+    const simulationTime = { getTotal: () => 123.9 };
     const physics = {
         getMeanTransitTime: () => { transitReads++; return 12.36; },
         getParticleThroughput: () => { fluxReads++; return 0.125; }
     };
 
-    ui.updateStatus(collaboration, physics, 0);
-    ui.updateStatus(collaboration, physics, 500);
+    ui.updateStatus(collaboration, physics, 0, simulationTime);
+    ui.updateStatus(collaboration, physics, 500, simulationTime);
     assert.equal(transitReads, 1);
     assert.equal(fluxReads, 1);
     assert.equal(elements['mean-transit-time'].textContent, '12.4');
     assert.equal(elements['particle-throughput'].textContent, '0.13');
+    assert.equal(elements['next-sync'].textContent, '288');
+    assert.equal(elements['simulation-time'].textContent, 123);
 
-    ui.updateStatus(collaboration, physics, 1000);
+    ui.updateStatus(collaboration, physics, 1000, simulationTime);
     assert.equal(transitReads, 2);
     assert.equal(fluxReads, 2);
+});
+
+test('cumulative simulation time persists across sessions and sums concurrent tabs', () => {
+    const entries = new Map();
+    const localStorage = {
+        get length() { return entries.size; },
+        key: i => [...entries.keys()][i] ?? null,
+        getItem: key => entries.get(key) ?? null,
+        setItem: (key, value) => entries.set(key, value)
+    };
+    let id = 0;
+    const context = vm.createContext({ localStorage, crypto: { randomUUID: () => `session-${++id}` } });
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js/local-storage.js'), 'utf8'), context);
+    const Tracker = vm.runInContext('SimulationTimeTracker', context);
+    const a = new Tracker();
+    const b = new Tracker();
+    a.add(12);
+    b.add(5);
+    a.save();
+    b.save();
+    a.add(3);
+    assert.equal(a.getTotal(), 20);
+    a.save();
+    const reopened = new Tracker();
+    reopened.add(2);
+    assert.equal(reopened.getTotal(), 22);
+    entries.set('tree-of-life-simulation-time-v1:invalid', 'bad');
+    assert.throws(() => reopened.getTotal(), /Invalid saved simulation time/);
+});
+
+test('simulation loop accumulates and periodically saves model time', () => {
+    const context = vm.createContext({
+        URLSearchParams, console,
+        document: { title: 'test' },
+        window: { addEventListener() {} },
+        performance: { now: () => 6000 },
+        requestAnimationFrame() {}
+    });
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js/main.js'), 'utf8'), context);
+    const Application = vm.runInContext('Application', context);
+    let accumulated = 0;
+    let saves = 0;
+    const tracker = { add: dt => { accumulated += dt; }, save: () => { saves++; } };
+    const app = {
+        lastRenderTime: 0, lastBiologySaveTime: 0, frameCount: 0,
+        physics: { step: () => 0.04 }, simulationTime: tracker,
+        biology: { step() {} }, biologyStore: { save: () => true },
+        renderer: { updateTerrainMesh() {}, updateParticles() {}, render() {} },
+        ui: {
+            updateStatus: (collaboration, physics, now, time) => assert.equal(time, tracker),
+            showToast() {}
+        },
+        animate() {}
+    };
+    Application.prototype.animate.call(app);
+    assert.equal(accumulated, 0.04);
+    assert.equal(saves, 1);
+});
+
+test('status help opens and closes its overlay', () => {
+    const handlers = {};
+    let opened = false;
+    const dialog = { showModal: () => { opened = true; }, close: () => { opened = false; } };
+    const elements = {
+        'status-help-dialog': dialog,
+        'status-help-button': { addEventListener: (event, fn) => { handlers.open = fn; } },
+        'status-help-close': { addEventListener: (event, fn) => { handlers.close = fn; } }
+    };
+    const context = vm.createContext({ document: { getElementById: id => elements[id] } });
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js/ui.js'), 'utf8'), context);
+    const UIManager = vm.runInContext('UIManager', context);
+    new UIManager({}, {}).setupEventListeners({}, {});
+    handlers.open();
+    assert.equal(opened, true);
+    handlers.close();
+    assert.equal(opened, false);
 });
 
 test('display mode is public while simulation controls remain admin-only', () => {
@@ -213,6 +294,9 @@ test('display mode is public while simulation controls remain admin-only', () =>
     assert.deepEqual(notices, ['flux']);
     controls.onKeyDown({ key: 'd', target: { tagName: 'INPUT' }, preventDefault() { prevented++; } });
     controls.onKeyDown({ key: 'd', metaKey: true, preventDefault() { prevented++; } });
+    controls.onKeyDown({
+        key: 'd', target: { closest: () => true }, preventDefault() { prevented++; }
+    });
     assert.equal(cycles, 1);
     assert.equal(prevented, 1);
     controls.onKeyDown({ key: 'ArrowUp', preventDefault() { prevented++; } });
@@ -247,6 +331,20 @@ test('display mode is public while simulation controls remain admin-only', () =>
     assert.equal(controlsPanel.hidden, true);
     assert.equal(accessMessage.hidden, false);
     assert.equal(cycles, 4);
+});
+
+test('scrolling status help does not zoom the terrain', () => {
+    const context = vm.createContext({ window: {}, document: {} });
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js/controls.js'), 'utf8'), context);
+    const InputControls = vm.runInContext('InputControls', context);
+    const controls = Object.create(InputControls.prototype);
+    controls.cameraDistance = 65;
+    let prevented = false;
+    controls.onMouseWheel({
+        deltaY: 1, target: { closest: () => true }, preventDefault() { prevented = true; }
+    });
+    assert.equal(prevented, false);
+    assert.equal(controls.cameraDistance, 65);
 });
 
 test('display mode notice stays visible for two seconds after the latest change', () => {

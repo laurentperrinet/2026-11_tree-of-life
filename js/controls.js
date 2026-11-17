@@ -30,6 +30,7 @@ class InputControls {
     onKeyDown(event) {
         const app = window.app;
         if (!app) return;
+        if (event.target?.closest?.('#status-help-dialog[open]')) return;
 
         if (event.key.toUpperCase() === 'D' && !event.ctrlKey && !event.metaKey &&
             !event.altKey && !event.target?.isContentEditable &&
@@ -156,6 +157,7 @@ class InputControls {
      * Handle mouse wheel (zoom)
      */
     onMouseWheel(event) {
+        if (event.target?.closest?.('#status-help-dialog')) return;
         event.preventDefault();
         
         const zoomSpeed = 0.5;

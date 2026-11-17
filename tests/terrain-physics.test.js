@@ -476,7 +476,7 @@ test('saves from the previous planar bed are rejected, current ones round-trip',
     const legacy = { ...saved, vegetation: Array.from(grid.vegetation),
         flowHistory: Array.from(grid.flowHistory), microbeU: Array.from(grid.microbeU),
         microbeV: Array.from(grid.microbeV) };
-    assert.equal(saved.version, '11.0');
+    assert.equal(saved.version, '12.0');
     for (const version of ['5.0', '6.0', '7.0', '9.0']) assert.equal(grid.fromJSON({ ...saved, version }), false);
     assert.equal(grid.fromJSON(saved), true);
     grid.initialize();
@@ -509,9 +509,26 @@ test('inverted cone drains through a flared channel towards the bottom sink', ()
         const radius = Math.hypot(width, z);
         assert.ok(Math.abs(grid.bedrockHeight(width, z) -
             (grid.slope * Math.min(grid.radius, radius) +
-                grid.surroundSlope * Math.max(0, radius - grid.radius))) < 1e-12);
+                grid.surroundSlope * Math.max(0, radius - grid.radius) +
+                grid.peripheralSlope * Math.max(0, Math.min(grid.peripheralWidth,
+                    radius - grid.radius + grid.peripheralWidth)))) < 1e-12);
     }
     assert.ok(grid.bedrockHeight(2, 20) < grid.slope * Math.hypot(2, 20));
+});
+
+test('the steeper peripheral bed carries stationary water inward', () => {
+    const grid = new TerrainGrid();
+    const physics = new PhysicsEngine(grid);
+    physics.transportCapacity = 0;
+    for (let i = 0; i < 48; i++) {
+        const angle = 2 * Math.PI * (i + 0.5) / 48;
+        const x = 24.4 * Math.cos(angle), z = 24.4 * Math.sin(angle);
+        if (z > 0 && Math.abs(x) < grid.sinkRadius + grid.channelFlare * z + 1) continue;
+        const particle = { x, z, vx: 0, vz: 0, sediment: 0 };
+        for (let step = 0; step < 50; step++) physics.moveParticle(particle, 0.04);
+        assert.ok(24.4 - Math.hypot(particle.x, particle.z) > 1.1, `insufficient drainage at ${angle}`);
+    }
+    assert.ok(Math.abs(grid.bedrockHeight(0, 27) + grid.slope * 27) < 1e-12);
 });
 
 test('raised fixed surround returns water to the disk while leaving the outlet downhill', () => {
@@ -578,19 +595,37 @@ test('version 10 saves raise the surround without changing the sand or particles
     physics.particles[0].sediment = 0.2;
     const saved = grid.toJSON();
     saved.version = '10.0';
-    for (let i = grid.erodibleCount; i < grid.vertices.length; i++) {
+    for (let i = 0; i < grid.vertices.length; i++) {
         const point = grid.vertices[i];
-        saved.elevation[i] = grid.bedrockHeight(point.x, point.z, 0) + grid.initialSandDepth;
+        saved.elevation[i] = grid.bedrockHeight(point.x, point.z, 0, 0) + grid.initialSandDepth;
     }
+    saved.elevation[100] += 0.1;
     const before = totalSediment(grid, physics);
     assert.equal(grid.fromJSON(saved), true);
     assert.equal(grid.elevation[100], saved.elevation[100]);
     assert.equal(physics.particles[0].sediment, 0.2);
     assert.ok(Math.abs(totalSediment(grid, physics) - before) < 1e-8);
     assert.ok(grid.elevation.slice(grid.erodibleCount).every((height, j) =>
-        height === grid.bedrock[j + grid.erodibleCount] + grid.initialSandDepth));
+        Math.abs(height - grid.bedrock[j + grid.erodibleCount] - grid.initialSandDepth) < 1e-12));
     saved.elevation[grid.erodibleCount] -= 0.1;
     assert.equal(grid.fromJSON(saved), false);
+});
+
+test('version 11 saves retain sand and particles when the peripheral profile is raised', () => {
+    const grid = new TerrainGrid();
+    const physics = new PhysicsEngine(grid);
+    const saved = grid.toJSON();
+    saved.version = '11.0';
+    const index = grid.ringVertices[grid.rings - 5][0];
+    saved.particles[0].sediment = 0.17;
+    for (let i = 0; i < grid.vertices.length; i++) {
+        const point = grid.vertices[i];
+        saved.elevation[i] = grid.bedrockHeight(point.x, point.z, grid.surroundSlope, 0) + grid.initialSandDepth;
+    }
+    saved.elevation[index] += 0.2;
+    assert.equal(grid.fromJSON(saved), true);
+    assert.ok(Math.abs(grid.elevation[index] - grid.bedrock[index] - grid.initialSandDepth - 0.2) < 1e-12);
+    assert.equal(physics.particles[0].sediment, 0.17);
 });
 
 test('500- and 1000-particle saves gain new water without losing saved sediment', () => {

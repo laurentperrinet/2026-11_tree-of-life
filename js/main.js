@@ -14,6 +14,7 @@ class Application {
         // Storage and sync
         this.localStore = new LocalStorageManager();
         this.biologyStore = new LocalStorageManager('tree-of-life-local-biology-v2', null);
+        this.simulationTime = new SimulationTimeTracker();
         this.collaboration = new CollaborativeSync(this.grid, this.localStore);
         
         // Auth and reset
@@ -37,6 +38,7 @@ class Application {
         this.lastRenderTime = 0;
         this.lastBiologySaveTime = 0;
         this.biologySaveFailed = false;
+        this.simulationTimeSaveFailed = false;
         this.biologyLoaded = false;
         this.frameCount = 0;
         this.fps = 60;
@@ -148,6 +150,7 @@ class Application {
         
         // Physics step
         const dt = this.physics.step();
+        this.simulationTime.add(dt);
         this.biology.step(dt);
         if (now - this.lastBiologySaveTime >= 5000) {
             this.lastBiologySaveTime = now;
@@ -156,6 +159,16 @@ class Application {
                 this.ui.showToast('Could not save local biology', 'error', 8000);
             }
             this.biologySaveFailed = !saved;
+            try {
+                this.simulationTime.save();
+                this.simulationTimeSaveFailed = false;
+            } catch (error) {
+                console.error('Could not save simulation time:', error);
+                if (!this.simulationTimeSaveFailed) {
+                    this.ui.showToast('Could not save simulation time', 'error', 8000);
+                }
+                this.simulationTimeSaveFailed = true;
+            }
         }
         
         // Update renderer
@@ -163,7 +176,7 @@ class Application {
         this.renderer.updateParticles(this.physics);
         
         // Update UI
-        this.ui.updateStatus(this.collaboration, this.physics, now);
+        this.ui.updateStatus(this.collaboration, this.physics, now, this.simulationTime);
         
         // Render
         this.renderer.render();
@@ -180,6 +193,11 @@ class Application {
      */
     dispose() {
         this.collaboration.stop();
+        try {
+            this.simulationTime.save();
+        } catch (error) {
+            console.error('Could not save simulation time on exit:', error);
+        }
         if (this.biologyLoaded && !this.biologyStore.save(this.biology)) {
             console.error('Could not save local biology on exit');
         }

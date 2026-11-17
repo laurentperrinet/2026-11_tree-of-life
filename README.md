@@ -12,7 +12,8 @@
 ## Current browser simulation
 
 The browser models an erodible circular bed within a fixed square surround.
-Its solid base forms an inverted cone of radial slope 0.09, except for a
+Its solid base forms an inverted cone of radial slope 0.09, with an additional
+0.06 slope across the outermost four units to drain peripheral water, except for a
 channel that widens towards the bottom of the square and slopes down from the
 centre to the sink. Initially the bed is covered by a uniform layer of sand
 0.3 simulation units deep. The outer ring and square surround cannot be eroded,
@@ -78,6 +79,8 @@ changing the radius, square size, ring count or spacing automatically starts a
 fresh terrain and discards pending contributions. Local biology remains
 independent. Deploy the Worker and browser update together when changing the
 mesh: older clients may be incompatible.
+The steeper peripheral bed profile is migrated without discarding existing
+sand or local particles; pending shared contributions are cleared.
 
 Each browser has a random local ID. A single `POST /api/sync` request both
 submits a compressed elevation delta and returns the latest shared state.
@@ -264,11 +267,16 @@ overexposing the pale colors on steep channel banks.
 Shows real-time statistics:
 - **Collaborators (24 h)**: Browser IDs seen by the Worker in the past day
 - **Last Sync**: Seconds since this browser last contacted the Worker
+- **Next sync**: Wall-clock seconds until the next scheduled attempt, including retry backoff.
+- **Simulation time**: Cumulative simulated seconds across visits and tabs in this
+  browser, stored locally every five seconds from the introduction of this counter.
+  It is not a global time for the shared terrain and is not reset when the terrain
+  is reset. Clearing browser storage erases it.
 - **Transit time**: Mean simulation time for the last 100 water parcels reaching the sink.
 - **Particle flow**: Water parcels reaching the sink per simulation second,
   averaged over the last 60 simulation seconds (or since startup).
 
-Open the **?** in the status bar for details on these indicators.
+Open the **?** in the status bar for details on all indicators and collaboration.
 
 ## 🔗 Collaboration Guide
 

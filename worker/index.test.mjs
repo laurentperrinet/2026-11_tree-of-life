@@ -101,23 +101,29 @@ test('a changed mesh signature resets shared terrain and pending contributions o
     equal((await request('/api/state')).body.version, 13);
 });
 
-test('existing unsigned state on the current mesh is preserved and upgraded', async () => {
-    const mesh = createInitialMesh();
+test('existing shared state is migrated to the steeper bed without losing sand', async () => {
+    const mesh = createInitialMesh(0);
     mesh.elevation[0] += 0.1;
-    const old = {
-        schemaVersion: 2, version: 12,
-        elevation: mesh.elevation, bedrock: mesh.bedrock, erodibleCount: mesh.erodibleCount,
-        sumDelta: new Float64Array(mesh.elevation.length),
-        activeClients: {}, contributions: { [clientA]: true },
-        contributionIds: [clientA], windowEndsAt: 1
-    };
-    const { request, storedState } = harness(old);
-    const state = await request('/api/state');
-    equal(state.body.version, 12);
-    equal(state.body.acceptedContributions, 1);
-    equal(state.body.terrain.elevation[0], mesh.elevation[0]);
-    equal(storedState().meshSignature, MESH_SIGNATURE);
-    equal((await request('/api/state')).body.version, 12);
+    mesh.elevation[mesh.erodibleCount - 1] += 0.2;
+    for (const meshSignature of [undefined, MESH_SIGNATURE]) {
+        const old = {
+            schemaVersion: 2, meshSignature, version: 12,
+            elevation: mesh.elevation, bedrock: mesh.bedrock, erodibleCount: mesh.erodibleCount,
+            sumDelta: new Float64Array(mesh.elevation.length),
+            activeClients: {}, contributions: { [clientA]: true },
+            contributionIds: [clientA], windowEndsAt: 1
+        };
+        const { request, storedState } = harness(old);
+        const state = await request('/api/state');
+        equal(state.body.version, 13);
+        equal(state.body.acceptedContributions, 0);
+        equal(state.body.terrain.elevation[0], mesh.elevation[0]);
+        const index = mesh.erodibleCount - 1;
+        ok(Math.abs(state.body.terrain.elevation[index] - createInitialMesh().bedrock[index] -
+            (mesh.elevation[index] - mesh.bedrock[index])) < 1e-12);
+        equal(storedState().meshSignature, MESH_SIGNATURE);
+        equal((await request('/api/state')).body.version, 13);
+    }
 });
 
 test('version 1 shared terrain is reset once when the mesh schema changes', async () => {
