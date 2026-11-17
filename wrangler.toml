@@ -2,6 +2,10 @@ name = "tree-of-life"
 main = "worker/index.mjs"
 compatibility_date = "2026-04-01"
 
+[vars]
+GITHUB_CLIENT_ID = "Ov23liPHpc4sc5qUGMVx"
+OWNER_GITHUB_ID = "381808"
+
 [[durable_objects.bindings]]
 name = "SIMULATION"
 class_name = "Simulation"
