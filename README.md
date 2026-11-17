@@ -54,7 +54,7 @@ can still accumulate on it inside the disk. Bed
 volume plus carried sediment is conserved by these exchanges and by recycling.
 
 `+`/`-` adjust the circulation rate and the arrow keys adjust simulation speed;
-`D` switches between elevation, sand depth, flow and sediment views. This is a simplified
+`D` switches between elevation, wireframe mesh, sand depth, flow and sediment views. This is a simplified
 particle model: it does not solve the shallow-water equations or model
 realistic fluid dynamics, and branching is not guaranteed. Remote terrain merges,
 if configured, are external modifications and do not conserve this local
@@ -157,8 +157,9 @@ the terrain also resets that visitor's biology.
 Just visit: **https://laurentperrinet.github.io/2026-11_tree-of-life/**
 - Observe water parcels eroding and depositing sediment
 - The initial view looks straight down at the center of the disk; drag or scroll to adjust it
+- Press **D** or select **View** to cycle through display modes.
 - Open [the admin view](https://laurentperrinet.github.io/2026-11_tree-of-life/?admin)
-  and sign in with GitHub to access the control panel and keyboard shortcuts.
+  and sign in with GitHub to access the simulation controls.
   The URL itself grants no permissions; resetting still requires the authorized
   GitHub owner.
 
@@ -229,7 +230,8 @@ No explicit branching code is used.
 
 ### Keyboard Shortcuts
 
-The control panel appears with `?admin`; sign in with GitHub before its
+The **D** display shortcut and **View** button are available to everyone.
+The control panel appears with `?admin`; sign in with GitHub before its other
 simulation controls and keyboard shortcuts become available. Reset remains
 restricted to the authorized GitHub owner.
 
@@ -237,8 +239,8 @@ restricted to the authorized GitHub owner.
 |-----|--------|-------|
 | **+** / **-** | Increase/decrease flow (Q) | Larger Q = more water input per step |
 | **↑** / **↓** | Increase/decrease simulation speed | |
-| **D** | Cycle display mode | Elevation → sand depth → flux → sediment |
-| **S** | Force sync to GitHub now | Useful for testing collaboration |
+| **D** | Cycle display mode | Elevation → mesh → sand depth → flux → sediment |
+| **S** | Request synchronization with the Worker | Respects the adaptive minimum interval |
 | **R** | Reset terrain (authentication required) | Press twice to confirm. Shows "Converged?" first |
 | **?** | Show/hide help panel | Available in the admin view |
 
@@ -250,19 +252,12 @@ restricted to the authorized GitHub owner.
 | **Scroll** | Zoom in/out |
 | **Double-click** | Reset camera view |
 
-### Display Modes (Press **D**)
+### Display Modes (Press **D** or select **View**)
 
-1. **Elevation** (default)
-   - Color: Blue (water) → Green (erosion) → Red (high)
-   - Shows: Terrain height
-
-2. **Velocity Magnitude**
-   - Color: Dark (slow) → Bright (fast)
-   - Shows: Water flow speed
-
-3. **Sediment Concentration**
-   - Color: Light (clear) → Dark (loaded)
-   - Shows: How much sediment water is carrying
+The current mode appears briefly in the center when it changes:
+**elevation** (default), **mesh** (wireframe with particles), **sand depth**,
+**flux**, then **sediment**. Sand depth uses reduced lighting to avoid
+overexposing the pale colors on steep channel banks.
 
 ### Status Bar (Bottom)
 

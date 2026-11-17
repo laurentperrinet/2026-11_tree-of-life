@@ -74,6 +74,40 @@ canvas {
     flex-shrink: 0;
 }
 
+.display-mode-button {
+    width: auto;
+    min-height: 20px;
+    margin: 0;
+    padding: 1px 5px;
+    background: transparent;
+    color: #90caf9;
+    font: inherit;
+}
+
+.display-mode-button:hover {
+    background: rgba(144, 202, 249, 0.15);
+}
+
+.display-mode-button:focus-visible {
+    outline: 2px solid #90caf9;
+}
+
+.display-mode-notice {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    max-width: 90vw;
+    padding: 10px 20px;
+    border-radius: 6px;
+    background: rgba(10, 14, 39, 0.8);
+    color: white;
+    font-size: clamp(24px, 5vw, 48px);
+    text-align: center;
+    pointer-events: none;
+    z-index: 150;
+}
+
 .status-help summary {
     display: flex;
     align-items: center;

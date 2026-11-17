@@ -54,6 +54,48 @@ test('default camera centers the disk at the zenith and controls preserve its ta
     assert.ok(halfWidth > 25);
 });
 
+test('mesh view shows the wireframe and particles without biology', () => {
+    class Color {
+        setRGB(r, g, b) { Object.assign(this, { r, g, b }); }
+    }
+    const context = vm.createContext({ THREE: { Color } });
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js/renderer.js'), 'utf8'), context);
+    const TerrainRenderer = vm.runInContext('TerrainRenderer', context);
+    const renderer = Object.create(TerrainRenderer.prototype);
+    const colors = { setXYZ() {} };
+    const material = { color: new Color(), specular: new Color(), wireframe: false };
+    renderer.terrainMesh = {
+        material,
+        geometry: { attributes: { color: colors, position: { array: [0, 0, 0] } }, computeVertexNormals() {} }
+    };
+    renderer.biologyMesh = { visible: true };
+    renderer.particleMesh = { visible: true };
+    const grid = {
+        elevation: [0.3], bedrock: [0], initialSandDepth: 0.3, erodibleCount: 1,
+        waterDepth: [0], velocityX: [0], velocityY: [0], sediment: [0]
+    };
+    renderer.displayMode = 'elevation';
+    renderer.cycleDisplayMode();
+    assert.equal(renderer.displayMode, 'mesh');
+    renderer.updateTerrainMesh(grid, {});
+    assert.equal(material.wireframe, true);
+    assert.equal(renderer.biologyMesh.visible, false);
+    assert.equal(renderer.particleMesh.visible, true);
+
+    renderer.cycleDisplayMode();
+    renderer.updateTerrainColors(grid);
+    assert.equal(renderer.displayMode, 'sand depth');
+    assert.equal(material.wireframe, false);
+    assert.equal(material.color.r, 0.6);
+    assert.equal(material.specular.r, 0);
+
+    renderer.cycleDisplayMode();
+    renderer.updateTerrainColors(grid);
+    assert.equal(renderer.displayMode, 'flux');
+    assert.equal(material.color.r, 1);
+    assert.equal(material.specular.r, 17 / 255);
+});
+
 test('authentication status is hidden until a user signs in', () => {
     const elements = {
         'auth-status': {
@@ -129,7 +171,7 @@ test('status metrics update at most once per second', () => {
     assert.equal(fluxReads, 2);
 });
 
-test('admin panel and keyboard shortcuts require the admin URL and GitHub authentication', () => {
+test('display mode is public while simulation controls remain admin-only', () => {
     const panel = { hidden: true };
     const controlsPanel = { hidden: true };
     const accessMessage = { hidden: true };
@@ -137,9 +179,11 @@ test('admin panel and keyboard shortcuts require the admin URL and GitHub authen
     const auth = { isAuthenticated: false };
     let cycles = 0;
     let prevented = 0;
+    const notices = [];
     const app = {
         auth,
-        ui: { showToast() {} },
+        physics: { timeScale: 1 },
+        ui: { showToast() {}, showDisplayMode(mode) { notices.push(mode); } },
         renderer: { cycleDisplayMode() { cycles++; }, displayMode: 'flux' }
     };
     const context = vm.createContext({
@@ -164,8 +208,15 @@ test('admin panel and keyboard shortcuts require the admin URL and GitHub authen
     ui.updateAdminPanel();
     controls.onKeyDown(event);
     assert.equal(panel.hidden, true);
-    assert.equal(cycles, 0);
-    assert.equal(prevented, 0);
+    assert.equal(cycles, 1);
+    assert.equal(prevented, 1);
+    assert.deepEqual(notices, ['flux']);
+    controls.onKeyDown({ key: 'd', target: { tagName: 'INPUT' }, preventDefault() { prevented++; } });
+    controls.onKeyDown({ key: 'd', metaKey: true, preventDefault() { prevented++; } });
+    assert.equal(cycles, 1);
+    assert.equal(prevented, 1);
+    controls.onKeyDown({ key: 'ArrowUp', preventDefault() { prevented++; } });
+    assert.equal(app.physics.timeScale, 1);
 
     location.search = '?admin';
     ui.updateAdminPanel();
@@ -173,16 +224,18 @@ test('admin panel and keyboard shortcuts require the admin URL and GitHub authen
     assert.equal(panel.hidden, false);
     assert.equal(controlsPanel.hidden, true);
     assert.equal(accessMessage.hidden, false);
-    assert.equal(cycles, 0);
-    assert.equal(prevented, 0);
+    assert.equal(cycles, 2);
+    controls.onKeyDown({ key: 'ArrowUp', preventDefault() { prevented++; } });
+    assert.equal(app.physics.timeScale, 1);
 
     auth.isAuthenticated = true;
     ui.updateAdminPanel();
     controls.onKeyDown(event);
     assert.equal(controlsPanel.hidden, false);
     assert.equal(accessMessage.hidden, true);
-    assert.equal(cycles, 1);
-    assert.equal(prevented, 1);
+    assert.equal(cycles, 3);
+    controls.onKeyDown({ key: 'ArrowUp', preventDefault() { prevented++; } });
+    assert.equal(app.physics.timeScale, 1.5);
     controls.onKeyDown({ key: '?', preventDefault() {} });
     assert.equal(panel.hidden, true);
     controls.onKeyDown({ key: '?', preventDefault() {} });
@@ -193,6 +246,46 @@ test('admin panel and keyboard shortcuts require the admin URL and GitHub authen
     controls.onKeyDown(event);
     assert.equal(controlsPanel.hidden, true);
     assert.equal(accessMessage.hidden, false);
+    assert.equal(cycles, 4);
+});
+
+test('display mode notice stays visible for two seconds after the latest change', () => {
+    const notice = { textContent: '', hidden: true };
+    const callbacks = new Map();
+    let nextTimer = 0;
+    const context = vm.createContext({
+        document: { getElementById: () => notice },
+        setTimeout: (callback, delay) => {
+            assert.equal(delay, 2000);
+            callbacks.set(++nextTimer, callback);
+            return nextTimer;
+        },
+        clearTimeout: id => callbacks.delete(id)
+    });
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js/ui.js'), 'utf8'), context);
+    const UIManager = vm.runInContext('UIManager', context);
+    const ui = new UIManager({}, {});
+    ui.showDisplayMode('sand depth');
+    ui.showDisplayMode('flux');
+    assert.equal(notice.textContent, 'flux');
+    assert.equal(notice.hidden, false);
+    assert.equal(callbacks.size, 1);
+    callbacks.get(2)();
+    assert.equal(notice.hidden, true);
+});
+
+test('public view button uses the same display control', () => {
+    let click;
+    let cycles = 0;
+    const button = { addEventListener: (event, handler) => { if (event === 'click') click = handler; } };
+    const context = vm.createContext({
+        window: { app: { controls: { cycleDisplayMode() { cycles++; } } } },
+        document: { getElementById: id => id === 'display-mode-button' ? button : null }
+    });
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js/ui.js'), 'utf8'), context);
+    const UIManager = vm.runInContext('UIManager', context);
+    new UIManager({}, {}).setupEventListeners({}, {});
+    click();
     assert.equal(cycles, 1);
 });
 

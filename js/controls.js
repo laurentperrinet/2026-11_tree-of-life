@@ -29,11 +29,21 @@ class InputControls {
      */
     onKeyDown(event) {
         const app = window.app;
-        if (!app || !app.auth?.isAuthenticated ||
+        if (!app) return;
+
+        if (event.key.toUpperCase() === 'D' && !event.ctrlKey && !event.metaKey &&
+            !event.altKey && !event.target?.isContentEditable &&
+            !['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target?.tagName)) {
+            event.preventDefault();
+            this.cycleDisplayMode();
+            return;
+        }
+
+        if (!app.auth?.isAuthenticated ||
             !new URLSearchParams(window.location.search).has('admin')) return;
         
         // Prevent defaults for control keys
-        if (['ArrowUp', 'ArrowDown', '+', '-', 'd', 's', 'r', 'D', 'S', 'R', '?'].includes(event.key)) {
+        if (['ArrowUp', 'ArrowDown', '+', '-', 's', 'r', 'S', 'R', '?'].includes(event.key)) {
             event.preventDefault();
         }
         
@@ -58,12 +68,6 @@ class InputControls {
             case 'ARROWDOWN':
                 app.physics.timeScale = Math.max(0.1, app.physics.timeScale / 1.5);
                 app.ui.showToast(`Speed: ${app.physics.timeScale.toFixed(1)}x`, 'info');
-                break;
-            
-            // Display mode
-            case 'D':
-                this.renderer.cycleDisplayMode();
-                app.ui.showToast(`Mode: ${this.renderer.displayMode}`, 'info');
                 break;
             
             // Force sync
@@ -91,6 +95,11 @@ class InputControls {
                 this.toggleHelp();
                 break;
         }
+    }
+
+    cycleDisplayMode() {
+        this.renderer.cycleDisplayMode();
+        window.app.ui.showDisplayMode(this.renderer.displayMode);
     }
     
     /**

@@ -115,8 +115,15 @@ class TerrainRenderer {
 
     updateTerrainColors(grid) {
         const colors = this.terrainMesh.geometry.attributes.color;
+        const material = this.terrainMesh.material;
+        material.wireframe = this.displayMode === 'mesh';
+        const sandView = this.displayMode === 'sand depth';
+        const brightness = sandView ? 0.6 : material.wireframe ? 0.3 : 1;
+        const specular = sandView || material.wireframe ? 0 : 17 / 255;
+        material.color.setRGB(brightness, brightness, brightness);
+        material.specular.setRGB(specular, specular, specular);
         let max = 0;
-        if (this.displayMode !== 'elevation') {
+        if (this.displayMode === 'flux' || this.displayMode === 'sediment') {
             for (let i = 0; i < grid.elevation.length; i++) {
                 const value = this.displayMode === 'flux'
                     ? grid.waterDepth[i] * Math.hypot(grid.velocityX[i], grid.velocityY[i])
@@ -126,7 +133,9 @@ class TerrainRenderer {
         }
         const color = new THREE.Color();
         for (let i = 0; i < grid.elevation.length; i++) {
-            if (i >= grid.erodibleCount) {
+            if (this.displayMode === 'mesh') {
+                color.setRGB(0.55, 0.65, 0.7);
+            } else if (i >= grid.erodibleCount) {
                 color.setRGB(0, 0, 0);
             } else if (this.displayMode === 'elevation') {
                 color.setRGB(0.053, 0.053, 0.055);
@@ -222,7 +231,7 @@ class TerrainRenderer {
     }
 
     cycleDisplayMode() {
-        const modes = ['elevation', 'sand depth', 'flux', 'sediment'];
+        const modes = ['elevation', 'mesh', 'sand depth', 'flux', 'sediment'];
         this.displayMode = modes[(modes.indexOf(this.displayMode) + 1) % modes.length];
     }
 

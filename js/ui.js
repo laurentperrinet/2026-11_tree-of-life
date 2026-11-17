@@ -8,6 +8,7 @@ class UIManager {
         this.lastToastTime = 0;
         this.resetConfirmPending = false;
         this.lastStatusUpdate = -Infinity;
+        this.displayModeTimer = null;
     }
 
     updateAdminPanel() {
@@ -99,6 +100,16 @@ class UIManager {
             toast.classList.remove('visible');
         }, duration);
     }
+
+    showDisplayMode(mode) {
+        const notice = document.getElementById('display-mode-notice');
+        notice.textContent = mode;
+        notice.hidden = false;
+        clearTimeout(this.displayModeTimer);
+        this.displayModeTimer = setTimeout(() => {
+            notice.hidden = true;
+        }, 2000);
+    }
     
     /**
      * Confirm reset before executing
@@ -167,6 +178,11 @@ class UIManager {
      * Setup event listeners for UI elements
      */
     setupEventListeners(auth, reset) {
+        const displayModeButton = document.getElementById('display-mode-button');
+        if (displayModeButton) {
+            displayModeButton.addEventListener('click', () => window.app?.controls?.cycleDisplayMode());
+        }
+
         // Auth button
         const authButton = document.getElementById('auth-button');
         if (authButton) {

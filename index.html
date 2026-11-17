@@ -28,6 +28,8 @@
         </div>
         <div id="auth-status" hidden></div>
         <div class="status-tools">
+            <button id="display-mode-button" class="display-mode-button" type="button"
+                title="Change display mode (D)" aria-label="Change display mode">View</button>
             <details class="status-help">
                 <summary aria-label="Explain transit time and particle flow">❔</summary>
                 <div class="status-help-content">
@@ -72,7 +74,6 @@
         <ul id="admin-controls" hidden>
             <li><kbd>+</kbd>/<kbd>-</kbd> : Flow rate Q±</li>
             <li><kbd>↑</kbd>/<kbd>↓</kbd> : Speed V±</li>
-            <li><kbd>D</kbd> : Dual-view modes</li>
             <li><kbd>S</kbd> : Force sync</li>
             <li><kbd>R</kbd> : Reset (auth only)</li>
             <li><kbd>?</kbd> : Toggle help</li>
@@ -91,6 +92,7 @@
 
     <!-- Message toast -->
     <div id="toast" class="toast"></div>
+    <div id="display-mode-notice" class="display-mode-notice" role="status" aria-live="polite" hidden></div>
 
     <!-- Scripts -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
