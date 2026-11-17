@@ -3,8 +3,8 @@ import { deepStrictEqual, equal, ok } from 'node:assert/strict';
 import worker, { Simulation } from './index.mjs';
 import { createInitialMesh, getSyncIntervalMs } from './mesh.mjs';
 
-function harness() {
-    const values = new Map();
+function harness(initialState) {
+    const values = new Map(initialState ? [['state', structuredClone(initialState)]] : []);
     let tail = Promise.resolve();
     const ctx = {
         storage: {
@@ -64,6 +64,30 @@ test('mesh initialization follows the circular site topology and request budget'
     equal(getSyncIntervalMs(1), 300_000);
     equal(getSyncIntervalMs(1000), 2_160_000);
     ok(state.body.dailyRequestBudget < 100_000);
+});
+
+test('legacy Durable Object state migrates to the triangular mesh schema', async () => {
+    const { request } = harness({
+        version: 8,
+        terrain: { elevation: [], waterDepth: [], sediment: [] },
+        parameters: { flow: 0.5, speed: 1 },
+        tasks: [null, null, null, null]
+    });
+    const migrated = await request('/api/state');
+    const mesh = createInitialMesh();
+    equal(migrated.status, 200);
+    equal(migrated.body.version, 9);
+    deepStrictEqual(migrated.body.terrain.elevation, Array.from(mesh.elevation));
+});
+
+test('empty sync request bodies are treated as heartbeats, not compressed updates', async () => {
+    const { request } = harness();
+    const heartbeat = await request('/api/sync', {
+        method: 'POST', clientId: clientA, body: new Uint8Array(0)
+    });
+    equal(heartbeat.status, 200);
+    equal(heartbeat.body.activeCollaborators, 1);
+    equal(heartbeat.body.version, 0);
 });
 
 test('contributions from the same version are averaged once per browser', async () => {

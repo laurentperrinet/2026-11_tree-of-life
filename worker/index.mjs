@@ -4,6 +4,7 @@ const ACTIVE_CLIENT_MS = 24 * 60 * 60 * 1000;
 const DAILY_REQUEST_BUDGET = 80_000;
 const MAX_COMPRESSED_BYTES = 100_000;
 const MAX_DELTA = 10;
+const STATE_SCHEMA_VERSION = 1;
 const ORIGIN = 'https://laurentperrinet.github.io';
 const FRONTEND_URL = `${ORIGIN}/2026-11_tree-of-life/`;
 
@@ -16,6 +17,22 @@ class HttpError extends Error {
         super(message);
         this.status = status;
     }
+}
+
+function createState(version = 0) {
+    const mesh = createInitialMesh();
+    return {
+        schemaVersion: STATE_SCHEMA_VERSION,
+        version,
+        elevation: mesh.elevation,
+        bedrock: mesh.bedrock,
+        erodibleCount: mesh.erodibleCount,
+        activeClients: {},
+        contributions: {},
+        contributionIds: [],
+        sumDelta: new Float64Array(mesh.elevation.length),
+        windowEndsAt: null
+    };
 }
 
 function errorResponse(error) {
@@ -187,11 +204,18 @@ export class Simulation {
         try {
             const path = new URL(request.url).pathname;
             let delta;
-            if (path === '/api/sync' && request.method === 'POST' && request.body) {
-                const initial = createInitialMesh();
-                delta = await readDelta(
-                    request, initial.elevation.length * Float32Array.BYTES_PER_ELEMENT
-                );
+            if (path === '/api/sync' && request.method === 'POST') {
+                if (request.headers.has('X-Payload-Encoding')) {
+                    const initial = createInitialMesh();
+                    delta = await readDelta(
+                        request, initial.elevation.length * Float32Array.BYTES_PER_ELEMENT
+                    );
+                } else if (request.body) {
+                    const unexpectedBody = await readStreamLimited(request.body, MAX_COMPRESSED_BYTES);
+                    if (unexpectedBody.byteLength > 0) {
+                        throw new HttpError(400, 'Contribution encoding is required');
+                    }
+                }
             }
             return await this.ctx.blockConcurrencyWhile(() => this.handle(request, delta));
         } catch (error) {
@@ -200,22 +224,21 @@ export class Simulation {
     }
 
     async loadState() {
-        let state = await this.ctx.storage.get('state');
-        if (!state) {
-            const mesh = createInitialMesh();
-            state = {
-                version: 0,
-                elevation: mesh.elevation,
-                bedrock: mesh.bedrock,
-                erodibleCount: mesh.erodibleCount,
-                activeClients: {},
-                contributions: {},
-                contributionIds: [],
-                sumDelta: new Float64Array(mesh.elevation.length),
-                windowEndsAt: null
-            };
-            await this.ctx.storage.put('state', state);
+        const stored = await this.ctx.storage.get('state');
+        if (stored?.schemaVersion === STATE_SCHEMA_VERSION &&
+            stored.elevation instanceof Float64Array &&
+            stored.bedrock instanceof Float64Array &&
+            stored.sumDelta instanceof Float64Array &&
+            stored.elevation.length === stored.bedrock.length &&
+            stored.elevation.length === stored.sumDelta.length &&
+            stored.activeClients && typeof stored.activeClients === 'object' &&
+            stored.contributions && typeof stored.contributions === 'object' &&
+            Array.isArray(stored.contributionIds)) {
+            return stored;
         }
+        const version = Number.isSafeInteger(stored?.version) ? stored.version + 1 : 0;
+        const state = createState(version);
+        await this.ctx.storage.put('state', state);
         return state;
     }
 
@@ -231,6 +254,7 @@ export class Simulation {
         }
         if (path === '/api/admin/reset' && request.method === 'POST') {
             const mesh = createInitialMesh();
+            state.schemaVersion = STATE_SCHEMA_VERSION;
             state.version++;
             state.elevation = mesh.elevation;
             state.bedrock = mesh.bedrock;
