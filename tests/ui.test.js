@@ -99,7 +99,7 @@ test('status metrics update at most once per second', () => {
         'contrib-count': { textContent: '' },
         'last-sync': { textContent: '' },
         'mean-transit-time': { textContent: '' },
-        'sand-throughput': { textContent: '' },
+        'particle-throughput': { textContent: '' },
         'auth-status': { hidden: true, textContent: '', className: '' },
         'auth-button': { textContent: '' },
         'reset-container': { style: {} }
@@ -114,7 +114,7 @@ test('status metrics update at most once per second', () => {
     const collaboration = { activeCollaborators: 6, getSecondsSinceSync: () => 12 };
     const physics = {
         getMeanTransitTime: () => { transitReads++; return 12.36; },
-        getSandThroughput: () => { fluxReads++; return 0.125; }
+        getParticleThroughput: () => { fluxReads++; return 0.125; }
     };
 
     ui.updateStatus(collaboration, physics, 0);
@@ -122,7 +122,7 @@ test('status metrics update at most once per second', () => {
     assert.equal(transitReads, 1);
     assert.equal(fluxReads, 1);
     assert.equal(elements['mean-transit-time'].textContent, '12.4');
-    assert.equal(elements['sand-throughput'].textContent, '0.125');
+    assert.equal(elements['particle-throughput'].textContent, '0.13');
 
     ui.updateStatus(collaboration, physics, 1000);
     assert.equal(transitReads, 2);

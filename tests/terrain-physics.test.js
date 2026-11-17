@@ -270,6 +270,7 @@ test('sink at the bottom of the square recycles sediment; other edges reflect', 
     const physics = new PhysicsEngine(grid);
     physics.g = 0;
     physics.friction = 0;
+    assert.equal(physics.getParticleThroughput(), 0);
     physics.simulationTime = 10;
     const particle = {
         x: 0.1, z: grid.halfSize - 0.01, vx: 0, vz: 1, sediment: 1, travelTime: 5
@@ -280,12 +281,15 @@ test('sink at the bottom of the square recycles sediment; other edges reflect', 
     assert.equal(particle.travelTime, 0);
     assert.ok(Math.abs(physics.getMeanTransitTime() - 5.04) < 1e-12);
     assert.ok(Math.abs(physics.getSandThroughput() - particle.sediment / 10) < 1e-12);
+    assert.equal(physics.getParticleThroughput(), 0.1);
     physics.simulationTime = 71;
     assert.equal(physics.getSandThroughput(), 0);
+    assert.equal(physics.getParticleThroughput(), 0);
 
     const blocked = { x: 5, z: grid.halfSize - 0.01, vx: 0, vz: 1, sediment: 0 };
     physics.moveParticle(blocked, 0.04);
     assert.ok(blocked.z < grid.halfSize && blocked.vz < 0 && blocked.x < 6);
+    assert.equal(physics.getParticleThroughput(), 0);
     physics.maxSpeed = 100;
     const crossing = { x: -2, z: grid.halfSize - 0.1, vx: 50, vz: 5, sediment: 1 };
     physics.moveParticle(crossing, 0.04);

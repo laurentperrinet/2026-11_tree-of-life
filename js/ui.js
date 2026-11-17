@@ -39,8 +39,8 @@ class UIManager {
         const transitTime = physics.getMeanTransitTime();
         document.getElementById('mean-transit-time').textContent =
             transitTime === null ? '--' : transitTime.toFixed(1);
-        document.getElementById('sand-throughput').textContent =
-            physics.getSandThroughput().toFixed(3);
+        document.getElementById('particle-throughput').textContent =
+            physics.getParticleThroughput().toFixed(2);
 
         // Auth status
         this.updateAuthStatus();

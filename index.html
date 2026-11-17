@@ -10,7 +10,7 @@
     <!-- Main 3D canvas -->
     <canvas id="canvas"></canvas>
 
-    <!-- Status badge (top-right) -->
+    <!-- Status bar -->
     <div id="status-badge" class="status-badge">
         <div class="status-metrics" aria-label="Simulation status">
             <div class="status-metric" role="group" title="Active collaborators in the last 24 hours">
@@ -22,23 +22,23 @@
             <div class="status-metric" role="group" title="Mean rim-to-sink water transit time">
                 <span aria-hidden="true">⏱️</span><span id="mean-transit-time">--</span> sim s
             </div>
-            <div class="status-metric" role="group" title="Sediment volume passing through the sink">
-                <span aria-hidden="true">🏖️</span><span id="sand-throughput">0.000</span> vol/s
+            <div class="status-metric" role="group" title="Water particles passing through the sink">
+                <span aria-hidden="true">💧</span><span id="particle-throughput">0.00</span> particles/sim s
             </div>
         </div>
         <div id="auth-status" hidden></div>
         <div class="status-tools">
             <details class="status-help">
-                <summary aria-label="Explain transit time and sediment flow">❔</summary>
+                <summary aria-label="Explain transit time and particle flow">❔</summary>
                 <div class="status-help-content">
                     <p><strong>Mean transit time</strong> is the average model time from
                         a water parcel entering at the rim to reaching the sink, over the
                         last 100 completed trips. Evaporated parcels are not counted.
                         “sim s” means simulation seconds, not wall-clock seconds.</p>
-                    <p><strong>Sand through sink</strong> is the sediment volume crossing
-                        the sink per simulation second, averaged over the last 60 simulation
-                        seconds. Sand is recycled with the water, so this is throughput,
-                        not net loss from the terrain.</p>
+                    <p><strong>Particle flow</strong> counts water parcels crossing the
+                        sink per simulation second over the last 60 simulation seconds
+                        (or since the start, if less). Evaporated parcels are excluded.
+                        Water and its sediment are recycled.</p>
                 </div>
             </details>
             <details class="status-help">

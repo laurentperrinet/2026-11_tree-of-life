@@ -136,6 +136,12 @@ class PhysicsEngine {
         return volume / elapsed;
     }
 
+    getParticleThroughput() {
+        this.pruneSandOutflowEvents();
+        const elapsed = Math.min(SAND_THROUGHPUT_WINDOW_SECONDS, this.simulationTime);
+        return elapsed > 0 ? (this.sandOutflowEvents.length - this.sandOutflowHead) / elapsed : 0;
+    }
+
     pruneSandOutflowEvents() {
         const cutoff = this.simulationTime - SAND_THROUGHPUT_WINDOW_SECONDS;
         while (this.sandOutflowHead < this.sandOutflowEvents.length &&

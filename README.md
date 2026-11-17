@@ -264,20 +264,16 @@ restricted to the authorized GitHub owner.
    - Color: Light (clear) → Dark (loaded)
    - Shows: How much sediment water is carrying
 
-### Status Badge (Top-Right Corner)
+### Status Bar (Bottom)
 
 Shows real-time statistics:
 - **Collaborators (24 h)**: Browser IDs seen by the Worker in the past day
 - **Last Sync**: Seconds since this browser last contacted the Worker
-- **Energy**: Relative motion indicator, Σ(u²+v²)h; the displayed percentage is
-  rounded and capped at 100%, not a physical energy percentage.
-- **Stability**: Comparison of the last 15 energy samples with the previous 15.
-  The display is 0% until 30 samples are available; a relative change of 5%
-  or more gives 0%, and a value above 95% is marked stable.
+- **Transit time**: Mean simulation time for the last 100 water parcels reaching the sink.
+- **Particle flow**: Water parcels reaching the sink per simulation second,
+  averaged over the last 60 simulation seconds (or since startup).
 
-Open the **?** in the status badge for details on these indicators.
-
-When **Converged**, you can press **R** to reset terrain.
+Open the **?** in the status bar for details on these indicators.
 
 ## 🔗 Collaboration Guide
 
