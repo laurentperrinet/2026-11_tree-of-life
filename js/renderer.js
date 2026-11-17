@@ -141,7 +141,7 @@ class TerrainRenderer {
                 color.setRGB(0.053, 0.053, 0.055);
             } else if (this.displayMode === 'sand depth') {
                 const depth = (grid.elevation[i] - grid.bedrock[i]) / grid.initialSandDepth;
-                this.deepColor(depth, color);
+                this.deepColor(depth / TerrainRenderer.SAND_DEPTH_DISPLAY_MAX, color);
             } else {
                 const value = this.displayMode === 'flux'
                     ? grid.waterDepth[i] * Math.hypot(grid.velocityX[i], grid.velocityY[i])
@@ -175,10 +175,11 @@ class TerrainRenderer {
         color.b += ((0.07 + 0.28 * purple) - color.b) * amount;
     }
 
-    // cmocean "deep": light for bare bedrock, dark for the full initial sand thickness.
+    // Reversed cmocean "deep": dark for bare bedrock, light for thick sand, so that
+    // brightness reads as sand quantity (the bathymetric order made bare banks glow).
     deepColor(t, color) {
         const stops = TerrainRenderer.DEEP;
-        const x = Math.max(0, Math.min(1, t)) * (stops.length - 1);
+        const x = (1 - Math.max(0, Math.min(1, t))) * (stops.length - 1);
         const k = Math.min(stops.length - 2, Math.floor(x));
         const f = x - k;
         color.setRGB(stops[k][0] + (stops[k + 1][0] - stops[k][0]) * f,
@@ -260,3 +261,6 @@ TerrainRenderer.DEEP = [[0.993, 0.994, 0.8], [0.866, 0.947, 0.73], [0.734, 0.902
     [0.47, 0.806, 0.639], [0.383, 0.747, 0.643], [0.334, 0.684, 0.641], [0.305, 0.62, 0.632], [0.283, 0.556, 0.619],
     [0.264, 0.498, 0.605], [0.248, 0.436, 0.592], [0.242, 0.371, 0.578], [0.251, 0.303, 0.548], [0.255, 0.243, 0.464],
     [0.232, 0.195, 0.36], [0.197, 0.149, 0.262], [0.156, 0.103, 0.173]];
+// Sand depth (in multiples of the initial thickness) shown with the lightest colour;
+// the initial layer then sits mid-palette and accumulations remain distinguishable.
+TerrainRenderer.SAND_DEPTH_DISPLAY_MAX = 2;
