@@ -1,17 +1,16 @@
 /**
- * Semi-circular triangular bed. Polar rings use alternating angular offsets
- * for a sunflower-like, approximately hexagonal point distribution.
+ * Circular erodible bed with staggered polar rings and a fixed square surround.
  */
 class TerrainGrid {
     constructor() {
         this.radius = 25;
+        this.halfSize = 30;
         this.rings = 100;
         this.spacing = 0.25;
         this.sinkRadius = 0.8;
         this.slope = 0.09;
         this.initialSandDepth = 0.3;
-        this.channelLength = 9;
-        this.channelLift = 0.5;
+        this.channelFlare = 0.12;
         this.vertices = [{ x: 0, z: 0 }];
         this.triangles = [];
         this.ringVertices = [];
@@ -19,13 +18,14 @@ class TerrainGrid {
 
         for (let r = 1; r <= this.rings; r++) {
             const radius = this.radius * r / this.rings;
-            const sectors = Math.max(3, Math.round(Math.PI * radius / this.spacing));
-            const offset = r === this.rings ? 0 : (r % 2 ? 0.5 : -0.5) * Math.PI / sectors;
+            const sectors = r === this.rings
+                ? 8 * Math.round(2 * Math.PI * radius / this.spacing / 8)
+                : Math.max(6, Math.round(2 * Math.PI * radius / this.spacing));
+            const offset = r === this.rings ? 0 : (r % 2 ? 0.5 : -0.5) * 2 * Math.PI / sectors;
             const ring = [];
             const angles = [];
-            for (let s = 0; s <= sectors; s++) {
-                const baseAngle = Math.PI * s / sectors;
-                const angle = baseAngle + offset * Math.sin(baseAngle);
+            for (let s = 0; s < sectors; s++) {
+                const angle = 2 * Math.PI * s / sectors + offset;
                 ring.push(this.vertices.length);
                 angles.push(angle);
                 this.vertices.push({ x: radius * Math.cos(angle), z: -radius * Math.sin(angle) });
@@ -34,33 +34,52 @@ class TerrainGrid {
             this.ringAngles.push(angles);
         }
 
-        this.sectors = this.ringVertices[this.rings - 1].length - 1;
+        this.sectors = this.ringVertices[this.rings - 1].length;
         const firstRing = this.ringVertices[0];
-        for (let s = 0; s < firstRing.length - 1; s++) {
-            this.triangles.push([0, firstRing[s], firstRing[s + 1]]);
+        for (let s = 0; s < firstRing.length; s++) {
+            this.triangles.push([0, firstRing[s], firstRing[(s + 1) % firstRing.length]]);
         }
         for (let r = 0; r < this.rings - 1; r++) {
             const inner = this.ringVertices[r];
             const outer = this.ringVertices[r + 1];
             const innerAngles = this.ringAngles[r];
             const outerAngles = this.ringAngles[r + 1];
+            // Shift each ring to its first non-negative angle and close the seam.
+            const ordered = (indices, angles) => indices.map((index, k) => ({
+                index, angle: (angles[k] + 2 * Math.PI) % (2 * Math.PI)
+            })).sort((a, b) => a.angle - b.angle);
+            const a = ordered(inner, innerAngles);
+            const b = ordered(outer, outerAngles);
             let i = 0, j = 0;
-            while (i < inner.length - 1 || j < outer.length - 1) {
-                const nextInner = i < inner.length - 1 ? innerAngles[i + 1] : Infinity;
-                const nextOuter = j < outer.length - 1 ? outerAngles[j + 1] : Infinity;
-                if (Math.abs(nextInner - nextOuter) < 1e-12) {
-                    this.triangles.push([inner[i], inner[i + 1], outer[j]]);
-                    this.triangles.push([inner[i + 1], outer[j + 1], outer[j]]);
-                    i++;
-                    j++;
-                } else if (nextInner < nextOuter) {
-                    this.triangles.push([inner[i], inner[i + 1], outer[j]]);
+            // Start at the last vertices before angle zero.
+            while (i < a.length || j < b.length) {
+                const nextInner = i < a.length ? a[i].angle : Infinity;
+                const nextOuter = j < b.length ? b[j].angle : Infinity;
+                const currentInner = a[(i + a.length - 1) % a.length].index;
+                const currentOuter = b[(j + b.length - 1) % b.length].index;
+                if (nextInner <= nextOuter) {
+                    this.triangles.push([currentInner, currentOuter, a[i].index]);
                     i++;
                 } else {
-                    this.triangles.push([inner[i], outer[j + 1], outer[j]]);
+                    this.triangles.push([currentInner, currentOuter, b[j].index]);
                     j++;
                 }
             }
+        }
+
+        const outer = this.ringVertices[this.rings - 1];
+        this.erodibleCount = outer[0];
+        const square = [];
+        for (const index of outer) {
+            const point = this.vertices[index];
+            const factor = this.halfSize / Math.max(Math.abs(point.x), Math.abs(point.z));
+            square.push(this.vertices.length);
+            this.vertices.push({ x: point.x * factor, z: point.z * factor });
+        }
+        for (let s = 0; s < this.sectors; s++) {
+            const next = (s + 1) % this.sectors;
+            this.triangles.push([outer[s], square[s], outer[next]]);
+            this.triangles.push([outer[next], square[s], square[next]]);
         }
 
         const count = this.vertices.length;
@@ -73,6 +92,14 @@ class TerrainGrid {
         this.sediment = new Float64Array(count);
         this.velocityX = new Float64Array(count);
         this.velocityY = new Float64Array(count);
+        this.flowHistory = new Float32Array(count);
+        this.vegetation = new Float32Array(count);
+        this.mushroomSites = [];
+        for (let i = 0; i < this.erodibleCount; i++) {
+            const hash = Math.imul(i ^ (i >>> 8), 0x45d9f3b) >>> 0;
+            if (hash < 0.04 * 0x100000000) this.mushroomSites.push(i);
+        }
+        this.mushrooms = new Float32Array(this.mushroomSites.length);
         this.vertexArea = new Float64Array(count);
         this.bins = new Map();
         this.binSize = 1;
@@ -114,17 +141,13 @@ class TerrainGrid {
         this.initialize();
     }
 
-    // Funnel sloping towards the outlet; the flanks near the centre are raised
-    // so that a flared escape channel (floor on the funnel slope) leads to the sink.
     bedrockHeight(x, z) {
-        const r = Math.hypot(x, z);
-        let lift = 0;
-        if (r < this.channelLength) {
-            const width = this.sinkRadius + 0.22 * r;
-            const t = Math.min(1, Math.abs(x) / width);
-            lift = this.channelLift * (1 - r / this.channelLength) * t * t * (3 - 2 * t);
-        }
-        return this.slope * r + lift;
+        const cone = this.slope * Math.min(this.radius, Math.hypot(x, z));
+        if (z <= 0) return cone;
+        const width = this.sinkRadius + this.channelFlare * z;
+        const t = Math.max(0, Math.min(1, Math.abs(x) / width));
+        const blend = t * t * (3 - 2 * t);
+        return -this.slope * z * (1 - blend) + cone * blend;
     }
 
     initialize() {
@@ -133,6 +156,9 @@ class TerrainGrid {
         this.sediment.fill(0);
         this.velocityX.fill(0);
         this.velocityY.fill(0);
+        this.flowHistory.fill(0);
+        this.vegetation.fill(0);
+        this.mushrooms.fill(0);
         this.energyHistory = [];
         this.totalEnergy = 0;
     }
@@ -189,12 +215,15 @@ class TerrainGrid {
 
     toJSON() {
         return {
-            version: '9.0',
-            topology: 'semicircle-sunflower-hex-v1',
+            version: '10.0',
+            topology: 'disk-square-polar-v1',
             timestamp: new Date().toISOString(),
             elevation: Array.from(this.elevation),
             waterDepth: Array.from(this.waterDepth),
             sediment: Array.from(this.sediment),
+            flowHistory: Array.from(this.flowHistory),
+            vegetation: Array.from(this.vegetation),
+            mushrooms: Array.from(this.mushrooms),
             particles: this.particles.map(p => ({ ...p })),
             metadata: { totalEnergy: this.totalEnergy, convergenceChecked: this.checkConvergence() }
         };
@@ -205,18 +234,44 @@ class TerrainGrid {
         const validParticles = Array.isArray(json.particles) && json.particles.length === this.particles.length &&
             json.particles.every(p => p && [p.x, p.z, p.vx, p.vz, p.sediment].every(Number.isFinite) &&
                 p.sediment >= 0 && this.locate(p.x, p.z));
-        if (json.version !== '9.0' || json.topology !== 'semicircle-sunflower-hex-v1' || !validParticles ||
+        if (json.version !== '10.0' || json.topology !== 'disk-square-polar-v1' || !validParticles ||
             arrays.some(a => !Array.isArray(a) || a.length !== this.elevation.length || !a.every(Number.isFinite))) {
-            console.warn('Saved terrain is incompatible with the semi-circular mesh');
+            console.warn('Saved terrain is incompatible with the circular mesh');
             return false;
         }
         if (json.elevation.some((height, i) => height < this.bedrock[i])) {
             console.warn('Saved terrain extends below the bedrock');
             return false;
         }
+        if (json.elevation.some((height, i) =>
+            i >= this.erodibleCount && height !== this.bedrock[i] + this.initialSandDepth)) {
+            console.warn('Saved terrain modifies the fixed surround');
+            return false;
+        }
+        for (const [name, max] of [['flowHistory', Infinity], ['vegetation', 1]]) {
+            const values = json[name];
+            if (values !== undefined && (!Array.isArray(values) || values.length !== this.elevation.length ||
+                values.some((value, i) => !Number.isFinite(value) || value < 0 || value > max ||
+                    (i >= this.erodibleCount && value !== 0)))) {
+                console.warn(`Saved terrain has invalid ${name}`);
+                return false;
+            }
+            if (json.mushrooms !== undefined && (!Array.isArray(json.mushrooms) ||
+                json.mushrooms.length !== this.mushrooms.length ||
+                json.mushrooms.some(value => !Number.isFinite(value) || value < 0 || value > 1))) {
+                console.warn('Saved terrain has invalid mushrooms');
+                return false;
+            }
+        }
         this.elevation.set(json.elevation);
         this.waterDepth.set(json.waterDepth);
         this.sediment.set(json.sediment);
+        this.flowHistory.fill(0);
+        this.vegetation.fill(0);
+        this.mushrooms.fill(0);
+        if (json.flowHistory !== undefined) this.flowHistory.set(json.flowHistory);
+        if (json.vegetation !== undefined) this.vegetation.set(json.vegetation);
+        if (json.mushrooms !== undefined) this.mushrooms.set(json.mushrooms);
         this.particles.splice(0, this.particles.length, ...json.particles.map(p => ({ ...p })));
         return true;
     }

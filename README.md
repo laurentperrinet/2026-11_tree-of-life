@@ -10,21 +10,20 @@
 
 ## Current browser simulation
 
-The browser models an erodible semicircular bed with exactly 8,196 triangular
-faces. The fixed, non-erodible base slopes uniformly in the radial direction
-from the arc to the sink at height zero. It is initially covered by a
-uniform layer of sand 0.3 simulation units deep; the simulated terrain
-elevation is the base height plus the sand thickness. The surrounding apron
-and raised edge are fixed; only the sand surface evolves.
-The base has a radial slope of 0.09.
-The outer mesh vertices lie on the arc; the straight edges between them
-approximate it by a polygon. Parcels are injected just inside, and reflected
-at, that same polygonal boundary.
+The browser models an erodible circular bed within a fixed square surround.
+Its solid base forms an inverted cone of radial slope 0.09, except for a
+channel that widens towards the bottom of the square and slopes down from the
+centre to the sink. Initially the bed is covered by a uniform layer of sand
+0.3 simulation units deep; only the interior of the disk evolves. The outer
+ring and square surround remain fixed. The circular edge is a polygon whose
+vertices lie on the disk boundary.
 
 Blue spheres represent a fixed number of water parcels. Gravity follows the
-local slope of each triangle, with friction. The straight edge reflects water
-except at the sink. On reaching the sink, each parcel is reintroduced at a
-uniformly random position along the arc, retaining its sediment. The initial
+local slope of each triangle, with friction. The square boundary reflects water
+except at the sink in the middle of its bottom edge. On reaching the sink, each
+parcel is reintroduced three mesh rings inside the disk at a uniformly random angle,
+retaining its sediment. Parcels can also move over the fixed surround, but
+cannot exchange sand with it. The initial
 parcels are distributed across the bed so the flow is immediately visible.
 Transport capacity increases with speed: moving parcels pick up sand when
 below capacity, and slowing or stationary parcels deposit their load. Parcels
@@ -36,13 +35,12 @@ Sand also avalanches between neighboring mesh vertices when the slope along an
 edge exceeds an angle of repose of 34 degrees. These local transfers conserve
 sand volume and never remove the underlying bedrock. This is a simplified
 granular relaxation, not a full model of wet sand or fluid mechanics.
-The elevation view darkens areas actually eroded below their initial height.
 A fixed, sloping non-erodible layer limits erosion at each vertex; sediment
-can still accumulate on it. Exposed bedrock is shown in grey. Bed
+can still accumulate on it inside the disk. Bed
 volume plus carried sediment is conserved by these exchanges and by recycling.
 
 `+`/`-` adjust the circulation rate and the arrow keys adjust simulation speed;
-`D` switches between elevation, flow and sediment views. This is a simplified
+`D` switches between elevation, sand depth, flow and sediment views. This is a simplified
 particle model: it does not solve the shallow-water equations or model
 realistic fluid dynamics, and branching is not guaranteed. Remote terrain merges,
 if configured, are external modifications and do not conserve this local
@@ -50,7 +48,7 @@ sediment balance.
 
 The terrain uses a polar mesh with staggered, variable-density rings and
 approximately hexagonal spacing inspired by sunflower seed patterns. It has
-over 4,096 vertices and the `semicircle-sunflower-hex-v1` save topology; saves
+over 4,096 vertices and the `disk-square-polar-v1` save topology; saves
 from older meshes are not loaded.
 Test the browser model with `node --test tests/terrain-physics.test.js`.
 
@@ -114,6 +112,11 @@ The GitHub Pages client still needs integration and end-to-end testing.
 An interactive web-based simulation of water-driven terrain erosion creating natural branching patterns, inspired by the "Tree of Life" photograph from Iceland. Each browser visitor contributes to building a shared terrain through a collaborative, persistent GitHub-backed system.
 
 The current simulation is an exploratory particle model, not a validated hydrodynamic solver.
+In the elevation view, vegetation grows on sandy mesh vertices near sustained
+water flow but away from its strongest paths. It remains rooted as water moves;
+its coverage and recent flow history are saved with the terrain and cleared on reset.
+Ochre-to-violet mushrooms grow on sandy, low-flow sites beside the vegetation.
+Their growth is rooted and saved with the terrain as well.
 
 ## 🎯 Quick Start (5 Minutes)
 

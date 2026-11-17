@@ -16,6 +16,18 @@ class PhysicsEngine {
         this.particleRadius = 0.105;
         this.maxSpeed = 3;
         this.sandReposeSlope = Math.tan(34 * Math.PI / 180);
+        this.nearbyFlow = new Float32Array(grid.elevation.length);
+        this.flowScratch = new Float32Array(grid.elevation.length);
+        this.flowEdgeWeights = Float32Array.from(grid.edges, edge => Math.exp(-edge.length / 0.6));
+        this.vegetationElapsed = 0;
+        this.mushroomNeighbors = grid.mushroomSites.map(() => []);
+        const siteAtVertex = new Int32Array(grid.elevation.length).fill(-1);
+        grid.mushroomSites.forEach((vertex, site) => { siteAtVertex[vertex] = site; });
+        for (const edge of grid.edges) {
+            if (edge.a >= grid.erodibleCount || edge.b >= grid.erodibleCount) continue;
+            if (siteAtVertex[edge.a] >= 0) this.mushroomNeighbors[siteAtVertex[edge.a]].push(edge.b);
+            if (siteAtVertex[edge.b] >= 0) this.mushroomNeighbors[siteAtVertex[edge.b]].push(edge.a);
+        }
         this.particles = [];
         this.createParticles();
     }
@@ -33,8 +45,8 @@ class PhysicsEngine {
     }
 
     reinject(particle, fraction = Math.random()) {
-        const angle = Math.PI * fraction;
-        const radius = this.arcBoundary(angle).radius * 0.999;
+        const angle = 2 * Math.PI * fraction;
+        const radius = this.arcBoundary(angle).radius - 3 * this.grid.radius / this.grid.rings;
         particle.x = radius * Math.cos(angle);
         particle.z = -radius * Math.sin(angle);
         particle.vx = 0;
@@ -42,11 +54,12 @@ class PhysicsEngine {
     }
 
     arcBoundary(angle) {
-        const width = Math.PI / this.grid.sectors;
-        const sector = Math.min(this.grid.sectors - 1, Math.max(0, Math.floor(angle / width)));
+        const width = 2 * Math.PI / this.grid.sectors;
+        const normalized = ((angle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+        const sector = Math.min(this.grid.sectors - 1, Math.floor(normalized / width));
         const normalAngle = (sector + 0.5) * width;
         return {
-            radius: this.grid.radius * Math.cos(width / 2) / Math.cos(angle - normalAngle),
+            radius: this.grid.radius * Math.cos(width / 2) / Math.cos(normalized - normalAngle),
             nx: Math.cos(normalAngle),
             nz: -Math.sin(normalAngle)
         };
@@ -78,7 +91,69 @@ class PhysicsEngine {
                 grid.velocityY[index] += particle.vz * weight;
             });
         }
+        this.updateVegetation(dt);
         grid.calculateEnergy();
+    }
+
+    updateVegetation(dt) {
+        if (dt <= 0) return;
+        const grid = this.grid;
+        const alpha = 1 - Math.exp(-dt / 20);
+        for (let i = 0; i < grid.erodibleCount; i++) {
+            const flux = grid.waterDepth[i] > 0
+                ? grid.waterDepth[i] * Math.hypot(grid.velocityX[i], grid.velocityY[i]) : 0;
+            grid.flowHistory[i] += alpha * (flux - grid.flowHistory[i]);
+        }
+        this.vegetationElapsed += dt;
+        if (this.vegetationElapsed < 0.4) return;
+        const growthTime = this.vegetationElapsed;
+        this.vegetationElapsed = 0;
+        this.nearbyFlow.set(grid.flowHistory);
+        let nearby = this.nearbyFlow;
+        let scratch = this.flowScratch;
+        // Spread the sustained flow across a few mesh edges to reach the channel banks.
+        for (let pass = 0; pass < 4; pass++) {
+            scratch.set(nearby);
+            for (let j = 0; j < grid.edges.length; j++) {
+                const edge = grid.edges[j];
+                if (edge.a >= grid.erodibleCount || edge.b >= grid.erodibleCount) continue;
+                const weight = this.flowEdgeWeights[j];
+                scratch[edge.a] = Math.max(scratch[edge.a], nearby[edge.b] * weight);
+                scratch[edge.b] = Math.max(scratch[edge.b], nearby[edge.a] * weight);
+            }
+            [nearby, scratch] = [scratch, nearby];
+        }
+        const growthRate = 1 - Math.exp(-growthTime / 12);
+        for (let i = 0; i < grid.erodibleCount; i++) {
+            if (grid.elevation[i] <= grid.bedrock[i] + 1e-8) continue;
+            const wetness = Math.min(1, Math.max(0, (nearby[i] - 0.002) / 0.013));
+            const bank = Math.min(1, Math.max(0, (0.8 - grid.flowHistory[i] / Math.max(nearby[i], 1e-12)) / 0.6));
+            const target = wetness * bank;
+            if (target > grid.vegetation[i]) {
+                grid.vegetation[i] += (target - grid.vegetation[i]) * growthRate;
+            }
+        }
+        this.updateMushrooms(growthTime, nearby);
+    }
+
+    updateMushrooms(dt, nearbyFlow) {
+        const grid = this.grid;
+        const growthRate = 1 - Math.exp(-dt / 20);
+        for (let site = 0; site < grid.mushroomSites.length; site++) {
+            const i = grid.mushroomSites[site];
+            if (grid.elevation[i] <= grid.bedrock[i] + 1e-8 ||
+                grid.flowHistory[i] > 0.02 || grid.flowHistory[i] > nearbyFlow[i] * 0.45 ||
+                grid.vegetation[i] >= 0.65) continue;
+            let neighborGrowth = 0;
+            for (const neighbor of this.mushroomNeighbors[site]) {
+                neighborGrowth = Math.max(neighborGrowth, grid.vegetation[neighbor]);
+            }
+            if (neighborGrowth <= 0.04) continue;
+            const target = Math.min(1, (neighborGrowth - 0.04) / 0.2);
+            if (target > grid.mushrooms[site]) {
+                grid.mushrooms[site] += (target - grid.mushrooms[site]) * growthRate;
+            }
+        }
     }
 
     relaxSand(dt) {
@@ -87,6 +162,7 @@ class PhysicsEngine {
         for (let pass = 0; pass < 4; pass++) {
             for (let j = 0; j < grid.edges.length; j++) {
                 const edge = grid.edges[pass % 2 === 0 ? j : grid.edges.length - 1 - j];
+                if (edge.a >= grid.erodibleCount || edge.b >= grid.erodibleCount) continue;
                 let high = edge.a;
                 let low = edge.b;
                 if (grid.elevation[high] < grid.elevation[low]) [high, low] = [low, high];
@@ -170,6 +246,7 @@ class PhysicsEngine {
         if (exchange < 0) exchange = -Math.min(particle.sediment, -exchange);
         let actualExchange = 0;
         sample.face.forEach((index, i) => {
+            if (index >= grid.erodibleCount) return;
             const amount = exchange * Math.max(0, sample.weights[i]);
             const previousHeight = grid.elevation[index];
             const height = Math.max(grid.bedrock[index], previousHeight - amount / grid.vertexArea[index]);
@@ -181,32 +258,25 @@ class PhysicsEngine {
 
         let x = particle.x + particle.vx * dt;
         let z = particle.z + particle.vz * dt;
-        // Check the whole path up to the straight edge, not just its endpoint.
-        const edgeFraction = z >= 0 ? -particle.z / (z - particle.z) : 1;
-        const dx = (x - particle.x) * edgeFraction;
-        const dz = (z - particle.z) * edgeFraction;
-        const lengthSquared = dx * dx + dz * dz;
-        const closest = lengthSquared > 0
-            ? Math.max(0, Math.min(1, -(particle.x * dx + particle.z * dz) / lengthSquared))
-            : 0;
-        if (Math.hypot(particle.x + closest * dx, particle.z + closest * dz) < grid.sinkRadius) {
-            this.reinject(particle);
-            return;
-        }
-        if (z >= 0) {
-            z = -0.000001;
-            particle.vz = -Math.abs(particle.vz);
-        }
-        const radius = Math.hypot(x, z);
-        const boundary = this.arcBoundary(Math.atan2(-z, x));
-        if (radius > boundary.radius * 0.999999) {
-            x *= boundary.radius * 0.999999 / radius;
-            z *= boundary.radius * 0.999999 / radius;
-            const outward = particle.vx * boundary.nx + particle.vz * boundary.nz;
-            if (outward > 0) {
-                particle.vx -= 2 * outward * boundary.nx;
-                particle.vz -= 2 * outward * boundary.nz;
+        if (z >= grid.halfSize) {
+            const fraction = (grid.halfSize - particle.z) / (z - particle.z);
+            const exitX = particle.x + fraction * (x - particle.x);
+            if (Math.abs(exitX) < grid.sinkRadius) {
+                this.reinject(particle);
+                return;
             }
+            z = grid.halfSize - 0.000001;
+            particle.vz = -Math.abs(particle.vz);
+        } else if (z <= -grid.halfSize) {
+            z = -grid.halfSize + 0.000001;
+            particle.vz = Math.abs(particle.vz);
+        }
+        if (x >= grid.halfSize) {
+            x = grid.halfSize - 0.000001;
+            particle.vx = -Math.abs(particle.vx);
+        } else if (x <= -grid.halfSize) {
+            x = -grid.halfSize + 0.000001;
+            particle.vx = Math.abs(particle.vx);
         }
         particle.x = x;
         particle.z = z;
@@ -214,6 +284,7 @@ class PhysicsEngine {
 
     reset() {
         this.grid.initialize();
+        this.vegetationElapsed = 0;
         this.createParticles();
     }
 }
