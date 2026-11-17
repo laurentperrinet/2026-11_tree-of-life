@@ -8,6 +8,9 @@ export const MESH_SURROUND_SLOPE = 0.3;
 export const MESH_INITIAL_SAND_DEPTH = 0.3;
 export const MESH_CHANNEL_FLARE = 0.12;
 export const MAX_REQUESTS_PER_SYNC = 2;
+export const MESH_SIGNATURE = JSON.stringify([
+    'disk-square-polar-v2', MESH_RADIUS, MESH_HALF_SIZE, MESH_RINGS, MESH_SPACING
+]);
 
 export function createInitialMesh() {
     const vertices = [{ x: 0, z: 0 }];

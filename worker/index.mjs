@@ -1,10 +1,11 @@
-import { createInitialMesh, getSyncIntervalMs } from './mesh.mjs';
+import { createInitialMesh, getSyncIntervalMs, MESH_SIGNATURE } from './mesh.mjs';
 
 const ACTIVE_CLIENT_MS = 24 * 60 * 60 * 1000;
 const DAILY_REQUEST_BUDGET = 80_000;
 const MAX_COMPRESSED_BYTES = 300_000;
 const MAX_DELTA = 10;
 const STATE_SCHEMA_VERSION = 2;
+const LEGACY_MESH_SIGNATURE = JSON.stringify(['disk-square-polar-v2', 25, 30, 125, 0.2]);
 const ORIGIN = 'https://laurentperrinet.github.io';
 const FRONTEND_URL = `${ORIGIN}/2026-11_tree-of-life/`;
 
@@ -23,6 +24,7 @@ function createState(version = 0) {
     const mesh = createInitialMesh();
     return {
         schemaVersion: STATE_SCHEMA_VERSION,
+        meshSignature: MESH_SIGNATURE,
         version,
         elevation: mesh.elevation,
         bedrock: mesh.bedrock,
@@ -73,7 +75,10 @@ async function readDelta(request, expectedLength) {
     if (typeof DecompressionStream !== 'function') {
         throw new HttpError(503, 'Gzip decompression is unavailable');
     }
-    const compressed = await readStreamLimited(request.body, MAX_COMPRESSED_BYTES);
+    const maxCompressedBytes = Math.max(
+        MAX_COMPRESSED_BYTES, expectedLength + Math.ceil(expectedLength / 100) + 128
+    );
+    const compressed = await readStreamLimited(request.body, maxCompressedBytes);
     let decompressed;
     try {
         decompressed = await readStreamLimited(
@@ -167,7 +172,7 @@ export default {
             'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
             'Access-Control-Allow-Headers': [
                 'Content-Type', 'Authorization', 'X-Collaborator-ID',
-                'X-Terrain-Version', 'X-Payload-Encoding'
+                'X-Terrain-Version', 'X-Payload-Encoding', 'X-Mesh-Signature'
             ].join(', '),
             'Vary': 'Origin'
         };
@@ -234,7 +239,17 @@ export class Simulation {
             stored.activeClients && typeof stored.activeClients === 'object' &&
             stored.contributions && typeof stored.contributions === 'object' &&
             Array.isArray(stored.contributionIds)) {
-            return stored;
+            if (stored.meshSignature === MESH_SIGNATURE) return stored;
+            if (stored.meshSignature === undefined && MESH_SIGNATURE === LEGACY_MESH_SIGNATURE) {
+                const mesh = createInitialMesh();
+                if (stored.erodibleCount === mesh.erodibleCount &&
+                    stored.bedrock.length === mesh.bedrock.length &&
+                    stored.bedrock.every((height, i) => height === mesh.bedrock[i])) {
+                    stored.meshSignature = MESH_SIGNATURE;
+                    await this.ctx.storage.put('state', stored);
+                    return stored;
+                }
+            }
         }
         const version = Number.isSafeInteger(stored?.version) ? stored.version + 1 : 0;
         const state = createState(version);
@@ -255,6 +270,7 @@ export class Simulation {
         if (path === '/api/admin/reset' && request.method === 'POST') {
             const mesh = createInitialMesh();
             state.schemaVersion = STATE_SCHEMA_VERSION;
+            state.meshSignature = MESH_SIGNATURE;
             state.version++;
             state.elevation = mesh.elevation;
             state.bedrock = mesh.bedrock;
@@ -270,6 +286,11 @@ export class Simulation {
     }
 
     async sync(request, state, delta) {
+        const meshSignature = request.headers.get('X-Mesh-Signature');
+        if ((meshSignature !== null && meshSignature !== MESH_SIGNATURE) ||
+            (delta && meshSignature === null && MESH_SIGNATURE !== LEGACY_MESH_SIGNATURE)) {
+            throw new HttpError(409, 'Incompatible terrain mesh; reload the application');
+        }
         const clientId = validateContributorId(request.headers.get('X-Collaborator-ID'));
         const now = Date.now();
         const versionHeader = request.headers.get('X-Terrain-Version');
@@ -354,6 +375,7 @@ export class Simulation {
         const activeCollaborators = Object.keys(state.activeClients).length;
         const result = {
             version: state.version,
+            meshSignature: MESH_SIGNATURE,
             activeCollaborators,
             acceptedContributions: state.contributionIds.length,
             syncIntervalMs: getSyncIntervalMs(activeCollaborators, DAILY_REQUEST_BUDGET),

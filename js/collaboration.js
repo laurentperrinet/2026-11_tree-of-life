@@ -20,6 +20,7 @@ class CollaborativeSync {
         this.inFlight = null;
         this.failureCount = 0;
         this.resetting = false;
+        this.meshSignatureSupported = false;
     }
 
     getClientId() {
@@ -74,6 +75,7 @@ class CollaborativeSync {
 
     async performSync() {
         const headers = { 'X-Collaborator-ID': this.clientId };
+        if (this.meshSignatureSupported) headers['X-Mesh-Signature'] = this.terrain.meshSignature();
         let body;
         let submittedVersion = null;
         if (this.version !== null) headers['X-Terrain-Version'] = String(this.version);
@@ -124,6 +126,12 @@ class CollaborativeSync {
             !Number.isFinite(data.syncIntervalMs) || data.syncIntervalMs < 1) {
             throw new Error('Collaboration Worker returned invalid synchronization metadata');
         }
+        const signature = this.terrain.meshSignature();
+        if (data.meshSignature === undefined
+            ? signature !== LEGACY_TERRAIN_MESH_SIGNATURE
+            : data.meshSignature !== signature) {
+            throw new Error('Collaboration Worker returned an incompatible terrain mesh');
+        }
 
         if (this.version !== data.version || this.baseElevation === null) {
             if (!Array.isArray(data.terrain?.elevation) ||
@@ -139,6 +147,7 @@ class CollaborativeSync {
         }
         this.activeCollaborators = data.activeCollaborators;
         this.syncIntervalMs = Math.max(300_000, data.syncIntervalMs);
+        this.meshSignatureSupported = data.meshSignature !== undefined;
     }
 
     async reset(token) {

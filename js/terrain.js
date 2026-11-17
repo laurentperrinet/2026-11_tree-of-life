@@ -1,3 +1,5 @@
+const LEGACY_TERRAIN_MESH_SIGNATURE = JSON.stringify(['disk-square-polar-v2', 25, 30, 125, 0.2]);
+
 /**
  * Circular erodible bed with staggered polar rings and a fixed square surround.
  */
@@ -218,10 +220,15 @@ class TerrainGrid {
         };
     }
 
+    meshSignature() {
+        return JSON.stringify(['disk-square-polar-v2', this.radius, this.halfSize, this.rings, this.spacing]);
+    }
+
     toJSON() {
         return {
             version: '11.0',
             topology: 'disk-square-polar-v2',
+            meshSignature: this.meshSignature(),
             timestamp: new Date().toISOString(),
             elevation: Array.from(this.elevation),
             waterDepth: Array.from(this.waterDepth),
@@ -241,7 +248,9 @@ class TerrainGrid {
                 (p.burstProgress === undefined ||
                     (Number.isFinite(p.burstProgress) && p.burstProgress >= 0 && p.burstProgress < 1)) &&
                 this.locate(p.x, p.z));
-        if (!['10.0', '11.0'].includes(json.version) || json.topology !== 'disk-square-polar-v2' || !validParticles ||
+        const savedMeshSignature = json.meshSignature ?? LEGACY_TERRAIN_MESH_SIGNATURE;
+        if (!['10.0', '11.0'].includes(json.version) || json.topology !== 'disk-square-polar-v2' ||
+            savedMeshSignature !== this.meshSignature() || !validParticles ||
             arrays.some(a => !Array.isArray(a) || a.length !== this.elevation.length || !a.every(Number.isFinite))) {
             console.warn('Saved terrain is incompatible with the circular mesh');
             return false;

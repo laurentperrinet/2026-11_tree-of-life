@@ -73,8 +73,11 @@ The Worker stores the shared elevation array for the browser's
 `disk-square-polar-v2` mesh in a SQLite-backed Durable Object. Its
 `worker/mesh.mjs` initialization mirrors the mesh vertex order and initial
 bedrock/sand profile used by `js/terrain.js`.
-Deploy the Worker and browser update together: the Worker resets its shared
-terrain on first use of the new schema, and older clients are incompatible.
+Terrain saves and shared state record the mesh dimensions and resolution;
+changing the radius, square size, ring count or spacing automatically starts a
+fresh terrain and discards pending contributions. Local biology remains
+independent. Deploy the Worker and browser update together when changing the
+mesh: older clients may be incompatible.
 
 Each browser has a random local ID. A single `POST /api/sync` request both
 submits a compressed elevation delta and returns the latest shared state.

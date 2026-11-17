@@ -10,6 +10,20 @@ for (const name of ['terrain', 'physics', 'biology']) {
 }
 const { TerrainGrid, PhysicsEngine, BiologyGrid } = vm.runInContext('({ TerrainGrid, PhysicsEngine, BiologyGrid })', context);
 
+test('saved terrain is rejected when mesh dimensions change, even at the same vertex count', () => {
+    const grid = new TerrainGrid();
+    new PhysicsEngine(grid);
+    const saved = grid.toJSON();
+    grid.elevation[0] += 0.1;
+    assert.equal(grid.fromJSON(saved), true);
+    grid.radius += 1;
+    assert.equal(grid.fromJSON(saved), false);
+    delete saved.meshSignature;
+    assert.equal(grid.fromJSON(saved), false);
+    grid.radius -= 1;
+    assert.equal(grid.fromJSON(saved), true);
+});
+
 function totalSediment(grid, physics) {
     return grid.elevation.reduce((sum, height, i) => sum + (height - grid.bedrock[i]) * grid.vertexArea[i], 0) +
         physics.particles.reduce((sum, particle) => sum + particle.sediment, 0);

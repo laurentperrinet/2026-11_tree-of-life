@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import { deepStrictEqual, equal, ok } from 'node:assert/strict';
 import worker, { Simulation } from './index.mjs';
-import { createInitialMesh, getSyncIntervalMs } from './mesh.mjs';
+import { createInitialMesh, getSyncIntervalMs, MESH_SIGNATURE } from './mesh.mjs';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
@@ -28,7 +28,7 @@ function harness(initialState) {
         }
     };
     async function request(path, {
-        method = 'GET', body, token, origin, clientId, version, encoding
+        method = 'GET', body, token, origin, clientId, version, encoding, meshSignature
     } = {}) {
         const headers = {};
         if (body !== undefined) headers['Content-Type'] = 'application/octet-stream';
@@ -37,12 +37,13 @@ function harness(initialState) {
         if (clientId) headers['X-Collaborator-ID'] = clientId;
         if (version !== undefined) headers['X-Terrain-Version'] = String(version);
         if (encoding) headers['X-Payload-Encoding'] = encoding;
+        if (meshSignature) headers['X-Mesh-Signature'] = meshSignature;
         const response = await worker.fetch(new Request(`https://worker.example${path}`, {
             method, headers, body
         }), env);
         return { status: response.status, body: await response.json() };
     }
-    return { env, request };
+    return { env, request, storedState: () => values.get('state') };
 }
 
 async function compressedDelta(length, changes = {}) {
@@ -76,8 +77,47 @@ test('browser and Worker initialize the same higher-resolution terrain', () => {
     ok(grid.triangles.length > 64_100);
     equal(grid.vertices.length, mesh.elevation.length);
     equal(grid.erodibleCount, mesh.erodibleCount);
+    equal(grid.meshSignature(), MESH_SIGNATURE);
     deepStrictEqual(Array.from(grid.bedrock), Array.from(mesh.bedrock));
     deepStrictEqual(Array.from(grid.elevation), Array.from(mesh.elevation));
+});
+
+test('a changed mesh signature resets shared terrain and pending contributions once', async () => {
+    const mesh = createInitialMesh();
+    const old = {
+        schemaVersion: 2, meshSignature: 'previous mesh', version: 12,
+        elevation: Float64Array.from(mesh.elevation, height => height + 1),
+        bedrock: mesh.bedrock, erodibleCount: mesh.erodibleCount,
+        sumDelta: new Float64Array(mesh.elevation.length),
+        activeClients: {}, contributions: { [clientA]: true },
+        contributionIds: [clientA], windowEndsAt: 1
+    };
+    const { request } = harness(old);
+    const state = await request('/api/state');
+    equal(state.status, 200);
+    equal(state.body.version, 13);
+    equal(state.body.acceptedContributions, 0);
+    deepStrictEqual(state.body.terrain.elevation, Array.from(mesh.elevation));
+    equal((await request('/api/state')).body.version, 13);
+});
+
+test('existing unsigned state on the current mesh is preserved and upgraded', async () => {
+    const mesh = createInitialMesh();
+    mesh.elevation[0] += 0.1;
+    const old = {
+        schemaVersion: 2, version: 12,
+        elevation: mesh.elevation, bedrock: mesh.bedrock, erodibleCount: mesh.erodibleCount,
+        sumDelta: new Float64Array(mesh.elevation.length),
+        activeClients: {}, contributions: { [clientA]: true },
+        contributionIds: [clientA], windowEndsAt: 1
+    };
+    const { request, storedState } = harness(old);
+    const state = await request('/api/state');
+    equal(state.body.version, 12);
+    equal(state.body.acceptedContributions, 1);
+    equal(state.body.terrain.elevation[0], mesh.elevation[0]);
+    equal(storedState().meshSignature, MESH_SIGNATURE);
+    equal((await request('/api/state')).body.version, 12);
 });
 
 test('version 1 shared terrain is reset once when the mesh schema changes', async () => {
@@ -111,6 +151,17 @@ test('large realistic compressed contributions fit the higher-resolution mesh', 
     equal((await request('/api/sync', {
         method: 'POST', clientId: clientA, version: 0, encoding: 'gzip', body
     })).body.accepted, true);
+});
+
+test('contributions from an incompatible mesh are rejected', async () => {
+    const { request } = harness();
+    const mesh = createInitialMesh();
+    const response = await request('/api/sync', {
+        method: 'POST', clientId: clientA, version: 0, encoding: 'gzip',
+        meshSignature: 'different mesh', body: await compressedDelta(mesh.elevation.length, { 0: 0.1 })
+    });
+    equal(response.status, 409);
+    equal((await request('/api/state')).body.acceptedContributions, 0);
 });
 
 test('legacy Durable Object state migrates to the triangular mesh schema', async () => {

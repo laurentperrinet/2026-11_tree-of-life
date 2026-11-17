@@ -10,6 +10,7 @@ function harness() {
     const requests = [];
     let responseVersion = 4;
     let accepted = false;
+    let responseSignature = 'test mesh';
     const context = vm.createContext({
         console,
         crypto: webcrypto,
@@ -23,10 +24,12 @@ function harness() {
         Response,
         Float32Array,
         Float64Array,
+        LEGACY_TERRAIN_MESH_SIGNATURE: JSON.stringify(['disk-square-polar-v2', 25, 30, 125, 0.2]),
         fetch: async (url, options) => {
             requests.push({ url, options });
             const data = {
                 version: responseVersion,
+                meshSignature: responseSignature,
                 activeCollaborators: 2,
                 syncIntervalMs: 120_000,
                 accepted,
@@ -45,14 +48,15 @@ function harness() {
         context
     );
     const CollaborativeSync = vm.runInContext('CollaborativeSync', context);
-    const terrain = { elevation: Float64Array.from([1, 2]) };
+    const terrain = { elevation: Float64Array.from([1, 2]), meshSignature: () => 'test mesh' };
     const sync = new CollaborativeSync(terrain, { save: () => true }, {
         endpoint: 'https://worker.example/api/sync'
     });
     return {
         sync, terrain, requests,
         setAccepted(value) { accepted = value; },
-        setVersion(value) { responseVersion = value; }
+        setVersion(value) { responseVersion = value; },
+        setSignature(value) { responseSignature = value; }
     };
 }
 
@@ -70,6 +74,7 @@ test('sync sends one compressed delta per shared version and follows the budget 
     await h.sync.sync();
     assert.equal(h.requests[1].options.headers['X-Terrain-Version'], '4');
     assert.equal(h.requests[1].options.headers['X-Payload-Encoding'], 'gzip');
+    assert.equal(h.requests[1].options.headers['X-Mesh-Signature'], 'test mesh');
     const compressed = new Response(h.requests[1].options.body);
     const bytes = await new Response(
         compressed.body.pipeThrough(new DecompressionStream('gzip'))
@@ -78,6 +83,23 @@ test('sync sends one compressed delta per shared version and follows the budget 
 
     await h.sync.sync();
     assert.equal(h.requests[2].options.body, undefined);
+});
+
+test('sync rejects a different mesh before changing local terrain', async () => {
+    const h = harness();
+    h.setSignature('another mesh');
+    await assert.rejects(h.sync.sync(), /incompatible terrain mesh/);
+    assert.equal(h.sync.version, null);
+    assert.deepEqual(Array.from(h.terrain.elevation), [1, 2]);
+});
+
+test('the current mesh can still synchronize with the older Worker', async () => {
+    const h = harness();
+    h.terrain.meshSignature = () => JSON.stringify(['disk-square-polar-v2', 25, 30, 125, 0.2]);
+    h.setSignature(undefined);
+    await h.sync.sync();
+    await h.sync.sync();
+    assert.equal(h.requests[1].options.headers['X-Mesh-Signature'], undefined);
 });
 
 test('manual sync does not bypass the adaptive minimum interval', async () => {
