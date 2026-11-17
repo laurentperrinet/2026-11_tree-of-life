@@ -5,9 +5,9 @@ class TerrainRenderer {
     constructor(canvas) {
         this.canvas = canvas;
         this.scene = new THREE.Scene();
-        this.scene.background = new THREE.Color(0x0a0e27);
+        this.scene.background = new THREE.Color(0x05070d);
         this.camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 1000);
-        this.camera.position.set(0, 40, 35);
+        this.camera.position.set(0, 55, 20);
         this.camera.lookAt(0, 0, -10);
         this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
         this.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -41,7 +41,7 @@ class TerrainRenderer {
         geometry.setIndex(grid.triangles.flat());
         geometry.computeVertexNormals();
         this.terrainMesh = new THREE.Mesh(geometry, new THREE.MeshPhongMaterial({
-            vertexColors: true, side: THREE.DoubleSide, shininess: 8
+            vertexColors: true, side: THREE.DoubleSide, shininess: 25
         }));
         this.scene.add(this.terrainMesh);
         this.createSurround(grid);
@@ -66,7 +66,7 @@ class TerrainRenderer {
         apron.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
         apron.setIndex(indices);
         apron.computeVertexNormals();
-        this.scene.add(new THREE.Mesh(apron, new THREE.MeshPhongMaterial({ color: 0x747c78, side: THREE.DoubleSide })));
+        this.scene.add(new THREE.Mesh(apron, new THREE.MeshPhongMaterial({ color: 0x0c0d0f, side: THREE.DoubleSide })));
 
         const wallPositions = [];
         const wallIndices = [];
@@ -82,7 +82,7 @@ class TerrainRenderer {
         wall.setAttribute('position', new THREE.Float32BufferAttribute(wallPositions, 3));
         wall.setIndex(wallIndices);
         wall.computeVertexNormals();
-        this.scene.add(new THREE.Mesh(wall, new THREE.MeshPhongMaterial({ color: 0x555e5a, side: THREE.DoubleSide })));
+        this.scene.add(new THREE.Mesh(wall, new THREE.MeshPhongMaterial({ color: 0x15181a, side: THREE.DoubleSide })));
     }
 
     updateTerrainMesh(grid) {
@@ -105,19 +105,14 @@ class TerrainRenderer {
             }
         }
         const color = new THREE.Color();
+        const normals = this.terrainMesh.geometry.attributes.normal;
+        if (this.displayMode === 'elevation') this.updateMoisture(grid);
         for (let i = 0; i < grid.elevation.length; i++) {
             if (this.displayMode === 'elevation') {
-                const t = Math.max(0, Math.min(1, (grid.elevation[i] - grid.initialSandDepth) /
-                    (grid.radius * grid.slope)));
-                if (grid.elevation[i] <= grid.bedrock[i] + 1e-8) {
-                    color.setRGB(0.29, 0.32, 0.32);
-                } else {
-                    const initialHeight = grid.bedrock[i] + grid.initialSandDepth;
-                    const erosion = Math.max(0, Math.min(1, (initialHeight - grid.elevation[i]) / 0.08));
-                    const shade = 1 - 0.6 * erosion;
-                    color.setRGB((0.30 + 0.30 * t) * shade, (0.25 + 0.29 * t) * shade,
-                        (0.16 + 0.20 * t) * shade);
-                }
+                this.volcanicColor(grid, i, normals, color);
+            } else if (this.displayMode === 'sand depth') {
+                const depth = (grid.elevation[i] - grid.bedrock[i]) / grid.initialSandDepth;
+                this.deepColor(depth, color);
             } else {
                 const value = this.displayMode === 'flux'
                     ? grid.waterDepth[i] * Math.hypot(grid.velocityX[i], grid.velocityY[i])
@@ -129,6 +124,53 @@ class TerrainRenderer {
             colors.setXYZ(i, color.r, color.g, color.b);
         }
         colors.needsUpdate = true;
+    }
+
+    // Short running mean of water flux: vegetation follows the moving water instead of staying fixed.
+    updateMoisture(grid) {
+        const n = grid.elevation.length;
+        if (!this.moisture || this.moisture.length !== n) this.moisture = new Float32Array(n);
+        let max = 0;
+        const flux = new Float32Array(n);
+        for (let i = 0; i < n; i++) {
+            flux[i] = grid.waterDepth[i] * Math.hypot(grid.velocityX[i], grid.velocityY[i]);
+            max = Math.max(max, flux[i]);
+        }
+        this.fluxMax = Math.max(max, (this.fluxMax || 0) * 0.995);
+        for (let i = 0; i < n; i++) {
+            const f = this.fluxMax > 0 ? Math.sqrt(flux[i] / this.fluxMax) : 0;
+            this.moisture[i] += (f - this.moisture[i]) * 0.3;
+        }
+    }
+
+    // Black volcanic sand; phosphorescent green where little water flows, hue and glow
+    // varying with the surface angle and the flux.
+    volcanicColor(grid, i, normals, color) {
+        const m = this.moisture[i];
+        const t = performance.now() / 1000;
+        const shimmer = 0.85 + 0.15 * Math.sin(t * 1.5 + grid.vertices[i].x * 0.7 + grid.vertices[i].z * 0.5);
+        const smooth = (a, b, x) => { const u = Math.max(0, Math.min(1, (x - a) / (b - a))); return u * u * (3 - 2 * u); };
+        const growth = smooth(0.02, 0.12, m) * (1 - smooth(0.35, 0.8, m));
+        const ny = normals.getY(i);
+        const nx = normals.getX(i);
+        const facing = Math.max(0, Math.min(1, 0.5 + 0.9 * (nx * 0.4 + ny - 0.85)));
+        const hue = 0.17 + 0.17 * Math.min(1, m * 2.5) + 0.05 * (1 - facing);
+        const lightness = 0.07 + 0.5 * growth * shimmer * (0.35 + 0.65 * facing);
+        color.setHSL(hue, 0.95 * growth, lightness);
+        const rock = grid.elevation[i] <= grid.bedrock[i] + 1e-8 ? 0.035 : 0.018;
+        color.r += rock; color.g += rock; color.b += rock * 1.1;
+        if (m >= 0.8) color.lerp(new THREE.Color(0.05, 0.1, 0.14), smooth(0.8, 1, m) * 0.7);
+    }
+
+    // cmocean "deep": light for bare bedrock, dark for the full initial sand thickness.
+    deepColor(t, color) {
+        const stops = TerrainRenderer.DEEP;
+        const x = Math.max(0, Math.min(1, t)) * (stops.length - 1);
+        const k = Math.min(stops.length - 2, Math.floor(x));
+        const f = x - k;
+        color.setRGB(stops[k][0] + (stops[k + 1][0] - stops[k][0]) * f,
+            stops[k][1] + (stops[k + 1][1] - stops[k][1]) * f,
+            stops[k][2] + (stops[k + 1][2] - stops[k][2]) * f);
     }
 
     updateParticles(physics) {
@@ -152,7 +194,7 @@ class TerrainRenderer {
     }
 
     cycleDisplayMode() {
-        const modes = ['elevation', 'flux', 'sediment'];
+        const modes = ['elevation', 'sand depth', 'flux', 'sediment'];
         this.displayMode = modes[(modes.indexOf(this.displayMode) + 1) % modes.length];
     }
 
@@ -176,3 +218,8 @@ class TerrainRenderer {
         this.renderer.dispose();
     }
 }
+
+TerrainRenderer.DEEP = [[0.993, 0.994, 0.8], [0.866, 0.947, 0.73], [0.734, 0.902, 0.676], [0.596, 0.857, 0.645],
+    [0.47, 0.806, 0.639], [0.383, 0.747, 0.643], [0.334, 0.684, 0.641], [0.305, 0.62, 0.632], [0.283, 0.556, 0.619],
+    [0.264, 0.498, 0.605], [0.248, 0.436, 0.592], [0.242, 0.371, 0.578], [0.251, 0.303, 0.548], [0.255, 0.243, 0.464],
+    [0.232, 0.195, 0.36], [0.197, 0.149, 0.262], [0.156, 0.103, 0.173]];

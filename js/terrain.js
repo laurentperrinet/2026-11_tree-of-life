@@ -1,12 +1,12 @@
 /**
- * Semi-circular triangular bed. Coordinates are in the horizontal x/z plane;
- * the diameter is z = 0 and the outlet is at the origin.
+ * Semi-circular triangular bed. Polar rings use alternating angular offsets
+ * for a sunflower-like, approximately hexagonal point distribution.
  */
 class TerrainGrid {
     constructor() {
         this.radius = 25;
-        this.sectors = 64;
-        this.rings = 64;
+        this.rings = 100;
+        this.spacing = 0.25;
         this.sinkRadius = 0.8;
         this.slope = 0.09;
         this.initialSandDepth = 0.3;
@@ -14,38 +14,53 @@ class TerrainGrid {
         this.channelLift = 0.5;
         this.vertices = [{ x: 0, z: 0 }];
         this.triangles = [];
+        this.ringVertices = [];
+        this.ringAngles = [];
 
         for (let r = 1; r <= this.rings; r++) {
-            for (let s = 0; s <= this.sectors; s++) {
-                const angle = Math.PI * s / this.sectors;
-                const radius = this.radius * r / this.rings;
+            const radius = this.radius * r / this.rings;
+            const sectors = Math.max(3, Math.round(Math.PI * radius / this.spacing));
+            const offset = r === this.rings ? 0 : (r % 2 ? 0.5 : -0.5) * Math.PI / sectors;
+            const ring = [];
+            const angles = [];
+            for (let s = 0; s <= sectors; s++) {
+                const baseAngle = Math.PI * s / sectors;
+                const angle = baseAngle + offset * Math.sin(baseAngle);
+                ring.push(this.vertices.length);
+                angles.push(angle);
                 this.vertices.push({ x: radius * Math.cos(angle), z: -radius * Math.sin(angle) });
             }
-        }
-        const vertex = (r, s) => 1 + (r - 1) * (this.sectors + 1) + s;
-        for (let s = 0; s < this.sectors; s++) {
-            this.triangles.push([0, vertex(1, s), vertex(1, s + 1)]);
-        }
-        for (let r = 1; r < this.rings; r++) {
-            for (let s = 0; s < this.sectors; s++) {
-                this.triangles.push([vertex(r, s), vertex(r + 1, s), vertex(r, s + 1)]);
-                this.triangles.push([vertex(r, s + 1), vertex(r + 1, s), vertex(r + 1, s + 1)]);
-            }
+            this.ringVertices.push(ring);
+            this.ringAngles.push(angles);
         }
 
-        // Splitting 34 faces into three adds 68 faces to the 8,128-face mesh.
-        for (let i = 0; i < 34; i++) {
-            const ring = 2 + 3 * Math.floor(i / 2);
-            const sector = (17 * i) % this.sectors;
-            const faceIndex = this.sectors + 2 * ((ring - 1) * this.sectors + sector);
-            const face = this.triangles[faceIndex];
-            const a = this.vertices[face[0]];
-            const b = this.vertices[face[1]];
-            const c = this.vertices[face[2]];
-            const center = this.vertices.length;
-            this.vertices.push({ x: (a.x + b.x + c.x) / 3, z: (a.z + b.z + c.z) / 3 });
-            this.triangles[faceIndex] = [face[0], face[1], center];
-            this.triangles.push([face[1], face[2], center], [face[2], face[0], center]);
+        this.sectors = this.ringVertices[this.rings - 1].length - 1;
+        const firstRing = this.ringVertices[0];
+        for (let s = 0; s < firstRing.length - 1; s++) {
+            this.triangles.push([0, firstRing[s], firstRing[s + 1]]);
+        }
+        for (let r = 0; r < this.rings - 1; r++) {
+            const inner = this.ringVertices[r];
+            const outer = this.ringVertices[r + 1];
+            const innerAngles = this.ringAngles[r];
+            const outerAngles = this.ringAngles[r + 1];
+            let i = 0, j = 0;
+            while (i < inner.length - 1 || j < outer.length - 1) {
+                const nextInner = i < inner.length - 1 ? innerAngles[i + 1] : Infinity;
+                const nextOuter = j < outer.length - 1 ? outerAngles[j + 1] : Infinity;
+                if (Math.abs(nextInner - nextOuter) < 1e-12) {
+                    this.triangles.push([inner[i], inner[i + 1], outer[j]]);
+                    this.triangles.push([inner[i + 1], outer[j + 1], outer[j]]);
+                    i++;
+                    j++;
+                } else if (nextInner < nextOuter) {
+                    this.triangles.push([inner[i], inner[i + 1], outer[j]]);
+                    i++;
+                } else {
+                    this.triangles.push([inner[i], outer[j + 1], outer[j]]);
+                    j++;
+                }
+            }
         }
 
         const count = this.vertices.length;
@@ -174,8 +189,8 @@ class TerrainGrid {
 
     toJSON() {
         return {
-            version: '8.0',
-            topology: 'semicircle-8196',
+            version: '9.0',
+            topology: 'semicircle-sunflower-hex-v1',
             timestamp: new Date().toISOString(),
             elevation: Array.from(this.elevation),
             waterDepth: Array.from(this.waterDepth),
@@ -190,7 +205,7 @@ class TerrainGrid {
         const validParticles = Array.isArray(json.particles) && json.particles.length === this.particles.length &&
             json.particles.every(p => p && [p.x, p.z, p.vx, p.vz, p.sediment].every(Number.isFinite) &&
                 p.sediment >= 0 && this.locate(p.x, p.z));
-        if (json.version !== '8.0' || json.topology !== 'semicircle-8196' || !validParticles ||
+        if (json.version !== '9.0' || json.topology !== 'semicircle-sunflower-hex-v1' || !validParticles ||
             arrays.some(a => !Array.isArray(a) || a.length !== this.elevation.length || !a.every(Number.isFinite))) {
             console.warn('Saved terrain is incompatible with the semi-circular mesh');
             return false;

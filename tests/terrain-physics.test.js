@@ -15,18 +15,21 @@ function totalSediment(grid, physics) {
         physics.particles.reduce((sum, particle) => sum + particle.sediment, 0);
 }
 
-test('semi-circular bed has 8196 nondegenerate faces and a radial slope outside the channel zone', () => {
+test('sunflower-like polar mesh has over 4096 vertices and a radial slope outside the channel zone', () => {
     const grid = new TerrainGrid();
-    assert.equal(grid.triangles.length, 8196);
+    assert.ok(grid.vertices.length > 4096);
+    assert.ok(grid.triangles.length > 8192);
     assert.ok(grid.vertexArea.every(area => area > 0));
+    assert.ok(new Set(grid.ringVertices.map(ring => ring.length)).size > 1);
+    assert.ok(grid.ringAngles[4][1] !== Math.PI / (grid.ringVertices[4].length - 1));
     grid.vertices.forEach((point, i) => {
         assert.ok(point.z <= 1e-12);
         assert.ok(Math.abs(grid.bedrock[i] - grid.bedrockHeight(point.x, point.z)) < 1e-12);
         assert.ok(Math.abs(grid.elevation[i] - grid.bedrock[i] - grid.initialSandDepth) < 1e-12);
     });
-    const outerStart = 1 + (grid.rings - 1) * (grid.sectors + 1);
+    const outerRing = grid.ringVertices[grid.rings - 1];
     for (let s = 0; s <= grid.sectors; s++) {
-        const point = grid.vertices[outerStart + s];
+        const point = grid.vertices[outerRing[s]];
         assert.ok(Math.abs(Math.hypot(point.x, point.z) - grid.radius) < 1e-12);
     }
 });
@@ -150,6 +153,8 @@ test('a loaded particle deposits sand when it slows, even below transport capaci
 test('sand avalanches at steep mesh edges without disturbing a stable slope', () => {
     const grid = new TerrainGrid();
     const physics = new PhysicsEngine(grid);
+    const flatHeight = Math.max(...grid.bedrock) + 0.3;
+    grid.elevation.fill(flatHeight);
     const initial = Array.from(grid.elevation);
     physics.relaxSand(0.04);
     assert.ok(grid.elevation.every((height, i) => height === initial[i]));
@@ -169,7 +174,7 @@ test('sand avalanches at steep mesh edges without disturbing a stable slope', ()
 test('saves from the previous planar bed are rejected, current ones round-trip', () => {
     const grid = new TerrainGrid();
     const saved = grid.toJSON();
-    assert.equal(saved.version, '8.0');
+    assert.equal(saved.version, '9.0');
     for (const version of ['5.0', '6.0', '7.0']) assert.equal(grid.fromJSON({ ...saved, version }), false);
     assert.equal(grid.fromJSON(saved), true);
 });

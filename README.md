@@ -1,10 +1,10 @@
 # 🌊 Tree of Life - Collaborative Hydromorphodynamic Simulation
 
 > **Current status:** The GitHub Pages site runs a local simulation. The
-> Cloudflare Worker in `worker/` is deployed as an experimental backend, but
-> is not connected to the site. Its state endpoint has been verified; OAuth
-> and collaborative computation have not been verified end to end and are not
-> yet operational. Statements below about production
+> Cloudflare Worker in `worker/` is deployed as an experimental backend. The
+> frontend is configured to use its OAuth endpoint, but sign-in has not been
+> verified end to end and collaborative computation is not integrated.
+> Statements below about production
 > readiness, automatic GitHub synchronization, and deployment describe the
 > older prototype and should not be relied on.
 
@@ -16,7 +16,7 @@ from the arc to the sink at height zero. It is initially covered by a
 uniform layer of sand 0.3 simulation units deep; the simulated terrain
 elevation is the base height plus the sand thickness. The surrounding apron
 and raised edge are fixed; only the sand surface evolves.
-The base has a radial slope of 0.075 (previously 0.06).
+The base has a radial slope of 0.09.
 The outer mesh vertices lie on the arc; the straight edges between them
 approximate it by a polygon. Parcels are injected just inside, and reflected
 at, that same polygonal boundary.
@@ -48,10 +48,10 @@ realistic fluid dynamics, and branching is not guaranteed. Remote terrain merges
 if configured, are external modifications and do not conserve this local
 sediment balance.
 
-The mesh and particle state use version 6 of the `semicircle-8196` save
-format. Version 5 saves are migrated by lifting the bed and its sand together,
-preserving sand thickness and particle state. Earlier saves with a different
-mesh are not loaded.
+The terrain uses a polar mesh with staggered, variable-density rings and
+approximately hexagonal spacing inspired by sunflower seed patterns. It has
+over 4,096 vertices and the `semicircle-sunflower-hex-v1` save topology; saves
+from older meshes are not loaded.
 Test the browser model with `node --test tests/terrain-physics.test.js`.
 
 ## Experimental Cloudflare Worker
@@ -83,7 +83,15 @@ and the configured numeric `OWNER_GITHUB_ID`. The OAuth exchange requires
 must never be committed or placed in browser code. The frontend must generate
 and verify a cryptographically random OAuth `state` before exchanging the code,
 use the exact GitHub Pages callback URL, and handle expired tokens. The
-existing frontend does not yet do this.
+frontend verifies OAuth `state` and uses the exact GitHub Pages callback. To
+enable sign-in, the Worker at
+`https://2026-11-tree-of-life.laurent-perrinet.workers.dev` must have
+`GITHUB_CLIENT_SECRET` configured as a Cloudflare secret (never in source
+code). The frontend points to its `/api/auth/exchange` endpoint.
+Sign-in requires the GitHub
+Pages origin; `file://` and localhost cannot use the configured callback.
+The authentication flow has not yet been verified end to end; the Worker's
+collaborative simulation is not integrated with the particle model.
 
 Submitted arrays are bounded and one randomly chosen row is recalculated, but
 this sampling **does not prove an anonymous contribution is correct**. Leases

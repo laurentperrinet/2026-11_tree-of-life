@@ -8,8 +8,8 @@ class InputControls {
         
         // Mouse controls
         this.mouse = { x: 0, y: 0, down: false };
-        this.cameraRotation = { x: 0.65, y: 0 };
-        this.cameraDistance = 57;
+        this.cameraRotation = { x: 1.0, y: 0 };
+        this.cameraDistance = 50;
         
         // Setup listeners
         this.setupKeyboardListener();
