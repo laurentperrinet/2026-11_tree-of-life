@@ -9,6 +9,7 @@ class AuthManager {
         this.exchangeUrl = config.exchangeUrl || '';
         this.scopes = config.scopes || ['user:email'];
         this.stateKey = 'tree-of-life-oauth-state';
+        this.adminViewKey = 'tree-of-life-oauth-admin-view';
         
         this.user = null;
         this.token = null;
@@ -27,12 +28,15 @@ class AuthManager {
         if (code || oauthError) {
             const state = params.get('state');
             const expected = sessionStorage.getItem(this.stateKey);
+            const adminView = sessionStorage.getItem(this.adminViewKey) === '1';
             sessionStorage.removeItem(this.stateKey);
+            sessionStorage.removeItem(this.adminViewKey);
             params.delete('code');
             params.delete('state');
             params.delete('error');
             params.delete('error_description');
             params.delete('error_uri');
+            if (adminView && state && expected && state === expected) params.set('admin', '');
             const query = params.toString();
             window.history.replaceState({}, document.title,
                 window.location.pathname + (query ? `?${query}` : '') + window.location.hash);
@@ -93,6 +97,8 @@ class AuthManager {
         if (!this.isConfigured()) throw new Error('GitHub sign-in requires a configured OAuth Worker and HTTPS callback');
         const state = this.generateRandomState();
         sessionStorage.setItem(this.stateKey, state);
+        sessionStorage.setItem(this.adminViewKey,
+            new URLSearchParams(window.location.search).has('admin') ? '1' : '0');
         window.location.href = this.getLoginUrl(state);
     }
     

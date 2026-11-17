@@ -24,8 +24,6 @@ test('vegetation grows on sandy banks, not in the flow, and stays rooted when wa
         velocityY: new Float64Array(7),
         flowHistory: new Float32Array(7),
         vegetation: new Float32Array(7),
-        mushroomSites: [],
-        mushrooms: new Float32Array(0),
         erodibleCount: 6,
         edges: Array.from({ length: 5 }, (_, i) => ({ a: i, b: i + 1, length: 0.25 }))
     };
@@ -35,6 +33,7 @@ test('vegetation grows on sandy banks, not in the flow, and stays rooted when wa
     physics.flowScratch = new Float32Array(7);
     physics.flowEdgeWeights = Float32Array.from(grid.edges, edge => Math.exp(-edge.length / 0.6));
     physics.vegetationElapsed = 0;
+    physics.updateMicrobes = () => {};
     for (let i = 0; i < 200; i++) physics.updateVegetation(0.1);
     assert.equal(grid.vegetation[0], 0);
     assert.ok(grid.vegetation[1] > 0.3);
@@ -50,84 +49,111 @@ test('vegetation grows on sandy banks, not in the flow, and stays rooted when wa
     assert.deepEqual(Array.from(grid.vegetation), paused);
 });
 
-test('mushrooms grow on sandy, low-flow sites beside plants and remain rooted', () => {
+test('Gray-Scott reaction and diffusion stay on suitable sandy ground', () => {
     const grid = {
-        mushroomSites: [0, 1, 2, 3, 4],
-        mushrooms: new Float32Array(5),
-        elevation: Float64Array.from([1, 1, 1, 0, 1, 1, 1]),
-        bedrock: new Float64Array(7),
-        vegetation: Float32Array.from([0.1, 0.1, 0.1, 0.1, 0.8, 0.3, 0]),
-        flowHistory: Float32Array.from([0.001, 0.03, 0.001, 0.001, 0.001, 0, 0])
+        elevation: Float64Array.from([1, 1, 1, 1, 0, 1]),
+        bedrock: new Float64Array(6),
+        flowHistory: Float32Array.from([0, 0, 0.1, 0, 0, 0]),
+        vegetation: Float32Array.from([0, 0, 0, 1, 0, 0]),
+        microbeU: Float32Array.from([0.5, 1, 1, 1, 1, 1]),
+        microbeV: Float32Array.from([0.25, 0, 0, 0, 0, 0]),
+        erodibleCount: 5,
+        edges: [{ a: 0, b: 1 }, { a: 0, b: 2 }, { a: 0, b: 3 }, { a: 0, b: 4 }, { a: 0, b: 5 }],
+        microbeSuitability: TerrainGrid.prototype.microbeSuitability
     };
     const physics = Object.create(PhysicsEngine.prototype);
     physics.grid = grid;
-    physics.mushroomNeighbors = [[5], [5], [6], [5], [5]];
-    const nearby = Float32Array.from([0.01, 0.04, 0.01, 0.01, 0.01, 0, 0]);
-    physics.updateMushrooms(20, nearby);
-    assert.ok(grid.mushrooms[0] > 0.5);
-    assert.deepEqual(Array.from(grid.mushrooms.slice(1)), [0, 0, 0, 0]);
-    const grown = grid.mushrooms[0];
+    physics.microbeHabitat = new Float32Array(6);
+    physics.microbeDeltaU = new Float32Array(6);
+    physics.microbeDeltaV = new Float32Array(6);
+    physics.microbeDegree = Uint16Array.from([4, 1, 1, 1, 1, 0]);
+    physics.updateMicrobes(0.25);
+    assert.ok(grid.microbeV[1] > 0);
+    assert.ok(grid.microbeU[1] < 1);
+    assert.equal(grid.microbeV[2], 0);
+    assert.equal(grid.microbeV[3], 0);
+    assert.equal(grid.microbeV[4], 0);
+    assert.equal(grid.microbeV[5], 0);
+    const previous = grid.microbeV[0];
     grid.flowHistory[0] = 0.1;
-    physics.updateMushrooms(20, nearby);
-    assert.equal(grid.mushrooms[0], grown);
+    physics.updateMicrobes(0.25);
+    assert.ok(grid.microbeV[0] < previous);
+    for (let i = 0; i < 500; i++) physics.updateMicrobes(0.4);
+    assert.ok(grid.microbeU.every(value => Number.isFinite(value) && value >= 0 && value <= 1));
+    assert.ok(grid.microbeV.every(value => Number.isFinite(value) && value >= 0 && value <= 1));
 });
 
-test('mushroom meshes follow their terrain vertices and are hidden in diagnostic views', () => {
-    class Color {
-        constructor(value = 0) { this.value = value; }
-        copy(other) { this.value = other.value; return this; }
-        lerp(other, t) { this.value += (other.value - this.value) * t; return this; }
-    }
-    const rendererContext = vm.createContext({ THREE: { Color }, Math });
-    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'renderer.js'), 'utf8'), rendererContext);
-    const renderer = vm.runInContext('Object.create(TerrainRenderer.prototype)', rendererContext);
-    const mesh = () => ({
-        matrices: [], colors: [], instanceMatrix: {},
-        setMatrixAt(i, matrix) { this.matrices[i] = matrix; },
-        setColorAt(i, color) { this.colors[i] = color.value; this.instanceColor = {}; }
-    });
-    renderer.mushroomCaps = mesh();
-    renderer.mushroomStems = mesh();
-    renderer.dummy = {
-        position: { set(x, y, z) { Object.assign(this, { x, y, z }); } },
-        scale: { set(x, y, z) { Object.assign(this, { x, y, z }); } },
-        updateMatrix() { this.matrix = { position: { ...this.position }, scale: { ...this.scale } }; }
-    };
-    renderer.displayMode = 'elevation';
+test('Gray-Scott reaction follows the two-species equations', () => {
     const grid = {
-        mushroomSites: [0, 1, 2], mushrooms: [0, 0.5, 0.5],
-        vertices: [{ x: 0, z: 0 }, { x: 2, z: 3 }, { x: 4, z: 5 }],
-        elevation: [0, 7, 9]
+        elevation: Float64Array.from([1]), bedrock: new Float64Array(1),
+        flowHistory: new Float32Array(1), vegetation: new Float32Array(1),
+        microbeU: Float32Array.from([0.5]), microbeV: Float32Array.from([0.25]),
+        erodibleCount: 1, edges: [], microbeSuitability: TerrainGrid.prototype.microbeSuitability
     };
-    renderer.updateMushrooms(grid);
-    assert.equal(renderer.mushroomCaps.count, 2);
-    assert.equal(renderer.mushroomStems.count, 2);
-    const stem = renderer.mushroomStems.matrices[0];
-    assert.equal(stem.position.x, 2);
-    assert.ok(Math.abs(stem.position.y - stem.scale.y / 2 - 7) < 1e-10);
-    assert.notEqual(renderer.mushroomCaps.colors[0], renderer.mushroomCaps.colors[1]);
-    grid.elevation[1] = 8;
-    renderer.updateMushrooms(grid);
-    assert.ok(renderer.mushroomStems.matrices[0].position.y > stem.position.y);
-    renderer.displayMode = 'flux';
-    renderer.updateMushrooms(grid);
-    assert.equal(renderer.mushroomCaps.visible, false);
-    assert.equal(renderer.mushroomStems.visible, false);
+    const physics = Object.create(PhysicsEngine.prototype);
+    physics.grid = grid;
+    physics.microbeHabitat = new Float32Array(1);
+    physics.microbeDeltaU = new Float32Array(1);
+    physics.microbeDeltaV = new Float32Array(1);
+    physics.microbeDegree = new Uint16Array(1);
+    physics.updateMicrobes(0.25);
+    assert.ok(Math.abs(grid.microbeU[0] - 0.493125) < 1e-6);
+    assert.ok(Math.abs(grid.microbeV[0] - 0.2535) < 1e-6);
+});
+
+test('diffuse initial colonies develop higher concentrations on suitable ground', () => {
+    const grid = new TerrainGrid();
+    const physics = new PhysicsEngine(grid);
+    const initialPeak = Math.max(...grid.microbeV);
+    assert.ok(initialPeak > 0.1 && initialPeak <= 0.15);
+    assert.ok(grid.microbeV.filter(value => value > 0.025 && value < 0.1).length > 1000);
+    for (let i = 0; i < 25; i++) physics.updateMicrobes(0.5);
+    assert.ok(Math.max(...grid.microbeV) > initialPeak * 2);
+});
+
+test('microorganism colors appear on sand without hiding plants or high-flow ground', () => {
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'renderer.js'), 'utf8'), context);
+    const renderer = vm.runInContext('Object.create(TerrainRenderer.prototype)', context);
+    const grid = {
+        elevation: Float64Array.from([1]), bedrock: new Float64Array(1),
+        flowHistory: new Float32Array(1), vegetation: new Float32Array(1),
+        microbeV: Float32Array.from([0.3]), erodibleCount: 1,
+        microbeSuitability: TerrainGrid.prototype.microbeSuitability
+    };
+    const normals = { getY: () => 1, getX: () => 0 };
+    const color = { setHSL: () => { color.r = 0.05; color.g = 0.05; color.b = 0.05; } };
+    grid.microbeV[0] = 0.15;
+    renderer.volcanicColor(grid, 0, normals, color);
+    const diffuseRed = color.r;
+    grid.microbeV[0] = 0.3;
+    renderer.volcanicColor(grid, 0, normals, color);
+    assert.ok(color.r > diffuseRed * 2);
+    assert.ok(color.r > 0.3 && color.b > 0.2);
+    grid.vegetation[0] = 0.6;
+    renderer.volcanicColor(grid, 0, normals, color);
+    assert.ok(color.r < 0.1 && color.b < 0.1);
+    grid.vegetation[0] = 0;
+    grid.flowHistory[0] = 0.04;
+    renderer.volcanicColor(grid, 0, normals, color);
+    assert.ok(color.r < 0.1 && color.b < 0.1);
 });
 
 test('terrain sync keeps established vegetation from either contributor', () => {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'github-sync.js'), 'utf8'), context);
     const sync = vm.runInContext('new GitHubSync()', context);
-    const local = { version: '10.0', topology: 'disk', elevation: [1, 1], vegetation: [0.7, 0.1],
-        mushrooms: [0.6, 0.1] };
-    const remote = { ...local, vegetation: [0.2, 0.8], mushrooms: [0.2, 0.9] };
+    const local = { version: '10.0', topology: 'disk', elevation: [1, 1], vegetation: [0.7, 0.1] };
+    const remote = { ...local, vegetation: [0.2, 0.8] };
     const merged = sync.mergeTerrain(local, remote);
     assert.deepEqual(Array.from(merged.vegetation), [0.7, 0.8]);
-    assert.deepEqual(Array.from(merged.mushrooms), [0.6, 0.9]);
     assert.deepEqual(Array.from(sync.mergeTerrain(local, { ...remote, vegetation: undefined }).vegetation),
         [0.7, 0.1]);
     assert.equal(sync.mergeTerrain(local, { ...remote, vegetation: [2, 0] }), local);
-    assert.equal(sync.mergeTerrain(local, { ...remote, mushrooms: [-1, 0] }), local);
+    const microbes = { ...local, microbeU: [0.8, 0.4], microbeV: [0.1, 0.3] };
+    const remoteMicrobes = { ...remote, microbeU: [0.5, 0.9], microbeV: [0.2, 0.1] };
+    const combined = sync.mergeTerrain(microbes, remoteMicrobes);
+    assert.deepEqual(Array.from(combined.microbeU), [0.5, 0.4]);
+    assert.deepEqual(Array.from(combined.microbeV), [0.2, 0.3]);
+    assert.equal(sync.mergeTerrain(microbes, { ...remote, microbeU: [1, 1] }), microbes);
 });
 
 test('polar mesh covers a full disk and its square surround', () => {
@@ -303,23 +329,27 @@ test('saves from the previous planar bed are rejected, current ones round-trip',
     const grid = new TerrainGrid();
     grid.vegetation[1] = 0.5;
     grid.flowHistory[1] = 0.1;
-    grid.mushrooms[0] = 0.75;
+    grid.microbeU[1] = 0.71234567;
+    grid.microbeV[1] = 0.375;
     const saved = grid.toJSON();
-    assert.equal(saved.version, '10.0');
+    assert.equal(saved.version, '11.0');
     for (const version of ['5.0', '6.0', '7.0', '9.0']) assert.equal(grid.fromJSON({ ...saved, version }), false);
     assert.equal(grid.fromJSON(saved), true);
     grid.initialize();
     assert.equal(grid.vegetation[1], 0);
-    assert.equal(grid.mushrooms[0], 0);
+    assert.notEqual(grid.microbeV[1], 0.375);
     assert.equal(grid.fromJSON(saved), true);
     assert.equal(grid.vegetation[1], 0.5);
-    assert.equal(grid.mushrooms[0], 0.75);
     assert.ok(Math.abs(grid.flowHistory[1] - 0.1) < 1e-6);
-    assert.equal(grid.fromJSON({ ...saved, vegetation: undefined, flowHistory: undefined, mushrooms: undefined }), true);
+    assert.ok(Math.abs(grid.microbeU[1] - 0.71234567) < 1e-6);
+    assert.equal(grid.microbeV[1], 0.375);
+    assert.equal(grid.fromJSON({ ...saved, microbeU: undefined, microbeV: undefined }), true);
+    assert.notEqual(grid.microbeV[1], 0.375);
+    assert.equal(grid.fromJSON({ ...saved, microbeV: undefined }), false);
+    assert.equal(grid.fromJSON({ ...saved, microbeV: [NaN] }), false);
+    assert.equal(grid.fromJSON({ ...saved, vegetation: undefined, flowHistory: undefined }), true);
     assert.equal(grid.vegetation[1], 0);
-    assert.equal(grid.mushrooms[0], 0);
     assert.equal(grid.fromJSON({ ...saved, vegetation: [NaN] }), false);
-    assert.equal(grid.fromJSON({ ...saved, mushrooms: [2] }), false);
     saved.elevation[grid.erodibleCount] += 1;
     assert.equal(grid.fromJSON(saved), false);
 });
@@ -332,10 +362,91 @@ test('inverted cone drains through a flared channel towards the bottom sink', ()
     for (const z of [1, 5, 15, 25, 30]) {
         assert.ok(Math.abs(grid.bedrockHeight(0, z) + grid.slope * z) < 1e-12);
         const width = grid.sinkRadius + grid.channelFlare * z;
+        const radius = Math.hypot(width, z);
         assert.ok(Math.abs(grid.bedrockHeight(width, z) -
-            grid.slope * Math.min(grid.radius, Math.hypot(width, z))) < 1e-12);
+            (grid.slope * Math.min(grid.radius, radius) +
+                grid.surroundSlope * Math.max(0, radius - grid.radius))) < 1e-12);
     }
     assert.ok(grid.bedrockHeight(2, 20) < grid.slope * Math.hypot(2, 20));
+});
+
+test('raised fixed surround returns water to the disk while leaving the outlet downhill', () => {
+    const grid = new TerrainGrid();
+    const physics = new PhysicsEngine(grid);
+    for (let i = 0; i < 32; i++) {
+        const angle = 2 * Math.PI * (i + 0.5) / 32;
+        const x = 27 * Math.cos(angle), z = 27 * Math.sin(angle);
+        if (z > 0 && Math.abs(x) < grid.sinkRadius + grid.channelFlare * z + 1) continue;
+        const sample = grid.sample(x, z);
+        assert.ok(sample.dx * x + sample.dz * z > 0, `not inward at angle ${angle}`);
+        const particle = { x, z, vx: 0, vz: 0, sediment: 0.1 };
+        for (let step = 0; step < 100; step++) physics.moveParticle(particle, 0.04);
+        assert.ok(Math.hypot(particle.x, particle.z) < grid.radius, `stuck at angle ${angle}`);
+    }
+    const outlet = grid.sample(0, 27);
+    assert.ok(outlet.dz < 0);
+    const parcel = { x: 0, z: 27, vx: 0, vz: 0, sediment: 0.1 };
+    for (let step = 0; step < 300; step++) {
+        physics.moveParticle(parcel, 0.04);
+        if (Math.hypot(parcel.x, parcel.z) < grid.radius) break;
+    }
+    assert.ok(Math.hypot(parcel.x, parcel.z) < grid.radius);
+    assert.ok(parcel.sediment > 0);
+});
+
+test('erosion tapers at the disk edge without preventing deposition', () => {
+    const grid = new TerrainGrid();
+    const physics = new PhysicsEngine(grid);
+    const inside = grid.ringVertices[grid.rings - 10][0];
+    const transition = grid.ringVertices[grid.rings - 5][0];
+    const edge = grid.ringVertices[grid.rings - 1][0];
+    assert.equal(physics.erosionFactor(inside), 1);
+    assert.ok(physics.erosionFactor(transition) > 0 && physics.erosionFactor(transition) < 1);
+    assert.ok(physics.erosionFactor(edge) < 1e-12);
+
+    physics.g = 0;
+    physics.friction = 0;
+    const particle = physics.particles[0];
+    Object.assign(particle, { x: 23.8, z: -0.1, vx: 2, vz: 0, sediment: 0 });
+    const sample = grid.sample(particle.x, particle.z);
+    const heights = Array.from(grid.elevation);
+    const before = totalSediment(grid, physics);
+    physics.moveParticle(particle, 0.04);
+    const ratios = sample.face.map((index, i) =>
+        (heights[index] - grid.elevation[index]) * grid.vertexArea[index] /
+        Math.max(0, sample.weights[i]) / physics.erosionFactor(index));
+    assert.ok(ratios.every(ratio => Math.abs(ratio - ratios[0]) < 1e-12));
+    assert.ok(Math.abs(totalSediment(grid, physics) - before) < 1e-8);
+
+    Object.assign(particle, { x: 23.8, z: -0.1, vx: 0, vz: 0, sediment: 0.1 });
+    const depositStart = Array.from(grid.elevation);
+    physics.moveParticle(particle, 0.04);
+    const deposits = sample.face.map((index, i) =>
+        (grid.elevation[index] - depositStart[index]) * grid.vertexArea[index] /
+        Math.max(0, sample.weights[i]));
+    assert.ok(deposits.every(value => value > 0 && Math.abs(value - deposits[0]) < 1e-12));
+});
+
+test('version 10 saves raise the surround without changing the sand or particles', () => {
+    const grid = new TerrainGrid();
+    const physics = new PhysicsEngine(grid);
+    grid.elevation[100] += 0.1;
+    physics.particles[0].sediment = 0.2;
+    const saved = grid.toJSON();
+    saved.version = '10.0';
+    for (let i = grid.erodibleCount; i < grid.vertices.length; i++) {
+        const point = grid.vertices[i];
+        saved.elevation[i] = grid.bedrockHeight(point.x, point.z, 0) + grid.initialSandDepth;
+    }
+    const before = totalSediment(grid, physics);
+    assert.equal(grid.fromJSON(saved), true);
+    assert.equal(grid.elevation[100], saved.elevation[100]);
+    assert.equal(physics.particles[0].sediment, 0.2);
+    assert.ok(Math.abs(totalSediment(grid, physics) - before) < 1e-8);
+    assert.ok(grid.elevation.slice(grid.erodibleCount).every((height, j) =>
+        height === grid.bedrock[j + grid.erodibleCount] + grid.initialSandDepth));
+    saved.elevation[grid.erodibleCount] += 1;
+    assert.equal(grid.fromJSON(saved), false);
 });
 
 test('fixed surround never gains or loses sediment', () => {

@@ -16,7 +16,9 @@ channel that widens towards the bottom of the square and slopes down from the
 centre to the sink. Initially the bed is covered by a uniform layer of sand
 0.3 simulation units deep; only the interior of the disk evolves. The outer
 ring and square surround remain fixed. The circular edge is a polygon whose
-vertices lie on the disk boundary.
+vertices lie on the disk boundary. The black, non-erodible surround rises
+outwards so water on it flows back towards the disk; the outlet channel remains
+open and slopes down to the sink.
 
 Blue spheres represent a fixed number of water parcels. Gravity follows the
 local slope of each triangle, with friction. The square boundary reflects water
@@ -27,6 +29,9 @@ cannot exchange sand with it. The initial
 parcels are distributed across the bed so the flow is immediately visible.
 Transport capacity increases with speed: moving parcels pick up sand when
 below capacity, and slowing or stationary parcels deposit their load. Parcels
+erode progressively less across the outermost two simulation units of the
+disk, reaching zero at the fixed boundary; deposition remains unrestricted.
+Parcels
 push one another when they overlap; this approximate water pressure helps
 spread accumulations and keep water moving towards the sink. Collision impulses
 can deflect particles. The evolving
@@ -49,7 +54,8 @@ sediment balance.
 The terrain uses a polar mesh with staggered, variable-density rings and
 approximately hexagonal spacing inspired by sunflower seed patterns. It has
 over 4,096 vertices and the `disk-square-polar-v1` save topology; saves
-from older meshes are not loaded.
+from older meshes are not loaded. Version 10 saves are migrated by raising
+only the fixed surround, preserving the sand and particle state.
 Test the browser model with `node --test tests/terrain-physics.test.js`.
 
 ## Experimental Cloudflare Worker
@@ -115,15 +121,20 @@ The current simulation is an exploratory particle model, not a validated hydrody
 In the elevation view, vegetation grows on sandy mesh vertices near sustained
 water flow but away from its strongest paths. It remains rooted as water moves;
 its coverage and recent flow history are saved with the terrain and cleared on reset.
-Ochre-to-violet mushrooms grow on sandy, low-flow sites beside the vegetation.
-Their growth is rooted and saved with the terrain as well.
+Ochre-to-purple microorganisms form a separate Gray–Scott reaction–diffusion
+pattern on sandy, low-flow ground between plants. New colonies start as diffuse,
+faint patches that concentrate as the reaction develops. Their two concentrations
+are saved with the terrain; reset starts the pattern again from seeded patches.
 
 ## 🎯 Quick Start (5 Minutes)
 
 ### For Users
 Just visit: **https://laurentperrinet.github.io/2026-11_tree-of-life/**
-- Press **?** to see all controls
 - Observe water parcels eroding and depositing sediment
+- Drag or scroll to adjust the view
+- Open [the admin view](https://laurentperrinet.github.io/2026-11_tree-of-life/?admin)
+  for the control panel and keyboard shortcuts. Reset still requires signing in
+  as the authorized GitHub owner; the URL itself grants no permissions.
 
 ### For Developers
 ```bash
@@ -198,14 +209,16 @@ No explicit branching code—it emerges from physics!
 
 ### Keyboard Shortcuts
 
+The control panel and keyboard shortcuts are available with `?admin`.
+
 | Key | Action | Notes |
 |-----|--------|-------|
-| **Q** / **E** | Increase/decrease flow (Q) | Larger Q = more water input per step |
-| **V** / **H** | Increase/decrease viscosity | Lower V = less friction, faster flow |
-| **D** | Cycle display mode | Elevation → Velocity → Sediment → back to Elevation |
+| **+** / **-** | Increase/decrease flow (Q) | Larger Q = more water input per step |
+| **↑** / **↓** | Increase/decrease simulation speed | |
+| **D** | Cycle display mode | Elevation → sand depth → flux → sediment |
 | **S** | Force sync to GitHub now | Useful for testing collaboration |
 | **R** | Reset terrain (authentication required) | Press twice to confirm. Shows "Converged?" first |
-| **?** | Show/hide help panel | Always available, lists all controls |
+| **?** | Show/hide help panel | Available in the admin view |
 
 ### Mouse Controls
 

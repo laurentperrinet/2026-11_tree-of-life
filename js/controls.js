@@ -28,7 +28,7 @@ class InputControls {
      */
     onKeyDown(event) {
         const app = window.app;
-        if (!app) return;
+        if (!app || !new URLSearchParams(window.location.search).has('admin')) return;
         
         // Prevent defaults for control keys
         if (['ArrowUp', 'ArrowDown', '+', '-', 'd', 's', 'r', 'D', 'S', 'R', '?'].includes(event.key)) {
@@ -170,7 +170,7 @@ class InputControls {
     toggleHelp() {
         const helpPanel = document.getElementById('help-panel');
         if (helpPanel) {
-            helpPanel.style.display = helpPanel.style.display === 'none' ? 'block' : 'none';
+            helpPanel.hidden = !helpPanel.hidden;
         }
     }
 }

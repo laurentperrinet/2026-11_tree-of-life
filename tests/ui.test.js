@@ -43,3 +43,65 @@ test('authentication status is hidden until a user signs in', () => {
     assert.equal(elements['auth-status'].hidden, true);
     assert.equal(elements['reset-container'].style.display, 'none');
 });
+
+test('admin panel and keyboard shortcuts require the admin URL', () => {
+    const panel = { hidden: true };
+    const location = { search: '' };
+    let cycles = 0;
+    let prevented = 0;
+    const app = {
+        ui: { showToast() {} },
+        renderer: { cycleDisplayMode() { cycles++; }, displayMode: 'flux' }
+    };
+    const context = vm.createContext({
+        URLSearchParams, window: { location, app },
+        document: { getElementById: () => panel }
+    });
+    for (const file of ['ui.js', 'controls.js']) {
+        vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', file), 'utf8'), context);
+    }
+    const { UIManager, InputControls } = vm.runInContext('({ UIManager, InputControls })', context);
+    const ui = new UIManager({}, {});
+    const controls = Object.create(InputControls.prototype);
+    controls.renderer = app.renderer;
+    const event = { key: 'd', preventDefault() { prevented++; } };
+
+    ui.updateAdminPanel();
+    controls.onKeyDown(event);
+    assert.equal(panel.hidden, true);
+    assert.equal(cycles, 0);
+    assert.equal(prevented, 0);
+
+    location.search = '?admin';
+    ui.updateAdminPanel();
+    controls.onKeyDown(event);
+    assert.equal(panel.hidden, false);
+    assert.equal(cycles, 1);
+    assert.equal(prevented, 1);
+    controls.onKeyDown({ key: '?', preventDefault() {} });
+    assert.equal(panel.hidden, true);
+    controls.onKeyDown({ key: '?', preventDefault() {} });
+    assert.equal(panel.hidden, false);
+});
+
+test('reset URL cleanup retains the admin view and unrelated parameters', async () => {
+    const location = { pathname: '/app/', search: '?admin&reset=1&keep=ok', hash: '#view' };
+    let callback;
+    let cleaned;
+    let resets = 0;
+    const context = vm.createContext({
+        URLSearchParams,
+        document: { title: 'test' },
+        window: { location, addEventListener() {}, history: { replaceState: (s, t, url) => { cleaned = url; } } },
+        setTimeout: fn => { callback = fn; }
+    });
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'main.js'), 'utf8'), context);
+    const Application = vm.runInContext('Application', context);
+    Application.prototype.handleUrlParams.call({
+        reset: { canReset: () => true, softReset: async () => { resets++; return true; } },
+        ui: { showToast() {} }
+    });
+    await callback();
+    assert.equal(resets, 1);
+    assert.equal(cleaned, '/app/?admin=&keep=ok#view');
+});

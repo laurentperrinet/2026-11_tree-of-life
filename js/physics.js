@@ -13,6 +13,7 @@ class PhysicsEngine {
         this.particleCount = 500;
         this.waterPerParticle = 0.02;
         this.transportCapacity = 6;
+        this.erosionBorderWidth = 2;
         this.particleRadius = 0.105;
         this.maxSpeed = 3;
         this.sandReposeSlope = Math.tan(34 * Math.PI / 180);
@@ -20,13 +21,15 @@ class PhysicsEngine {
         this.flowScratch = new Float32Array(grid.elevation.length);
         this.flowEdgeWeights = Float32Array.from(grid.edges, edge => Math.exp(-edge.length / 0.6));
         this.vegetationElapsed = 0;
-        this.mushroomNeighbors = grid.mushroomSites.map(() => []);
-        const siteAtVertex = new Int32Array(grid.elevation.length).fill(-1);
-        grid.mushroomSites.forEach((vertex, site) => { siteAtVertex[vertex] = site; });
+        this.microbeHabitat = new Float32Array(grid.elevation.length);
+        this.microbeDeltaU = new Float32Array(grid.elevation.length);
+        this.microbeDeltaV = new Float32Array(grid.elevation.length);
+        this.microbeDegree = new Uint16Array(grid.elevation.length);
         for (const edge of grid.edges) {
-            if (edge.a >= grid.erodibleCount || edge.b >= grid.erodibleCount) continue;
-            if (siteAtVertex[edge.a] >= 0) this.mushroomNeighbors[siteAtVertex[edge.a]].push(edge.b);
-            if (siteAtVertex[edge.b] >= 0) this.mushroomNeighbors[siteAtVertex[edge.b]].push(edge.a);
+            if (edge.a < grid.erodibleCount && edge.b < grid.erodibleCount) {
+                this.microbeDegree[edge.a]++;
+                this.microbeDegree[edge.b]++;
+            }
         }
         this.particles = [];
         this.createParticles();
@@ -63,6 +66,13 @@ class PhysicsEngine {
             nx: Math.cos(normalAngle),
             nz: -Math.sin(normalAngle)
         };
+    }
+
+    erosionFactor(index) {
+        const point = this.grid.vertices[index];
+        const distance = this.grid.radius - Math.hypot(point.x, point.z);
+        const t = Math.max(0, Math.min(1, distance / this.erosionBorderWidth));
+        return t * t * (3 - 2 * t);
     }
 
     step() {
@@ -133,25 +143,41 @@ class PhysicsEngine {
                 grid.vegetation[i] += (target - grid.vegetation[i]) * growthRate;
             }
         }
-        this.updateMushrooms(growthTime, nearby);
+        this.updateMicrobes(growthTime);
     }
 
-    updateMushrooms(dt, nearbyFlow) {
+    updateMicrobes(dt) {
         const grid = this.grid;
-        const growthRate = 1 - Math.exp(-dt / 20);
-        for (let site = 0; site < grid.mushroomSites.length; site++) {
-            const i = grid.mushroomSites[site];
-            if (grid.elevation[i] <= grid.bedrock[i] + 1e-8 ||
-                grid.flowHistory[i] > 0.02 || grid.flowHistory[i] > nearbyFlow[i] * 0.45 ||
-                grid.vegetation[i] >= 0.65) continue;
-            let neighborGrowth = 0;
-            for (const neighbor of this.mushroomNeighbors[site]) {
-                neighborGrowth = Math.max(neighborGrowth, grid.vegetation[neighbor]);
+        const habitat = this.microbeHabitat;
+        for (let i = 0; i < grid.erodibleCount; i++) {
+            habitat[i] = grid.microbeSuitability(i);
+        }
+        const steps = Math.ceil(2 * dt);
+        if (steps === 0) return;
+        const step = 2 * dt / steps;
+        const u = grid.microbeU, v = grid.microbeV;
+        const du = this.microbeDeltaU, dv = this.microbeDeltaV;
+        // Gray–Scott with a degree-normalized graph Laplacian and no flux through unsuitable ground.
+        for (let n = 0; n < steps; n++) {
+            du.fill(0);
+            dv.fill(0);
+            for (const edge of grid.edges) {
+                if (edge.a >= grid.erodibleCount || edge.b >= grid.erodibleCount) continue;
+                const weight = Math.min(habitat[edge.a], habitat[edge.b]);
+                const flowU = (u[edge.b] - u[edge.a]) * weight;
+                const flowV = (v[edge.b] - v[edge.a]) * weight;
+                du[edge.a] += flowU;
+                du[edge.b] -= flowU;
+                dv[edge.a] += flowV;
+                dv[edge.b] -= flowV;
             }
-            if (neighborGrowth <= 0.04) continue;
-            const target = Math.min(1, (neighborGrowth - 0.04) / 0.2);
-            if (target > grid.mushrooms[site]) {
-                grid.mushrooms[site] += (target - grid.mushrooms[site]) * growthRate;
+            for (let i = 0; i < grid.erodibleCount; i++) {
+                const reaction = u[i] * v[i] * v[i] * habitat[i];
+                const degree = this.microbeDegree[i] || 1;
+                u[i] = Math.max(0, Math.min(1, u[i] + step *
+                    (0.64 * du[i] / degree - reaction + 0.035 * (1 - u[i]))));
+                v[i] = Math.max(0, Math.min(1, v[i] + step *
+                    (0.32 * dv[i] / degree + reaction - (0.035 + 0.062 + 0.15 * (1 - habitat[i])) * v[i])));
             }
         }
     }
@@ -247,7 +273,8 @@ class PhysicsEngine {
         let actualExchange = 0;
         sample.face.forEach((index, i) => {
             if (index >= grid.erodibleCount) return;
-            const amount = exchange * Math.max(0, sample.weights[i]);
+            const amount = exchange * Math.max(0, sample.weights[i]) *
+                (exchange > 0 ? this.erosionFactor(index) : 1);
             const previousHeight = grid.elevation[index];
             const height = Math.max(grid.bedrock[index], previousHeight - amount / grid.vertexArea[index]);
             grid.elevation[index] = height;

@@ -72,3 +72,21 @@ test('callback validates state before exchange and saves the verified session', 
     assert.equal(bad.storage.has('tree-of-life-oauth-state'), false);
     assert.equal(bad.location.cleaned, '/2026-11_tree-of-life/#view');
 });
+
+test('admin view survives a verified OAuth callback without granting reset permissions', async () => {
+    const h = harness('?admin');
+    assert.equal(h.auth.canReset(), false);
+    h.auth.login();
+    const state = h.storage.get('tree-of-life-oauth-state');
+    h.location.search = `?code=abc&state=${state}`;
+    await h.auth.initialize();
+    assert.equal(h.location.cleaned, '/2026-11_tree-of-life/?admin=#view');
+    assert.equal(h.storage.has('tree-of-life-oauth-admin-view'), false);
+
+    const bad = harness('?code=abc&state=wrong');
+    bad.storage.set('tree-of-life-oauth-state', 'expected');
+    bad.storage.set('tree-of-life-oauth-admin-view', '1');
+    await assert.rejects(bad.auth.initialize(), /invalid OAuth state/);
+    assert.equal(bad.location.cleaned, '/2026-11_tree-of-life/#view');
+    assert.equal(bad.storage.has('tree-of-life-oauth-admin-view'), false);
+});

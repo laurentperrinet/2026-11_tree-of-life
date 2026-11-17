@@ -8,6 +8,11 @@ class UIManager {
         this.lastToastTime = 0;
         this.resetConfirmPending = false;
     }
+
+    updateAdminPanel() {
+        const panel = document.getElementById('help-panel');
+        if (panel) panel.hidden = !new URLSearchParams(window.location.search).has('admin');
+    }
     
     /**
      * Update status badge
@@ -205,7 +210,7 @@ class UIManager {
         if (helpToggle) {
             helpToggle.addEventListener('click', (e) => {
                 if (e.target === helpToggle) {
-                    helpToggle.style.display = helpToggle.style.display === 'none' ? 'block' : 'none';
+                    helpToggle.hidden = true;
                 }
             });
         }
@@ -218,6 +223,7 @@ class UIManager {
 function initializeUI(auth, reset) {
     const ui = new UIManager(auth, reset);
     ui.setupEventListeners(auth, reset);
+    ui.updateAdminPanel();
     ui.updateAuthStatus();
     return ui;
 }

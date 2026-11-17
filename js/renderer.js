@@ -17,8 +17,6 @@ class TerrainRenderer {
         this.scene.add(light);
         this.terrainMesh = null;
         this.particleMesh = null;
-        this.mushroomCaps = null;
-        this.mushroomStems = null;
         this.displayMode = 'elevation';
         this.dummy = new THREE.Object3D();
         window.addEventListener('resize', () => this.onWindowResize());
@@ -46,34 +44,7 @@ class TerrainRenderer {
             vertexColors: true, side: THREE.DoubleSide, shininess: 25
         }));
         this.scene.add(this.terrainMesh);
-        this.createMushroomMeshes(grid);
         this.updateTerrainColors(grid);
-        this.updateMushrooms(grid);
-    }
-
-    createMushroomMeshes(grid) {
-        for (const mesh of [this.mushroomCaps, this.mushroomStems]) {
-            if (!mesh) continue;
-            this.scene.remove(mesh);
-            mesh.geometry.dispose();
-            mesh.material.dispose();
-        }
-        this.mushroomCaps = new THREE.InstancedMesh(
-            new THREE.SphereGeometry(1, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2),
-            new THREE.MeshPhongMaterial({ color: 0xffffff, shininess: 8 }),
-            grid.mushroomSites.length
-        );
-        this.mushroomStems = new THREE.InstancedMesh(
-            new THREE.CylinderGeometry(1, 1, 1, 6),
-            new THREE.MeshPhongMaterial({ color: 0x9d816d, shininess: 4 }),
-            grid.mushroomSites.length
-        );
-        if (grid.mushroomSites.length > 0) this.mushroomCaps.setColorAt(0, new THREE.Color(0xffffff));
-        for (const mesh of [this.mushroomCaps, this.mushroomStems]) {
-            mesh.count = 0;
-            mesh.frustumCulled = false;
-            this.scene.add(mesh);
-        }
     }
 
     updateTerrainMesh(grid) {
@@ -82,43 +53,6 @@ class TerrainRenderer {
         positions.needsUpdate = true;
         this.terrainMesh.geometry.computeVertexNormals();
         this.updateTerrainColors(grid);
-        this.updateMushrooms(grid);
-    }
-
-    updateMushrooms(grid) {
-        const visible = this.displayMode === 'elevation';
-        this.mushroomCaps.visible = visible;
-        this.mushroomStems.visible = visible;
-        if (!visible) return;
-        const ochre = new THREE.Color(0xc4934e);
-        const violet = new THREE.Color(0x865482);
-        const color = new THREE.Color();
-        let count = 0;
-        for (let site = 0; site < grid.mushroomSites.length; site++) {
-            const growth = grid.mushrooms[site];
-            if (growth <= 0.001) continue;
-            const i = grid.mushroomSites[site];
-            const point = grid.vertices[i];
-            const variation = (Math.imul(i ^ (i >>> 8), 0x27d4eb2d) >>> 0) / 0xffffffff;
-            const size = Math.sqrt(growth) * (0.85 + variation * 0.3);
-            const stemHeight = 0.24 * size;
-            this.dummy.position.set(point.x, grid.elevation[i] + stemHeight / 2, point.z);
-            this.dummy.scale.set(0.035 * size, stemHeight, 0.035 * size);
-            this.dummy.updateMatrix();
-            this.mushroomStems.setMatrixAt(count, this.dummy.matrix);
-            this.dummy.position.y = grid.elevation[i] + stemHeight;
-            this.dummy.scale.set(0.2 * size, 0.1 * size, 0.2 * size);
-            this.dummy.updateMatrix();
-            this.mushroomCaps.setMatrixAt(count, this.dummy.matrix);
-            color.copy(ochre).lerp(violet, variation);
-            this.mushroomCaps.setColorAt(count, color);
-            count++;
-        }
-        this.mushroomCaps.count = count;
-        this.mushroomStems.count = count;
-        this.mushroomCaps.instanceMatrix.needsUpdate = true;
-        this.mushroomStems.instanceMatrix.needsUpdate = true;
-        if (this.mushroomCaps.instanceColor) this.mushroomCaps.instanceColor.needsUpdate = true;
     }
 
     updateTerrainColors(grid) {
@@ -136,7 +70,7 @@ class TerrainRenderer {
         const normals = this.terrainMesh.geometry.attributes.normal;
         for (let i = 0; i < grid.elevation.length; i++) {
             if (i >= grid.erodibleCount) {
-                color.setRGB(0.055, 0.065, 0.075);
+                color.setRGB(0, 0, 0);
             } else if (this.displayMode === 'elevation') {
                 this.volcanicColor(grid, i, normals, color);
             } else if (this.displayMode === 'sand depth') {
@@ -165,6 +99,13 @@ class TerrainRenderer {
         color.setHSL(hue, 0.95 * growth, lightness);
         const rock = grid.elevation[i] <= grid.bedrock[i] + 1e-8 ? 0.035 : 0.018;
         color.r += rock; color.g += rock; color.b += rock * 1.1;
+        const habitat = grid.microbeSuitability(i);
+        const density = Math.min(1, Math.max(0, (grid.microbeV[i] - 0.025) / 0.3));
+        const amount = density * density * habitat;
+        const purple = Math.min(1, grid.microbeV[i] / 0.35);
+        color.r += ((0.55 - 0.18 * purple) - color.r) * amount;
+        color.g += ((0.30 - 0.18 * purple) - color.g) * amount;
+        color.b += ((0.07 + 0.28 * purple) - color.b) * amount;
     }
 
     // cmocean "deep": light for bare bedrock, dark for the full initial sand thickness.

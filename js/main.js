@@ -74,7 +74,11 @@ class Application {
                 }
                 
                 // Clean URL
-                window.history.replaceState({}, document.title, window.location.pathname);
+                params.delete('reset');
+                params.delete('hard');
+                const query = params.toString();
+                window.history.replaceState({}, document.title,
+                    window.location.pathname + (query ? `?${query}` : '') + window.location.hash);
             }, 1000);
         }
     }
@@ -94,6 +98,7 @@ class Application {
                 console.error('GitHub authentication failed:', error);
                 authError = error;
             }
+            this.ui.updateAdminPanel();
             this.ui.updateAuthStatus();
             
             // Try to load from localStorage

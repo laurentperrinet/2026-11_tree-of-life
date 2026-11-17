@@ -153,10 +153,11 @@ class GitHubSync {
             console.warn('Invalid vegetation in remote terrain, using local');
             return local;
         }
-        if (remote.mushrooms !== undefined && (!Array.isArray(remote.mushrooms) ||
-            !Array.isArray(local.mushrooms) || remote.mushrooms.length !== local.mushrooms.length ||
-            remote.mushrooms.some(value => !Number.isFinite(value) || value < 0 || value > 1))) {
-            console.warn('Invalid mushrooms in remote terrain, using local');
+        if ((remote.microbeU === undefined) !== (remote.microbeV === undefined) ||
+            [remote.microbeU, remote.microbeV].some(values => values !== undefined &&
+                (!Array.isArray(values) || values.length !== local.elevation.length ||
+                    values.some(value => !Number.isFinite(value) || value < 0 || value > 1)))) {
+            console.warn('Invalid microorganism state in remote terrain, using local');
             return local;
         }
         
@@ -171,10 +172,9 @@ class GitHubSync {
             if (merged.vegetation && remote.vegetation) {
                 merged.vegetation[i] = Math.max(merged.vegetation[i], remote.vegetation[i]);
             }
-            if (merged.mushrooms && remote.mushrooms) {
-                for (let i = 0; i < merged.mushrooms.length; i++) {
-                    merged.mushrooms[i] = Math.max(merged.mushrooms[i], remote.mushrooms[i]);
-                }
+            if (merged.microbeV && remote.microbeV && remote.microbeV[i] > merged.microbeV[i]) {
+                merged.microbeU[i] = remote.microbeU[i];
+                merged.microbeV[i] = remote.microbeV[i];
             }
         }
         

@@ -9,6 +9,7 @@ class TerrainGrid {
         this.spacing = 0.25;
         this.sinkRadius = 0.8;
         this.slope = 0.09;
+        this.surroundSlope = 0.3;
         this.initialSandDepth = 0.3;
         this.channelFlare = 0.12;
         this.vertices = [{ x: 0, z: 0 }];
@@ -94,12 +95,8 @@ class TerrainGrid {
         this.velocityY = new Float64Array(count);
         this.flowHistory = new Float32Array(count);
         this.vegetation = new Float32Array(count);
-        this.mushroomSites = [];
-        for (let i = 0; i < this.erodibleCount; i++) {
-            const hash = Math.imul(i ^ (i >>> 8), 0x45d9f3b) >>> 0;
-            if (hash < 0.04 * 0x100000000) this.mushroomSites.push(i);
-        }
-        this.mushrooms = new Float32Array(this.mushroomSites.length);
+        this.microbeU = new Float32Array(count);
+        this.microbeV = new Float32Array(count);
         this.vertexArea = new Float64Array(count);
         this.bins = new Map();
         this.binSize = 1;
@@ -141,8 +138,10 @@ class TerrainGrid {
         this.initialize();
     }
 
-    bedrockHeight(x, z) {
-        const cone = this.slope * Math.min(this.radius, Math.hypot(x, z));
+    bedrockHeight(x, z, surroundSlope = this.surroundSlope) {
+        const radius = Math.hypot(x, z);
+        const cone = this.slope * Math.min(this.radius, radius) +
+            surroundSlope * Math.max(0, radius - this.radius);
         if (z <= 0) return cone;
         const width = this.sinkRadius + this.channelFlare * z;
         const t = Math.max(0, Math.min(1, Math.abs(x) / width));
@@ -158,9 +157,39 @@ class TerrainGrid {
         this.velocityY.fill(0);
         this.flowHistory.fill(0);
         this.vegetation.fill(0);
-        this.mushrooms.fill(0);
+        this.seedMicrobes();
         this.energyHistory = [];
         this.totalEnergy = 0;
+    }
+
+    seedMicrobes() {
+        this.microbeU.fill(1);
+        this.microbeV.fill(0);
+        for (let i = 0; i < this.erodibleCount; i++) {
+            const point = this.vertices[i];
+            const cellX = Math.floor(point.x / 3);
+            const cellZ = Math.floor(point.z / 3);
+            let concentration = 0;
+            for (let x = cellX - 1; x <= cellX + 1; x++) {
+                for (let z = cellZ - 1; z <= cellZ + 1; z++) {
+                    const hash = (Math.imul(x, 73856093) ^ Math.imul(z, 19349663)) >>> 0;
+                    if (hash % 3 !== 0) continue;
+                    const cx = 3 * (x + 0.3 + ((hash >>> 4) % 40) / 100);
+                    const cz = 3 * (z + 0.3 + ((hash >>> 12) % 40) / 100);
+                    const distanceSquared = (point.x - cx) ** 2 + (point.z - cz) ** 2;
+                    if (distanceSquared < 9) {
+                        concentration = Math.max(concentration, 0.15 * Math.exp(-distanceSquared / (2 * 1.1 ** 2)));
+                    }
+                }
+            }
+            this.microbeV[i] = concentration;
+        }
+    }
+
+    microbeSuitability(i) {
+        if (i >= this.erodibleCount || this.elevation[i] <= this.bedrock[i] + 1e-8) return 0;
+        return Math.max(0, 1 - this.flowHistory[i] / 0.04) *
+            Math.max(0, 1 - this.vegetation[i] / 0.6);
     }
 
     locate(x, z) {
@@ -215,7 +244,7 @@ class TerrainGrid {
 
     toJSON() {
         return {
-            version: '10.0',
+            version: '11.0',
             topology: 'disk-square-polar-v1',
             timestamp: new Date().toISOString(),
             elevation: Array.from(this.elevation),
@@ -223,7 +252,8 @@ class TerrainGrid {
             sediment: Array.from(this.sediment),
             flowHistory: Array.from(this.flowHistory),
             vegetation: Array.from(this.vegetation),
-            mushrooms: Array.from(this.mushrooms),
+            microbeU: Array.from(this.microbeU, value => Math.round(value * 1e6) / 1e6),
+            microbeV: Array.from(this.microbeV, value => Math.round(value * 1e6) / 1e6),
             particles: this.particles.map(p => ({ ...p })),
             metadata: { totalEnergy: this.totalEnergy, convergenceChecked: this.checkConvergence() }
         };
@@ -234,17 +264,21 @@ class TerrainGrid {
         const validParticles = Array.isArray(json.particles) && json.particles.length === this.particles.length &&
             json.particles.every(p => p && [p.x, p.z, p.vx, p.vz, p.sediment].every(Number.isFinite) &&
                 p.sediment >= 0 && this.locate(p.x, p.z));
-        if (json.version !== '10.0' || json.topology !== 'disk-square-polar-v1' || !validParticles ||
+        if (!['10.0', '11.0'].includes(json.version) || json.topology !== 'disk-square-polar-v1' || !validParticles ||
             arrays.some(a => !Array.isArray(a) || a.length !== this.elevation.length || !a.every(Number.isFinite))) {
             console.warn('Saved terrain is incompatible with the circular mesh');
             return false;
         }
-        if (json.elevation.some((height, i) => height < this.bedrock[i])) {
+        const oldSurround = json.version === '10.0';
+        const savedBedrock = (i) => oldSurround
+            ? this.bedrockHeight(this.vertices[i].x, this.vertices[i].z, 0)
+            : this.bedrock[i];
+        if (json.elevation.some((height, i) => height < savedBedrock(i))) {
             console.warn('Saved terrain extends below the bedrock');
             return false;
         }
         if (json.elevation.some((height, i) =>
-            i >= this.erodibleCount && height !== this.bedrock[i] + this.initialSandDepth)) {
+            i >= this.erodibleCount && height !== savedBedrock(i) + this.initialSandDepth)) {
             console.warn('Saved terrain modifies the fixed surround');
             return false;
         }
@@ -256,22 +290,37 @@ class TerrainGrid {
                 console.warn(`Saved terrain has invalid ${name}`);
                 return false;
             }
-            if (json.mushrooms !== undefined && (!Array.isArray(json.mushrooms) ||
-                json.mushrooms.length !== this.mushrooms.length ||
-                json.mushrooms.some(value => !Number.isFinite(value) || value < 0 || value > 1))) {
-                console.warn('Saved terrain has invalid mushrooms');
+        }
+        if ((json.microbeU === undefined) !== (json.microbeV === undefined)) {
+            console.warn('Saved terrain has incomplete microorganism state');
+            return false;
+        }
+        for (const [name, outside] of [['microbeU', 1], ['microbeV', 0]]) {
+            const values = json[name];
+            if (values !== undefined && (!Array.isArray(values) || values.length !== this.elevation.length ||
+                values.some((value, i) => !Number.isFinite(value) || value < 0 || value > 1 ||
+                    (i >= this.erodibleCount && value !== outside)))) {
+                console.warn(`Saved terrain has invalid ${name}`);
                 return false;
             }
         }
         this.elevation.set(json.elevation);
+        if (oldSurround) {
+            for (let i = this.erodibleCount; i < this.elevation.length; i++) {
+                this.elevation[i] = this.bedrock[i] + this.initialSandDepth;
+            }
+        }
         this.waterDepth.set(json.waterDepth);
         this.sediment.set(json.sediment);
         this.flowHistory.fill(0);
         this.vegetation.fill(0);
-        this.mushrooms.fill(0);
         if (json.flowHistory !== undefined) this.flowHistory.set(json.flowHistory);
         if (json.vegetation !== undefined) this.vegetation.set(json.vegetation);
-        if (json.mushrooms !== undefined) this.mushrooms.set(json.mushrooms);
+        if (json.microbeU === undefined) this.seedMicrobes();
+        else {
+            this.microbeU.set(json.microbeU);
+            this.microbeV.set(json.microbeV);
+        }
         this.particles.splice(0, this.particles.length, ...json.particles.map(p => ({ ...p })));
         return true;
     }
