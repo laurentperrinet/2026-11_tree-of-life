@@ -15,6 +15,7 @@ class PhysicsEngine {
         this.transportCapacity = 6;
         this.particleRadius = 0.105;
         this.maxSpeed = 3;
+        this.sandReposeSlope = Math.tan(34 * Math.PI / 180);
         this.particles = [];
         this.createParticles();
     }
@@ -64,6 +65,7 @@ class PhysicsEngine {
         for (let sub = 0; sub < steps; sub++) {
             if (subDt > 0) this.collideParticles(subDt);
             for (const particle of this.particles) this.moveParticle(particle, subDt);
+            if (subDt > 0) this.relaxSand(subDt);
         }
         for (const particle of this.particles) {
             const sample = grid.sample(particle.x, particle.z);
@@ -77,6 +79,30 @@ class PhysicsEngine {
             });
         }
         grid.calculateEnergy();
+    }
+
+    relaxSand(dt) {
+        const grid = this.grid;
+        const fraction = 1 - Math.exp(-20 * dt);
+        for (let pass = 0; pass < 4; pass++) {
+            for (let j = 0; j < grid.edges.length; j++) {
+                const edge = grid.edges[pass % 2 === 0 ? j : grid.edges.length - 1 - j];
+                let high = edge.a;
+                let low = edge.b;
+                if (grid.elevation[high] < grid.elevation[low]) [high, low] = [low, high];
+                const excess = grid.elevation[high] - grid.elevation[low] -
+                    this.sandReposeSlope * edge.length;
+                if (excess <= 0) continue;
+                const available = (grid.elevation[high] - grid.bedrock[high]) * grid.vertexArea[high];
+                if (available <= 0) continue;
+                const amount = Math.min(available, fraction * excess /
+                    (1 / grid.vertexArea[high] + 1 / grid.vertexArea[low]));
+                const oldHeight = grid.elevation[high];
+                grid.elevation[high] = Math.max(grid.bedrock[high], oldHeight - amount / grid.vertexArea[high]);
+                grid.elevation[low] += (oldHeight - grid.elevation[high]) *
+                    grid.vertexArea[high] / grid.vertexArea[low];
+            }
+        }
     }
 
     collideParticles(dt) {

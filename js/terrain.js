@@ -8,7 +8,7 @@ class TerrainGrid {
         this.sectors = 64;
         this.rings = 64;
         this.sinkRadius = 0.8;
-        this.slope = 0.06;
+        this.slope = 0.075;
         this.initialSandDepth = 0.3;
         this.vertices = [{ x: 0, z: 0 }];
         this.triangles = [];
@@ -59,11 +59,26 @@ class TerrainGrid {
         this.vertexArea = new Float64Array(count);
         this.bins = new Map();
         this.binSize = 1;
+        this.edges = [];
+        const edgeKeys = new Set();
         this.triangles.forEach((face, index) => {
             const points = face.map(i => this.vertices[i]);
             const area = Math.abs((points[1].x - points[0].x) * (points[2].z - points[0].z) -
                 (points[2].x - points[0].x) * (points[1].z - points[0].z)) / 2;
             face.forEach(i => { this.vertexArea[i] += area / 3; });
+            for (let k = 0; k < 3; k++) {
+                const a = Math.min(face[k], face[(k + 1) % 3]);
+                const b = Math.max(face[k], face[(k + 1) % 3]);
+                const key = `${a},${b}`;
+                if (!edgeKeys.has(key)) {
+                    edgeKeys.add(key);
+                    this.edges.push({
+                        a, b,
+                        length: Math.hypot(this.vertices[a].x - this.vertices[b].x,
+                            this.vertices[a].z - this.vertices[b].z)
+                    });
+                }
+            }
             const minX = Math.floor(Math.min(...points.map(p => p.x)) / this.binSize);
             const maxX = Math.floor(Math.max(...points.map(p => p.x)) / this.binSize);
             const minZ = Math.floor(Math.min(...points.map(p => p.z)) / this.binSize);
@@ -144,7 +159,7 @@ class TerrainGrid {
 
     toJSON() {
         return {
-            version: '5.0',
+            version: '6.0',
             topology: 'semicircle-8196',
             timestamp: new Date().toISOString(),
             elevation: Array.from(this.elevation),
@@ -160,16 +175,19 @@ class TerrainGrid {
         const validParticles = Array.isArray(json.particles) && json.particles.length === this.particles.length &&
             json.particles.every(p => p && [p.x, p.z, p.vx, p.vz, p.sediment].every(Number.isFinite) &&
                 p.sediment >= 0 && this.locate(p.x, p.z));
-        if (json.version !== '5.0' || json.topology !== 'semicircle-8196' || !validParticles ||
+        if (!['5.0', '6.0'].includes(json.version) || json.topology !== 'semicircle-8196' || !validParticles ||
             arrays.some(a => !Array.isArray(a) || a.length !== this.elevation.length || !a.every(Number.isFinite))) {
             console.warn('Saved terrain is incompatible with the semi-circular mesh');
             return false;
         }
-        if (json.elevation.some((height, i) => height < this.bedrock[i])) {
+        const oldSlope = json.version === '5.0' ? 0.06 : this.slope;
+        if (json.elevation.some((height, i) =>
+            height < oldSlope * Math.hypot(this.vertices[i].x, this.vertices[i].z))) {
             console.warn('Saved terrain extends below the bedrock');
             return false;
         }
-        this.elevation.set(json.elevation);
+        this.elevation.set(json.elevation.map((height, i) =>
+            height + (this.slope - oldSlope) * Math.hypot(this.vertices[i].x, this.vertices[i].z)));
         this.waterDepth.set(json.waterDepth);
         this.sediment.set(json.sediment);
         this.particles.splice(0, this.particles.length, ...json.particles.map(p => ({ ...p })));

@@ -1,9 +1,10 @@
 # 🌊 Tree of Life - Collaborative Hydromorphodynamic Simulation
 
 > **Current status:** The GitHub Pages site runs a local simulation. The
-> Cloudflare Worker in `worker/` is an experimental, locally tested backend;
-> it is not deployed or connected to the site. OAuth and collaborative
-> computation are not yet operational. Statements below about production
+> Cloudflare Worker in `worker/` is deployed as an experimental backend, but
+> is not connected to the site. Its state endpoint has been verified; OAuth
+> and collaborative computation have not been verified end to end and are not
+> yet operational. Statements below about production
 > readiness, automatic GitHub synchronization, and deployment describe the
 > older prototype and should not be relied on.
 
@@ -15,6 +16,7 @@ from the arc to the sink at height zero. It is initially covered by a
 uniform layer of sand 0.3 simulation units deep; the simulated terrain
 elevation is the base height plus the sand thickness. The surrounding apron
 and raised edge are fixed; only the sand surface evolves.
+The base has a radial slope of 0.075 (previously 0.06).
 The outer mesh vertices lie on the arc; the straight edges between them
 approximate it by a polygon. Parcels are injected just inside, and reflected
 at, that same polygonal boundary.
@@ -30,6 +32,10 @@ push one another when they overlap; this approximate water pressure helps
 spread accumulations and keep water moving towards the sink. Collision impulses
 can deflect particles. The evolving
 bed affects subsequent paths, so flow can concentrate in eroded channels.
+Sand also avalanches between neighboring mesh vertices when the slope along an
+edge exceeds an angle of repose of 34 degrees. These local transfers conserve
+sand volume and never remove the underlying bedrock. This is a simplified
+granular relaxation, not a full model of wet sand or fluid mechanics.
 The elevation view darkens areas actually eroded below their initial height.
 A fixed, sloping non-erodible layer limits erosion at each vertex; sediment
 can still accumulate on it. Exposed bedrock is shown in grey. Bed
@@ -42,9 +48,10 @@ realistic fluid dynamics, and branching is not guaranteed. Remote terrain merges
 if configured, are external modifications and do not conserve this local
 sediment balance.
 
-The mesh and particle state use version 5 of the `semicircle-8196` save
-format. Earlier saves with a different mesh are not loaded. The new
-local-storage key starts a fresh terrain without deleting the old save.
+The mesh and particle state use version 6 of the `semicircle-8196` save
+format. Version 5 saves are migrated by lifting the bed and its sand together,
+preserving sand thickness and particle state. Earlier saves with a different
+mesh are not loaded.
 Test the browser model with `node --test tests/terrain-physics.test.js`.
 
 ## Experimental Cloudflare Worker
@@ -93,8 +100,8 @@ node --test worker/physics.test.mjs worker/index.test.mjs
 ```
 
 These tests use a local mock, not the Cloudflare runtime or a deployed OAuth
-application. The GitHub Pages client still needs integration and end-to-end
-testing.
+application. The deployed Worker's state endpoint has been checked separately.
+The GitHub Pages client still needs integration and end-to-end testing.
 
 An interactive web-based simulation of water-driven terrain erosion creating natural branching patterns, inspired by the "Tree of Life" photograph from Iceland. Each browser visitor contributes to building a shared terrain through a collaborative, persistent GitHub-backed system.
 
