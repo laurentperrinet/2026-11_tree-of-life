@@ -150,7 +150,9 @@ class Application {
             }
             
             this.handleUrlParams();
-            // Start main loop
+            // Start the clock now, so that the start-up time is not credited to the
+            // first physics step.
+            this.lastRenderTime = performance.now();
             this.animate();
         } catch (error) {
             console.error('Initialization error:', error);
@@ -167,8 +169,9 @@ class Application {
         const deltaTime = (now - this.lastRenderTime) / 1000;
         this.lastRenderTime = now;
         
-        // Physics step
-        const dt = this.physics.step();
+        // The physics step follows wall-clock time, so the simulated time per second
+        // does not depend on the device's frame rate (within maxFrameSeconds).
+        const dt = this.physics.step(deltaTime);
         this.simulationTime.add(dt);
         this.biology.step(dt);
         if (now - this.lastBiologySaveTime >= 5000) {

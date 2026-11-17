@@ -13,7 +13,8 @@
     <!-- Status bar -->
     <div id="status-badge" class="status-badge">
         <div class="status-metrics" aria-label="Simulation status">
-            <div class="status-metric" role="group" title="Active collaborators in the last 24 hours">
+            <div class="status-metric" role="group"
+                title="Distinct collaborating browsers since counting began (online in the last two sync intervals)">
                 <span aria-hidden="true">👥</span><span id="contrib-count">0</span>
             </div>
             <div class="status-metric" role="group" title="Time since last successful sync">
@@ -22,8 +23,13 @@
             <div class="status-metric" role="group" title="Time until the next scheduled sync">
                 <span aria-hidden="true">⌛</span><span id="next-sync">--</span>s
             </div>
-            <div class="status-metric" role="group" title="Time until the Worker merges pending contributions">
-                <span aria-hidden="true">🔀</span><span id="next-merge">--</span>s
+            <div class="status-metric" role="group"
+                title="Time until the Worker merges pending contributions (number pending)">
+                <span aria-hidden="true">🔀</span><span id="next-merge">--</span>s<span id="pending-contributions"></span>
+            </div>
+            <div class="status-metric" role="group"
+                title="Browsers averaged in the last terrain merge (✓ includes this browser) and its age">
+                <span aria-hidden="true">🤝</span><span id="last-merge">--</span>
             </div>
             <div class="status-metric" role="group" title="Cumulative simulation time in this browser">
                 <span aria-hidden="true">🕰️</span><span id="simulation-time">--</span> sim s
@@ -57,7 +63,9 @@
             <h2 id="status-help-title">Simulation status</h2>
             <button id="status-help-close" type="button" aria-label="Close status help">×</button>
         </div>
-        <p>👥 <strong>Collaborators:</strong> browser IDs seen by the Worker in the last 24 hours.</p>
+        <p>👥 <strong>Collaborators:</strong> distinct browser IDs seen by the Worker since it
+            began counting them; in parentheses, those that synchronized within the last two
+            synchronization intervals (about ten minutes), i.e. currently online.</p>
         <p>🔄 <strong>Last sync:</strong> wall-clock seconds since this browser last synchronized successfully.</p>
         <p>⌛ <strong>Next sync:</strong> wall-clock seconds until the next scheduled attempt;
             retry delays increase after errors. “--” appears while syncing or when no
@@ -66,7 +74,12 @@
             collection window and averages the pending contributions, as reported at the
             last sync. 0 means the merge will be applied at the next request from any
             browser; this browser receives the merged terrain at its next sync. “--” means
-            no contribution is pending.</p>
+            no contribution is pending. The number in parentheses counts the browsers whose
+            contributions are waiting to be averaged.</p>
+        <p>🤝 <strong>Last merge:</strong> number of browsers whose elevation changes were
+            averaged into the shared terrain at the Worker's last merge, then how long ago it
+            happened. ✓ means this browser's contribution was among them. Several browsers
+            mean the terrain combines different collaborators' work.</p>
         <p>🕰️ <strong>Simulation time:</strong> cumulative simulated seconds in this browser,
             saved locally every five seconds and summed across its open tabs. It is not
             shared between browsers and starts counting from this feature's introduction.
@@ -94,7 +107,6 @@
             Sign in with GitHub to access simulation controls.
         </p>
         <ul id="admin-controls" hidden>
-            <li><kbd>+</kbd>/<kbd>-</kbd> : Flow rate Q±</li>
             <li><kbd>↑</kbd>/<kbd>↓</kbd> : Speed V±</li>
             <li><kbd>S</kbd> : Force sync</li>
             <li><kbd>R</kbd> : Reset (auth only)</li>

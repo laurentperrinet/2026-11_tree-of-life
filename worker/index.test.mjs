@@ -105,23 +105,20 @@ test('a changed mesh signature resets shared terrain and pending contributions o
     equal((await request('/api/state')).body.version, 13);
 });
 
-test('existing shared state is migrated to the sand-free channel without losing other sand', async () => {
-    for (const schemaVersion of [2, 3]) {
-        const mesh = createInitialMesh(schemaVersion === 2 ? 0 : undefined, false, 0);
-        const channelIndex = mesh.vertices.findIndex(({ x, z }) =>
-            z > 0 && Math.abs(x) < (0.8 + 0.12 * z) * 0.9);
-        const bankIndex = mesh.vertices.findIndex(({ x, z }) =>
-            z > 0 && Math.abs(x) > (0.8 + 0.12 * z) * 1.3);
-        mesh.elevation[channelIndex] += 0.1;
-        mesh.elevation[bankIndex] += 0.2;
+test('shared states from the polar-ring meshes restart on the spiral mesh', async () => {
+    const polarJitter = JSON.stringify([
+        'disk-square-polar-v2', 25, 30, 125, 0.2, 'channel-sand-free-v1', 'jitter-v1', 0.1, 2026
+    ]);
+    for (const [schemaVersion, meshSignature] of [
+        [2, undefined], [3, LEGACY_MESH_SIGNATURE], [4, polarJitter]
+    ]) {
+        // The polar meshes had 50,264 vertices, 48,696 of them erodible.
         const old = {
-            schemaVersion,
-            meshSignature: schemaVersion === 2 ? undefined : LEGACY_MESH_SIGNATURE,
-            version: 12,
-            elevation: mesh.elevation,
-            bedrock: mesh.bedrock,
-            erodibleCount: mesh.erodibleCount,
-            sumDelta: new Float64Array(mesh.elevation.length),
+            schemaVersion, meshSignature, version: 12,
+            elevation: new Float64Array(50_264).fill(1),
+            bedrock: new Float64Array(50_264),
+            erodibleCount: 48_696,
+            sumDelta: new Float64Array(50_264),
             activeClients: {},
             contributions: { [clientA]: true },
             contributionIds: [clientA],
@@ -129,12 +126,13 @@ test('existing shared state is migrated to the sand-free channel without losing 
         };
         const { request, storedState } = harness(old);
         const state = await request('/api/state');
-        const newMesh = createInitialMesh();
+        const mesh = createInitialMesh();
+        equal(state.status, 200);
         equal(state.body.version, 13);
         equal(state.body.acceptedContributions, 0);
-        equal(state.body.terrain.elevation[channelIndex], newMesh.bedrock[channelIndex]);
-        ok(Math.abs(state.body.terrain.elevation[bankIndex] - newMesh.bedrock[bankIndex] - 0.5) < 1e-12);
+        deepStrictEqual(state.body.terrain.elevation, Array.from(mesh.elevation));
         equal(storedState().meshSignature, MESH_SIGNATURE);
+        equal(storedState().erodibleCount, mesh.erodibleCount);
         equal((await request('/api/state')).body.version, 13);
     }
 });
@@ -270,9 +268,76 @@ test('contributions from the same version are averaged once per browser', async 
         });
         equal(finalized.body.version, 1);
         equal(finalized.body.mergeInMs, null);
+        equal(finalized.body.totalCollaborators, 3);
+        equal(finalized.body.onlineCollaborators, 3);
+        deepStrictEqual(finalized.body.lastMerge,
+            { agoMs: 0, version: 1, contributors: 2, includesYou: false });
+        Date.now = () => now + 360_001;
+        const contributor = await request('/api/sync', {
+            method: 'POST', clientId: clientA, version: 1
+        });
+        deepStrictEqual(contributor.body.lastMerge,
+            { agoMs: 60_000, version: 1, contributors: 2, includesYou: true });
+        equal((await request('/api/state')).body.lastMerge.includesYou, null);
         equal(finalized.body.activeCollaborators, 3);
         equal(finalized.body.acceptedContributions, 0);
         ok(Math.abs(finalized.body.terrain.elevation[0] - (initial.body.terrain.elevation[0] + 0.1)) < 1e-6);
+    } finally {
+        Date.now = realNow;
+    }
+});
+
+test('browser activity and the collaborator count survive a mesh change', async () => {
+    const seed = harness();
+    await seed.request('/api/state');
+    const now = Date.now();
+    const { request } = harness({
+        ...seed.storedState(), meshSignature: 'earlier mesh',
+        activeClients: { [clientA]: now, [clientB]: now, 'not-an-id': now }
+    });
+    const body = (await request('/api/state')).body;
+    equal(body.activeCollaborators, 2);
+    equal(body.totalCollaborators, 2);
+});
+
+test('collaborators are counted once in total and as online while recently seen', async () => {
+    const seed = harness();
+    await seed.request('/api/state');
+    const start = 2_000_000_000;
+    const realNow = Date.now;
+    try {
+        Date.now = () => start;
+        // A stored state without a count is seeded from its active browser IDs.
+        const { request } = harness({
+            ...seed.storedState(), activeClients: { [clientA]: start, [clientB]: start }
+        });
+        let body = (await request('/api/state')).body;
+        equal(body.totalCollaborators, 2);
+        equal(body.onlineCollaborators, 2);
+        equal(body.activeCollaborators, 2);
+
+        Date.now = () => start + 601_000;
+        body = (await request('/api/sync', { method: 'POST', clientId: clientC })).body;
+        equal(body.totalCollaborators, 3);
+        equal(body.onlineCollaborators, 1);
+        equal(body.activeCollaborators, 3);
+
+        // A browser returning after its 24 h activity expired is not counted again.
+        Date.now = () => start + 25 * 3600_000;
+        body = (await request('/api/sync', { method: 'POST', clientId: clientA })).body;
+        equal(body.activeCollaborators, 1);
+        equal(body.totalCollaborators, 3);
+
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = async () => Response.json({ id: 123 });
+        try {
+            const reset = await request('/api/admin/reset', { method: 'POST', token: 'owner' });
+            equal(reset.status, 200);
+            equal(reset.body.totalCollaborators, 3);
+            equal(reset.body.lastMerge, null);
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
     } finally {
         Date.now = realNow;
     }

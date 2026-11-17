@@ -44,24 +44,13 @@ class InputControls {
             !new URLSearchParams(window.location.search).has('admin')) return;
         
         // Prevent defaults for control keys
-        if (['ArrowUp', 'ArrowDown', '+', '-', 's', 'r', 'S', 'R', '?'].includes(event.key)) {
+        if (['ArrowUp', 'ArrowDown', 's', 'r', 'S', 'R', '?'].includes(event.key)) {
             event.preventDefault();
         }
-        
+
         switch (event.key.toUpperCase()) {
-            // Flow rate control
-            case '+':
-            case '=':
-                app.physics.Q_inlet = Math.min(2.0, app.physics.Q_inlet + 0.1);
-                app.ui.showToast(`Flow rate: ${app.physics.Q_inlet.toFixed(2)}`, 'info');
-                break;
-            case '-':
-            case '_':
-                app.physics.Q_inlet = Math.max(0, app.physics.Q_inlet - 0.1);
-                app.ui.showToast(`Flow rate: ${app.physics.Q_inlet.toFixed(2)}`, 'info');
-                break;
-            
-            // Speed control
+            // Speed control: the only rate control, since the former "flow rate"
+            // merely scaled the time step too.
             case 'ARROWUP':
                 app.physics.timeScale = Math.min(5.0, app.physics.timeScale * 1.5);
                 app.ui.showToast(`Speed: ${app.physics.timeScale.toFixed(1)}x`, 'info');

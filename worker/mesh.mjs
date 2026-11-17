@@ -1,7 +1,11 @@
 export const MESH_RADIUS = 25;
 export const MESH_HALF_SIZE = 30;
-export const MESH_RINGS = 125;
 export const MESH_SPACING = 0.2;
+// Gap between the last spiral point and the disk edge, as a fraction of
+// MESH_SPACING. It keeps every edge of the boundary polygon a Gabriel edge
+// (hence present in the Delaunay triangulation) and gives the best minimum
+// triangle angle (29 degrees) among the margins tested.
+export const MESH_SPIRAL_MARGIN = 0.75;
 export const MESH_SINK_RADIUS = 0.8;
 export const MESH_SLOPE = 0.09;
 export const MESH_SURROUND_SLOPE = 0.3;
@@ -9,17 +13,16 @@ export const MESH_PERIPHERAL_SLOPE = 0.06;
 export const MESH_PERIPHERAL_WIDTH = 4;
 export const MESH_INITIAL_SAND_DEPTH = 0.3;
 export const MESH_CHANNEL_FLARE = 0.12;
-// Vertex jitter radius as a fraction of MESH_SPACING; it breaks the alignments
-// of the polar rings along the cardinal axes without changing the topology.
+// Vertex jitter radius as a fraction of MESH_SPACING; it blurs the spiral
+// parastichies so that no direction is singled out locally.
 export const MESH_JITTER = 0.1;
 export const MESH_JITTER_SEED = 2026;
-export const LEGACY_MESH_SIGNATURE = JSON.stringify([
-    'disk-square-polar-v2', MESH_RADIUS, MESH_HALF_SIZE, MESH_RINGS, MESH_SPACING
-]);
+export const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+export const LEGACY_MESH_SIGNATURE = JSON.stringify(['disk-square-polar-v2', 25, 30, 125, 0.2]);
 export const CHANNEL_SAND_FREE_PROFILE = 'channel-sand-free-v1';
 export const MAX_REQUESTS_PER_SYNC = 2;
 export const MESH_SIGNATURE = JSON.stringify([
-    'disk-square-polar-v2', MESH_RADIUS, MESH_HALF_SIZE, MESH_RINGS, MESH_SPACING,
+    'disk-square-vogel-v1', MESH_RADIUS, MESH_HALF_SIZE, MESH_SPACING, MESH_SPIRAL_MARGIN,
     CHANNEL_SAND_FREE_PROFILE, 'jitter-v1', MESH_JITTER, MESH_JITTER_SEED
 ]);
 
@@ -45,7 +48,7 @@ export function hashUint32(x) {
 }
 
 /**
- * Deterministic isotropic displacement of one mesh vertex.
+ * Deterministic isotropic displacement of one spiral vertex.
  *
  * The offset is uniform in a disk, drawn by rejection from a square: unlike a
  * square jitter it has no preferred cardinal direction, and unlike polar
@@ -82,53 +85,69 @@ export function channelSandFactor(x, z) {
 }
 
 /**
- * Build the vertex positions and the initial bed of the shared terrain.
+ * Unjittered position of point n of the Vogel (sunflower) spiral.
+ *
+ * Point n lies at radius c sqrt(n) and angle n times the golden angle, with
+ * c = MESH_SPACING / sqrt(pi) so that each point owns an area MESH_SPACING^2.
+ * The golden angle is the most irrational rotation, so no two points share a
+ * direction and the packing has no preferred axis.
  *
  * Args:
- *   peripheralSlope: extra bed slope near the disk edge (m/m).
- *   channelSandFree: leave the output channel without initial sand.
- *   jitter: vertex displacement radius as a fraction of MESH_SPACING
- *     (dimensionless); 0 rebuilds the regular mesh of older saves.
+ *   n: spiral index (vertex index of the disk interior).
+ *
+ * Returns:
+ *   The position `{ x, z }` (m).
+ */
+export function spiralPoint(n) {
+    const radius = MESH_SPACING / Math.sqrt(Math.PI) * Math.sqrt(n);
+    const angle = (n * GOLDEN_ANGLE) % (2 * Math.PI);
+    return { x: radius * Math.cos(angle), z: -radius * Math.sin(angle) };
+}
+
+/**
+ * Number of spiral points inside the disk, up to MESH_SPIRAL_MARGIN from its edge.
+ *
+ * Returns:
+ *   The count of interior (erodible) vertices.
+ */
+export function spiralPointCount() {
+    const maxRadius = MESH_RADIUS - MESH_SPIRAL_MARGIN * MESH_SPACING;
+    return Math.floor(Math.PI * (maxRadius / MESH_SPACING) ** 2) + 1;
+}
+
+/**
+ * Build the vertex positions and the initial bed of the shared terrain.
+ *
+ * Vertices are, in order: the jittered Vogel spiral filling the disk
+ * (erodible), the boundary polygon on the circle of radius MESH_RADIUS, and its
+ * radial projection on the square of half-side MESH_HALF_SIZE. The browser
+ * (`js/terrain.js`) builds the same vertices in the same order and adds the
+ * triangulation, which the Worker does not need.
  *
  * Returns:
  *   Vertices (m), elevation and bedrock (m), the erodible vertex count and
  *   the initial sand-depth factor of each vertex.
  */
-export function createInitialMesh(
-    peripheralSlope = MESH_PERIPHERAL_SLOPE,
-    channelSandFree = true,
-    jitter = MESH_JITTER
-) {
-    const vertices = [{ x: 0, z: 0 }];
-    let outer = [];
-
-    for (let r = 1; r <= MESH_RINGS; r++) {
-        const radius = MESH_RADIUS * r / MESH_RINGS;
-        const sectors = r === MESH_RINGS
-            ? 8 * Math.round(2 * Math.PI * radius / MESH_SPACING / 8)
-            : Math.max(6, Math.round(2 * Math.PI * radius / MESH_SPACING));
-        const offset = r === MESH_RINGS ? 0 : (r % 2 ? 0.5 : -0.5) * 2 * Math.PI / sectors;
-        outer = [];
-        for (let s = 0; s < sectors; s++) {
-            const angle = 2 * Math.PI * s / sectors + offset;
-            outer.push(vertices.length);
-            vertices.push({ x: radius * Math.cos(angle), z: -radius * Math.sin(angle) });
-        }
+export function createInitialMesh() {
+    const vertices = [];
+    const erodibleCount = spiralPointCount();
+    for (let n = 0; n < erodibleCount; n++) {
+        const { x, z } = spiralPoint(n);
+        const { dx, dz } = meshJitter(n);
+        vertices.push({ x: x + dx, z: z + dz });
     }
-
-    const erodibleCount = outer[0];
-    // The outer ring stays on the circle so that the disk edge and the square
-    // surround (projected from it) keep their exact shape.
-    for (let i = 0; i < erodibleCount; i++) {
-        const { dx, dz } = meshJitter(i, jitter * MESH_SPACING);
-        vertices[i].x += dx;
-        vertices[i].z += dz;
+    // A multiple of 8 puts polygon vertices on the axes and diagonals, so the
+    // square corners are projections of polygon vertices.
+    const sectors = 8 * Math.round(2 * Math.PI * MESH_RADIUS / MESH_SPACING / 8);
+    const outer = [];
+    for (let s = 0; s < sectors; s++) {
+        const angle = 2 * Math.PI * s / sectors;
+        outer.push(vertices.length);
+        vertices.push({ x: MESH_RADIUS * Math.cos(angle), z: -MESH_RADIUS * Math.sin(angle) });
     }
-    const square = [];
     for (const index of outer) {
         const point = vertices[index];
         const factor = MESH_HALF_SIZE / Math.max(Math.abs(point.x), Math.abs(point.z));
-        square.push(vertices.length);
         vertices.push({ x: point.x * factor, z: point.z * factor });
     }
 
@@ -138,7 +157,7 @@ export function createInitialMesh(
         const radius = Math.hypot(x, z);
         const cone = MESH_SLOPE * Math.min(MESH_RADIUS, radius) +
             MESH_SURROUND_SLOPE * Math.max(0, radius - MESH_RADIUS) +
-            peripheralSlope * Math.max(0, Math.min(MESH_PERIPHERAL_WIDTH,
+            MESH_PERIPHERAL_SLOPE * Math.max(0, Math.min(MESH_PERIPHERAL_WIDTH,
                 radius - MESH_RADIUS + MESH_PERIPHERAL_WIDTH));
         if (z <= 0) {
             bedrock[i] = cone;
@@ -152,7 +171,7 @@ export function createInitialMesh(
 
     const sandDepthFactor = Float64Array.from(bedrock, (_, i) => {
         const { x, z } = vertices[i];
-        return channelSandFree ? channelSandFactor(x, z) : 1;
+        return channelSandFactor(x, z);
     });
     const elevation = Float64Array.from(
         bedrock, (height, i) => height + MESH_INITIAL_SAND_DEPTH * sandDepthFactor[i]

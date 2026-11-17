@@ -7,6 +7,11 @@ const DAILY_REQUEST_BUDGET = 80_000;
 const MAX_COMPRESSED_BYTES = 300_000;
 const MAX_DELTA = 10;
 const STATE_SCHEMA_VERSION = 4;
+// A browser counts as online when seen within this many synchronization intervals.
+const ONLINE_SYNC_INTERVALS = 2;
+// Kept outside the terrain state so that resets and mesh changes do not lose it.
+const COLLABORATOR_TOTAL_KEY = 'collaboratorTotal';
+const COLLABORATOR_KEY_PREFIX = 'collaborator:';
 const ORIGIN = 'https://laurentperrinet.github.io';
 const FRONTEND_URL = `${ORIGIN}/2026-11_tree-of-life/`;
 
@@ -34,7 +39,8 @@ function createState(version = 0) {
         contributions: {},
         contributionIds: [],
         sumDelta: new Float64Array(mesh.elevation.length),
-        windowEndsAt: null
+        windowEndsAt: null,
+        lastMerge: null
     };
 }
 
@@ -231,7 +237,8 @@ export class Simulation {
 
     async loadState() {
         const stored = await this.ctx.storage.get('state');
-        if ([2, 3, STATE_SCHEMA_VERSION].includes(stored?.schemaVersion) &&
+        if (stored?.schemaVersion === STATE_SCHEMA_VERSION &&
+            stored.meshSignature === MESH_SIGNATURE &&
             stored.elevation instanceof Float64Array &&
             stored.bedrock instanceof Float64Array &&
             stored.sumDelta instanceof Float64Array &&
@@ -239,41 +246,66 @@ export class Simulation {
             stored.elevation.length === stored.sumDelta.length &&
             stored.activeClients && typeof stored.activeClients === 'object' &&
             stored.contributions && typeof stored.contributions === 'object' &&
-            Array.isArray(stored.contributionIds)) {
-            if (stored.meshSignature === MESH_SIGNATURE &&
-                stored.schemaVersion === STATE_SCHEMA_VERSION) return stored;
-            const previousMesh = stored.meshSignature === LEGACY_MESH_SIGNATURE ||
-                stored.meshSignature === undefined;
-            if (previousMesh && [2, 3].includes(stored.schemaVersion)) {
-                // Older states were built on the regular (unjittered) mesh; the
-                // sand depth of each vertex is carried over to its jittered position.
-                const oldMesh = stored.schemaVersion === 2
-                    ? createInitialMesh(0, false, 0)
-                    : createInitialMesh(undefined, false, 0);
-                if (stored.erodibleCount !== oldMesh.erodibleCount ||
-                    stored.bedrock.length !== oldMesh.bedrock.length ||
-                    !stored.bedrock.every((height, i) => height === oldMesh.bedrock[i]) ||
-                    !stored.elevation.every((height, i) => Number.isFinite(height) && height >= stored.bedrock[i])) {
-                    throw new Error('Cannot migrate an incompatible stored terrain profile');
-                }
-                const mesh = createInitialMesh();
-                const state = createState(Number.isSafeInteger(stored.version) ? stored.version + 1 : 0);
-                state.elevation = Float64Array.from(stored.elevation, (height, i) =>
-                    state.bedrock[i] + (height - stored.bedrock[i]) * mesh.sandDepthFactor[i]);
-                state.activeClients = stored.activeClients;
-                await this.ctx.storage.put('state', state);
-                return state;
-            }
-        }
+            Array.isArray(stored.contributionIds)) return stored;
+        // States from earlier meshes (polar rings) are not migrated: their
+        // vertices do not correspond to those of the spiral, so the terrain
+        // restarts from the initial bed with a higher version number.
         const version = Number.isSafeInteger(stored?.version) ? stored.version + 1 : 0;
         const state = createState(version);
+        // Browser activity does not depend on the mesh, so it survives a terrain
+        // restart and still seeds the cumulative collaborator count.
+        if (stored?.activeClients && typeof stored.activeClients === 'object') {
+            state.activeClients = Object.fromEntries(Object.entries(stored.activeClients)
+                .filter(([id, lastSeen]) => /^[a-f0-9]{32}$/.test(id) && Number.isFinite(lastSeen)));
+        }
         await this.ctx.storage.put('state', state);
         return state;
+    }
+
+    /**
+     * Load the cumulative count of distinct browser IDs, seeding it on first use.
+     *
+     * Args:
+     *   state: Shared state whose active browser IDs seed a missing count.
+     *   now: Current time (ms since the Unix epoch).
+     */
+    async loadCollaboratorTotal(state, now) {
+        if (this.totalCollaborators !== undefined) return;
+        const stored = await this.ctx.storage.get(COLLABORATOR_TOTAL_KEY);
+        if (Number.isSafeInteger(stored) && stored >= 0) {
+            this.totalCollaborators = stored;
+            return;
+        }
+        // Earlier IDs were forgotten after 24 h, so counting starts from the active ones.
+        this.totalCollaborators = 0;
+        for (const id of Object.keys(state.activeClients)) {
+            await this.registerCollaborator(id, now, false);
+        }
+        await this.ctx.storage.put(COLLABORATOR_TOTAL_KEY, this.totalCollaborators);
+    }
+
+    /**
+     * Count a browser ID once, however long it stays away.
+     *
+     * Args:
+     *   id: Validated browser ID.
+     *   now: Time it was first seen (ms since the Unix epoch).
+     *   persistTotal: Whether to store the updated count immediately.
+     */
+    async registerCollaborator(id, now, persistTotal = true) {
+        const key = COLLABORATOR_KEY_PREFIX + id;
+        if (await this.ctx.storage.get(key) !== undefined) return;
+        await this.ctx.storage.put(key, now);
+        this.totalCollaborators++;
+        if (persistTotal) {
+            await this.ctx.storage.put(COLLABORATOR_TOTAL_KEY, this.totalCollaborators);
+        }
     }
 
     async handle(request, delta) {
         const path = new URL(request.url).pathname;
         const state = await this.loadState();
+        await this.loadCollaboratorTotal(state, Date.now());
 
         if (path === '/api/state' && request.method === 'GET') {
             return this.stateResponse(state);
@@ -293,6 +325,7 @@ export class Simulation {
             state.contributionIds = [];
             state.sumDelta = new Float64Array(mesh.elevation.length);
             state.windowEndsAt = null;
+            state.lastMerge = null;
             await this.ctx.storage.put('state', state);
             return this.stateResponse(state);
         }
@@ -321,11 +354,15 @@ export class Simulation {
         for (const [id, lastSeen] of Object.entries(state.activeClients)) {
             if (now - lastSeen > ACTIVE_CLIENT_MS) delete state.activeClients[id];
         }
+        // Active IDs are already counted; only the others need a storage lookup.
+        if (!Object.hasOwn(state.activeClients, clientId)) {
+            await this.registerCollaborator(clientId, now);
+        }
         state.activeClients[clientId] = now;
 
         let finalized = false;
         if (state.windowEndsAt !== null && now >= state.windowEndsAt) {
-            this.finalizeContributions(state);
+            this.finalizeContributions(state, now);
             finalized = true;
         }
 
@@ -364,11 +401,12 @@ export class Simulation {
         return this.stateResponse(
             state,
             { accepted, duplicate },
-            clientVersion === null || clientVersion !== state.version
+            clientVersion === null || clientVersion !== state.version,
+            clientId
         );
     }
 
-    finalizeContributions(state) {
+    finalizeContributions(state, now) {
         const count = state.contributionIds.length;
         if (count > 0) {
             for (let i = 0; i < state.elevation.length; i++) {
@@ -378,6 +416,11 @@ export class Simulation {
                 );
             }
             state.version++;
+            // IDs stay in the Worker; responses only reveal their number and
+            // whether the requesting browser was among them.
+            state.lastMerge = {
+                at: now, version: state.version, contributorIds: [...state.contributionIds]
+            };
         }
         state.contributions = {};
         state.contributionIds = [];
@@ -385,19 +428,32 @@ export class Simulation {
         state.windowEndsAt = null;
     }
 
-    stateResponse(state, extra = {}, includeTerrain = true) {
+    stateResponse(state, extra = {}, includeTerrain = true, clientId = null) {
+        const now = Date.now();
         const activeCollaborators = Object.keys(state.activeClients).length;
+        const syncIntervalMs = getSyncIntervalMs(activeCollaborators, DAILY_REQUEST_BUDGET);
+        const onlineCollaborators = Object.values(state.activeClients)
+            .filter(lastSeen => now - lastSeen <= ONLINE_SYNC_INTERVALS * syncIntervalMs).length;
+        const lastMerge = state.lastMerge ? {
+            agoMs: Math.max(0, now - state.lastMerge.at),
+            version: state.lastMerge.version,
+            contributors: state.lastMerge.contributorIds.length,
+            includesYou: clientId === null ? null : state.lastMerge.contributorIds.includes(clientId)
+        } : null;
         const result = {
             version: state.version,
             meshSignature: MESH_SIGNATURE,
             activeCollaborators,
+            onlineCollaborators,
+            totalCollaborators: this.totalCollaborators ?? null,
             acceptedContributions: state.contributionIds.length,
-            syncIntervalMs: getSyncIntervalMs(activeCollaborators, DAILY_REQUEST_BUDGET),
+            lastMerge,
+            syncIntervalMs,
             dailyRequestBudget: DAILY_REQUEST_BUDGET,
             // Relative delay, so browsers with a skewed clock still count down correctly.
             // Zero means the window has closed and the next request will apply the merge.
             mergeInMs: state.windowEndsAt === null
-                ? null : Math.max(0, state.windowEndsAt - Date.now()),
+                ? null : Math.max(0, state.windowEndsAt - now),
             ...extra
         };
         if (includeTerrain) result.terrain = { elevation: Array.from(state.elevation) };

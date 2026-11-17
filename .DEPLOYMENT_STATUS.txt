@@ -22,10 +22,10 @@ GITHUB OAUTH APPLICATION
   Callback   https://laurentperrinet.github.io/2026-11_tree-of-life/
 
 CURRENT FORMATS
-  Mesh       disk-square-polar-v2, R 25, L 30, 125 rings, spacing 0.2,
+  Mesh       disk-square-vogel-v1, R 25, L 30, spacing 0.2, margin 0.75,
              channel-sand-free-v1, jitter-v1 (0.1, seed 2026)
-  Worker     state schema 4 (migrates 2 and 3)
-  Browser    terrain save 13.0 (reads 10.0 to 12.0), biology save 1
+  Worker     state schema 4 (resets any other schema or mesh)
+  Browser    terrain save 14.0 (older saves ignored), biology save 1
   Rule       a mesh change needs the Worker and the site deployed together
 
 CHECKS AFTER A DEPLOYMENT
@@ -37,4 +37,4 @@ CHECKS AFTER A DEPLOYMENT
   4. ?admin > Sign in with GitHub works and shows the lock and login.
   5. Optional, owner only: Reset Terrain increments the shared version.
 
-See DEPLOYMENT.md for the procedure and DEVELOPMENT.md for failures.
+See README.md, sections "Deployment" and "Troubleshooting".

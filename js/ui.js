@@ -1,4 +1,17 @@
 /**
+ * Format an elapsed wall-clock duration compactly (s, min, h, d).
+ *
+ * Args:
+ *   seconds: Elapsed time (s), non-negative.
+ */
+function formatElapsed(seconds) {
+    if (seconds < 60) return `${seconds} s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)} min`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)} h`;
+    return `${Math.floor(seconds / 86400)} d`;
+}
+
+/**
  * UI Manager - status badge, toasts, reset button
  */
 class UIManager {
@@ -31,7 +44,12 @@ class UIManager {
         if (now - this.lastStatusUpdate < 1000) return;
         this.lastStatusUpdate = now;
 
-        const contribCount = collaboration.activeCollaborators || 0;
+        // Older Workers report only the 24 h count, which then stands alone.
+        const total = collaboration.totalCollaborators;
+        const online = collaboration.onlineCollaborators;
+        const contribCount = total === null || total === undefined
+            ? `${collaboration.activeCollaborators || 0}`
+            : `${total}${online === null || online === undefined ? '' : ` (${online})`}`;
         const lastSync = collaboration.getSecondsSinceSync();
         const syncText = lastSync !== null ? `${lastSync}` : '--';
         
@@ -41,6 +59,13 @@ class UIManager {
         document.getElementById('next-sync').textContent = nextSync === null ? '--' : `${nextSync}`;
         const nextMerge = collaboration.getSecondsUntilMerge();
         document.getElementById('next-merge').textContent = nextMerge === null ? '--' : `${nextMerge}`;
+        const pending = collaboration.pendingContributions;
+        document.getElementById('pending-contributions').textContent =
+            pending > 0 ? ` (${pending})` : '';
+        const lastMerge = collaboration.getLastMerge();
+        document.getElementById('last-merge').textContent = lastMerge === null ? '--'
+            : `${lastMerge.contributors}${lastMerge.includesYou ? ' ✓' : ''} · ` +
+              formatElapsed(lastMerge.secondsAgo);
         try {
             document.getElementById('simulation-time').textContent = Math.floor(simulationTime.getTotal());
             this.simulationTimeReadFailed = false;

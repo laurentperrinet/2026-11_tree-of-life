@@ -13,6 +13,10 @@ class CollaborativeSync {
         this.baseElevation = null;
         this.submittedVersion = null;
         this.activeCollaborators = 0;
+        this.totalCollaborators = null;
+        this.onlineCollaborators = null;
+        this.pendingContributions = null;
+        this.lastMerge = null;
         this.syncIntervalMs = 300_000;
         this.lastSyncTime = 0;
         this.running = false;
@@ -138,6 +142,25 @@ class CollaborativeSync {
         if (mergeInMs !== null && !(Number.isFinite(mergeInMs) && mergeInMs >= 0)) {
             throw new Error('Collaboration Worker returned an invalid merge delay');
         }
+        // Older Workers omit these counts; null keeps the status bar on its fallback.
+        const optionalCount = name => {
+            const value = data[name] ?? null;
+            if (value !== null && !(Number.isSafeInteger(value) && value >= 0)) {
+                throw new Error(`Collaboration Worker returned an invalid ${name}`);
+            }
+            return value;
+        };
+        const totalCollaborators = optionalCount('totalCollaborators');
+        const onlineCollaborators = optionalCount('onlineCollaborators');
+        const pendingContributions = optionalCount('acceptedContributions');
+        const lastMerge = data.lastMerge ?? null;
+        if (lastMerge !== null && (
+            !Number.isFinite(lastMerge.agoMs) || lastMerge.agoMs < 0 ||
+            !Number.isSafeInteger(lastMerge.contributors) || lastMerge.contributors < 1 ||
+            !Number.isSafeInteger(lastMerge.version) ||
+            ![true, false, null, undefined].includes(lastMerge.includesYou))) {
+            throw new Error('Collaboration Worker returned an invalid last merge');
+        }
         const signature = this.terrain.meshSignature();
         if (data.meshSignature === undefined
             ? signature !== LEGACY_TERRAIN_MESH_SIGNATURE
@@ -159,6 +182,15 @@ class CollaborativeSync {
         }
         this.activeCollaborators = data.activeCollaborators;
         this.nextMergeAt = mergeInMs === null ? null : Date.now() + mergeInMs;
+        this.totalCollaborators = totalCollaborators;
+        this.onlineCollaborators = onlineCollaborators;
+        this.pendingContributions = pendingContributions;
+        this.lastMerge = lastMerge === null ? null : {
+            at: Date.now() - lastMerge.agoMs,
+            version: lastMerge.version,
+            contributors: lastMerge.contributors,
+            includesYou: lastMerge.includesYou === true
+        };
         this.syncIntervalMs = Math.max(300_000, data.syncIntervalMs);
         this.meshSignatureSupported = data.meshSignature !== undefined;
     }
@@ -205,6 +237,21 @@ class CollaborativeSync {
     getSecondsUntilMerge() {
         return this.nextMergeAt === null
             ? null : Math.max(0, Math.ceil((this.nextMergeAt - Date.now()) / 1000));
+    }
+
+    /**
+     * Summary of the Worker's last terrain merge, or null before the first one.
+     *
+     * Returns contributors (browsers averaged), includesYou (whether this browser's
+     * contribution was among them) and secondsAgo (wall-clock s).
+     */
+    getLastMerge() {
+        if (this.lastMerge === null) return null;
+        return {
+            contributors: this.lastMerge.contributors,
+            includesYou: this.lastMerge.includesYou,
+            secondsAgo: Math.max(0, Math.floor((Date.now() - this.lastMerge.at) / 1000))
+        };
     }
 
     fetchAndMerge() {

@@ -34,7 +34,7 @@
   },
   "homepage": "https://laurentperrinet.github.io/2026-11_tree-of-life/",
   "notes": {
-    "performance": "One CPU physics step per animation frame on a 50,264-vertex polar mesh with 1,500 water parcels; see PERFORMANCE.md for measured costs.",
+    "performance": "One CPU physics step per animation frame on a 50,069-vertex spiral mesh with 1,500 water parcels; see the Performance section of README.md for measured costs.",
     "optimization": "Typed arrays (Float64Array for the bed, Float32Array for biology) on a single thread; sand relaxation dominates the physics step.",
     "dependencies_external": "Three.js r128 is loaded from cdnjs; the browser app needs no npm install. The Worker is deployed with wrangler."
   }

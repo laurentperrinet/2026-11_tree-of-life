@@ -12,6 +12,7 @@ function harness() {
     let accepted = false;
     let responseSignature = 'test mesh';
     let mergeInMs;
+    let extra = {};
     const clock = { now: 1_000_000 };
     const context = vm.createContext({
         console,
@@ -37,7 +38,8 @@ function harness() {
                 syncIntervalMs: 120_000,
                 accepted,
                 dailyRequestBudget: 80_000,
-                mergeInMs
+                mergeInMs,
+                ...extra
             };
             if (options.headers['X-Terrain-Version'] !== String(responseVersion)) {
                 data.terrain = { elevation: [1, 2] };
@@ -59,6 +61,7 @@ function harness() {
     return {
         sync, terrain, requests, clock,
         setMergeInMs(value) { mergeInMs = value; },
+        setExtra(value) { extra = value; },
         setAccepted(value) { accepted = value; },
         setVersion(value) { responseVersion = value; },
         setSignature(value) { responseSignature = value; }
@@ -190,6 +193,29 @@ test('next merge countdown follows the Worker collection window', async () => {
     h.setMergeInMs(null);
     await h.sync.sync();
     assert.equal(h.sync.getSecondsUntilMerge(), null);
+});
+
+test('collaborator totals and the last merge are read from the Worker', async () => {
+    const h = harness();
+    await h.sync.sync();
+    assert.equal(h.sync.totalCollaborators, null);
+    assert.equal(h.sync.getLastMerge(), null);
+    h.setExtra({
+        totalCollaborators: 37, onlineCollaborators: 3, acceptedContributions: 1,
+        lastMerge: { agoMs: 60_000, version: 4, contributors: 3, includesYou: true }
+    });
+    await h.sync.sync();
+    assert.equal(h.sync.totalCollaborators, 37);
+    assert.equal(h.sync.onlineCollaborators, 3);
+    assert.equal(h.sync.pendingContributions, 1);
+    assert.deepEqual({ ...h.sync.getLastMerge() },
+        { contributors: 3, includesYou: true, secondsAgo: 60 });
+    h.clock.now += 30_000;
+    assert.equal(h.sync.getLastMerge().secondsAgo, 90);
+    h.setExtra({ lastMerge: { agoMs: 0, version: 4, contributors: 0, includesYou: false } });
+    await assert.rejects(h.sync.sync(), /invalid last merge/);
+    h.setExtra({ totalCollaborators: -1 });
+    await assert.rejects(h.sync.sync(), /invalid totalCollaborators/);
 });
 
 test('reset waits for an in-flight sync and blocks new synchronization', async () => {

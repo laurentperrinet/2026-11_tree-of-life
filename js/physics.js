@@ -8,10 +8,22 @@ const SAND_THROUGHPUT_WINDOW_SECONDS = 60;
 class PhysicsEngine {
     constructor(grid) {
         this.grid = grid;
+        // Nominal step (sim s), used when step() is called without wall-clock time,
+        // as in the tests.
         this.dt = 0.04;
+        // Simulated seconds per wall-clock second at timeScale 1. Tying the step to
+        // real time makes the simulation advance equally fast on every device,
+        // instead of in proportion to its frame rate. A frame costs about 24 ms per
+        // substep plus about 0.6 s of colony update per simulated second (Apple M3
+        // Ultra), so 0.5 lets such a machine keep up with one substep per frame.
+        this.simulationRate = 0.5;
+        // Longest wall-clock interval (s) credited to one frame. It bounds the cost
+        // of a frame (here 0.05 sim s, 2 substeps, close to the former fixed step):
+        // a device too slow to keep up, or a tab back from the background, falls
+        // behind real time instead of taking ever longer, ever slower frames.
+        this.maxFrameSeconds = 0.1;
         this.g = 9.81;
         this.friction = 1.8;
-        this.Q_inlet = 0.5;
         this.timeScale = 1;
         this.particleCount = 1500;
         this.waterPerParticle = 0.02;
@@ -45,7 +57,8 @@ class PhysicsEngine {
 
     reinject(particle, fraction = Math.random()) {
         const angle = 2 * Math.PI * fraction;
-        const radius = this.arcBoundary(angle).radius - 3 * this.grid.radius / this.grid.rings;
+        // Three mesh spacings inside the edge: well within the erodible spiral.
+        const radius = this.arcBoundary(angle).radius - 3 * this.grid.spacing;
         particle.x = radius * Math.cos(angle);
         particle.z = -radius * Math.sin(angle);
         particle.vx = 0;
@@ -73,13 +86,27 @@ class PhysicsEngine {
         return t * t * (3 - 2 * t);
     }
 
-    step() {
+    /**
+     * Advance the parcels, the sediment exchange and the sand relaxation.
+     *
+     * Args:
+     *   wallSeconds: wall-clock time elapsed since the previous frame (s). When
+     *     given, the step is simulationRate * timeScale * min(wallSeconds,
+     *     maxFrameSeconds); when omitted, it is the nominal dt * timeScale.
+     *
+     * Returns:
+     *   The simulated time advanced (sim s).
+     */
+    step(wallSeconds) {
         const grid = this.grid;
         grid.waterDepth.fill(0);
         grid.sediment.fill(0);
         grid.velocityX.fill(0);
         grid.velocityY.fill(0);
-        const dt = this.dt * this.timeScale * this.Q_inlet / 0.5;
+        const base = wallSeconds === undefined
+            ? this.dt
+            : this.simulationRate * Math.min(Math.max(0, wallSeconds), this.maxFrameSeconds);
+        const dt = base * this.timeScale;
         // Keep travel per substep smaller than a particle radius.
         const steps = Math.max(1, Math.ceil(dt / (this.particleRadius / this.maxSpeed)));
         const subDt = dt / steps;
@@ -167,7 +194,6 @@ class PhysicsEngine {
                 let high = edge.a;
                 let low = edge.b;
                 if (grid.elevation[high] < grid.elevation[low]) [high, low] = [low, high];
-                if (grid.sandDepthFactorAt(low) === 0) continue;
                 const excess = grid.elevation[high] - grid.elevation[low] -
                     this.sandReposeSlope * edge.length;
                 if (excess <= 0) continue;
@@ -250,10 +276,9 @@ class PhysicsEngine {
         const grid = this.grid;
         const sample = grid.sample(particle.x, particle.z);
         if (!sample) throw new Error('Evaporating particle outside the terrain mesh');
-        const weights = sample.weights.map((weight, i) =>
-            Math.max(0, weight) * grid.sandDepthFactorAt(sample.face[i]));
+        const weights = sample.weights.map(weight => Math.max(0, weight));
         const total = weights.reduce((sum, weight) => sum + weight, 0);
-        if (total < 1e-12) return;
+        if (total < 1e-12) throw new Error('No terrain for sediment deposit');
         for (let i = 0; i < sample.face.length; i++) {
             if (weights[i] > 0) {
                 const index = sample.face[i];
@@ -281,17 +306,26 @@ class PhysicsEngine {
         }
         const capacity = this.waterPerParticle * this.transportCapacity * Math.max(0, speed - 0.1);
         const exchangeRate = speed < 0.1 ? 2 : 0.3;
-        let exchange = (capacity - particle.sediment) * (1 - Math.exp(-exchangeRate * dt));
+        const relaxation = 1 - Math.exp(-exchangeRate * dt);
+        // Entrainment and settling act at the same time, rather than as one net
+        // exchange: on a sand bed the balance still relaxes the load towards
+        // capacity, but on bare bedrock nothing can be entrained while the load
+        // keeps settling, so a loaded parcel leaves a trail behind it.
+        let entrainment = capacity * relaxation;
+        let settling = particle.sediment * relaxation;
         if (speed < previousSpeed && particle.sediment > 0) {
+            // A slowing parcel drops at least the fraction of its load it lost in speed.
             const slowingDeposit = particle.sediment * (1 - speed / previousSpeed);
-            exchange = Math.min(exchange, -slowingDeposit);
+            if (entrainment - settling > -slowingDeposit) {
+                entrainment = 0;
+                settling = slowingDeposit;
+            }
         }
-        if (exchange < 0) exchange = -Math.min(particle.sediment, -exchange);
         let actualExchange = 0;
         sample.face.forEach((index, i) => {
             if (index >= grid.erodibleCount) return;
-            const amount = exchange * Math.max(0, sample.weights[i]) * grid.sandDepthFactorAt(index) *
-                (exchange > 0 ? this.erosionFactor(index) : 1);
+            const amount = Math.max(0, sample.weights[i]) *
+                (entrainment * this.erosionFactor(index) - settling);
             const previousHeight = grid.elevation[index];
             const height = Math.max(grid.bedrock[index], previousHeight - amount / grid.vertexArea[index]);
             grid.elevation[index] = height;
