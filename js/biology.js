@@ -52,6 +52,10 @@ class BiologyGrid {
         this.inhibitor.fill(0);
         this.microbeU.fill(1);
         this.microbeV.fill(0);
+        this.nextPlants.fill(0);
+        this.nextInhibitor.fill(0);
+        this.nextU.fill(1);
+        this.nextV.fill(0);
         this.elapsed = 0;
         const radius = this.terrain.radius;
         for (let z = 0; z < this.size; z++) {
@@ -143,6 +147,7 @@ class BiologyGrid {
         const steps = Math.ceil(5 * dt);
         if (!steps) return;
         const step = 5 * dt / steps;
+        const offsets = [-1, 1, -size, size];
         for (let n = 0; n < steps; n++) {
             for (let i = 0; i < count; i++) {
                 this.habitat[i] = this.active[i] && this.sand[i]
@@ -155,7 +160,8 @@ class BiologyGrid {
                     const p = this.plants[i], inhibitor = this.inhibitor[i];
                     const u = this.microbeU[i], v = this.microbeV[i], habitat = this.habitat[i];
                     let lapP = 0, lapI = 0, lapU = 0, lapV = 0;
-                    for (const j of [i - 1, i + 1, i - size, i + size]) {
+                    for (const offset of offsets) {
+                        const j = i + offset;
                         if (!this.active[j] || !this.sand[j] || !this.sand[i]) continue;
                         lapP += (this.plants[j] - p) / 4;
                         lapI += (this.inhibitor[j] - inhibitor) / 4;

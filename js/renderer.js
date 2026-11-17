@@ -125,7 +125,6 @@ class TerrainRenderer {
             }
         }
         const color = new THREE.Color();
-        const normals = this.terrainMesh.geometry.attributes.normal;
         for (let i = 0; i < grid.elevation.length; i++) {
             if (i >= grid.erodibleCount) {
                 color.setRGB(0, 0, 0);

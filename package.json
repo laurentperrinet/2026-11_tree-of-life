@@ -10,7 +10,7 @@
     "format": "prettier --write '**/*.{js,css,html,json,md}'",
     "build": "echo 'No build step needed - static files only'",
     "deploy": "git push origin main",
-    "test": "node --test worker/index.test.mjs tests/auth.test.js tests/collaboration.test.js"
+    "test": "node --test tests/*.test.js worker/*.test.mjs"
   },
   "keywords": [
     "simulation",

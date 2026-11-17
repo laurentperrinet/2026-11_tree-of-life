@@ -208,12 +208,14 @@ class AuthManager {
  * Reset manager - handles terrain reset with auth check
  */
 class ResetManager {
-    constructor(auth, terrain, physics, localStore, collaboration) {
+    constructor(auth, terrain, physics, localStore, collaboration, biology = null, biologyStore = null) {
         this.auth = auth;
         this.terrain = terrain;
         this.physics = physics;
         this.localStore = localStore;
         this.collaboration = collaboration;
+        this.biology = biology;
+        this.biologyStore = biologyStore;
     }
     
     /**
@@ -235,6 +237,10 @@ class ResetManager {
         try {
             this.physics.reset();
             await this.collaboration.reset(this.auth.token);
+            if (this.biology) {
+                this.biology.reset();
+                if (!this.biologyStore.save(this.biology)) throw new Error('Could not save reset biology');
+            }
             this.localStore.clear();
             
             console.log('Shared terrain reset complete');

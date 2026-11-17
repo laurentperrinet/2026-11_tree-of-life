@@ -8,10 +8,12 @@ class Application {
         // Create core systems
         this.grid = new TerrainGrid();
         this.physics = new PhysicsEngine(this.grid);
+        this.biology = new BiologyGrid(this.grid);
         this.renderer = new TerrainRenderer(this.canvas);
         
         // Storage and sync
         this.localStore = new LocalStorageManager();
+        this.biologyStore = new LocalStorageManager('tree-of-life-local-biology-v1', null);
         this.collaboration = new CollaborativeSync(this.grid, this.localStore);
         
         // Auth and reset
@@ -21,7 +23,8 @@ class Application {
             exchangeUrl: 'https://2026-11-tree-of-life.laurent-perrinet.workers.dev/api/auth/exchange'
         });
         this.reset = new ResetManager(
-            this.auth, this.grid, this.physics, this.localStore, this.collaboration
+            this.auth, this.grid, this.physics, this.localStore, this.collaboration,
+            this.biology, this.biologyStore
         );
         
         // UI
@@ -32,6 +35,9 @@ class Application {
         
         // Timing
         this.lastRenderTime = 0;
+        this.lastBiologySaveTime = 0;
+        this.biologySaveFailed = false;
+        this.biologyLoaded = false;
         this.frameCount = 0;
         this.fps = 60;
         
@@ -98,7 +104,13 @@ class Application {
             this.ui.updateAdminPanel();
             this.ui.updateAuthStatus();
             
-            this.localStore.load(this.grid);
+            const loaded = this.localStore.load(this.grid);
+            if (!this.biologyStore.load(this.biology)) {
+                if (this.biologyStore.getSize() > 0) throw new Error('Could not load local biology');
+                if (loaded && this.grid.hasLegacyBiology) this.biology.importLegacy();
+                if (!this.biologyStore.save(this.biology)) throw new Error('Could not save local biology');
+            }
+            this.biologyLoaded = true;
 
             try {
                 await this.collaboration.start();
@@ -107,7 +119,8 @@ class Application {
                 this.ui.showToast(`Collaboration unavailable: ${error.message}`, 'warning', 8000);
             }
 
-            this.renderer.createTerrainMesh(this.grid);
+            this.biology.updateSand();
+            this.renderer.createTerrainMesh(this.grid, this.biology);
             
             this.ui.showLoading(false);
             this.ui.showToast(authError ? authError.message : '✓ Simulation ready',
@@ -131,10 +144,19 @@ class Application {
         this.lastRenderTime = now;
         
         // Physics step
-        this.physics.step();
+        const dt = this.physics.step();
+        this.biology.step(dt);
+        if (now - this.lastBiologySaveTime >= 5000) {
+            this.lastBiologySaveTime = now;
+            const saved = this.biologyStore.save(this.biology);
+            if (!saved && !this.biologySaveFailed) {
+                this.ui.showToast('Could not save local biology', 'error', 8000);
+            }
+            this.biologySaveFailed = !saved;
+        }
         
         // Update renderer
-        this.renderer.updateTerrainMesh(this.grid);
+        this.renderer.updateTerrainMesh(this.grid, this.biology);
         this.renderer.updateParticles(this.physics);
         
         // Update UI
@@ -155,6 +177,9 @@ class Application {
      */
     dispose() {
         this.collaboration.stop();
+        if (this.biologyLoaded && !this.biologyStore.save(this.biology)) {
+            console.error('Could not save local biology on exit');
+        }
         this.renderer.dispose();
     }
 }
