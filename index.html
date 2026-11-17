@@ -14,30 +14,30 @@
     <div id="status-badge" class="status-badge">
         <div class="status-metrics" aria-label="Simulation status">
             <div class="status-metric" role="group"
-                title="Distinct collaborating browsers since counting began (online in the last two sync intervals)">
+                title="Screens that have taken part since counting began (here now)">
                 <span aria-hidden="true">👥</span><span id="contrib-count">0</span>
             </div>
-            <div class="status-metric" role="group" title="Time since last successful sync">
+            <div class="status-metric" role="group" title="Seconds since your screen last exchanged with the shared map">
                 <span aria-hidden="true">🔄</span><span id="last-sync">--</span>s
             </div>
-            <div class="status-metric" role="group" title="Time until the next scheduled sync">
+            <div class="status-metric" role="group" title="Seconds until your screen next exchanges with the shared map">
                 <span aria-hidden="true">⌛</span><span id="next-sync">--</span>s
             </div>
             <div class="status-metric" role="group"
-                title="Time until the Worker merges pending contributions (number pending)">
+                title="Seconds until the shared map blends the changes it has collected (screens waiting)">
                 <span aria-hidden="true">🔀</span><span id="next-merge">--</span>s<span id="pending-contributions"></span>
             </div>
             <div class="status-metric" role="group"
-                title="Browsers averaged in the last terrain merge (✓ includes this browser) and its age">
+                title="Screens blended into the shared map last time (✓ includes yours), and how long ago">
                 <span aria-hidden="true">🤝</span><span id="last-merge">--</span>
             </div>
-            <div class="status-metric" role="group" title="Cumulative simulation time in this browser">
+            <div class="status-metric" role="group" title="Simulated time on this computer">
                 <span aria-hidden="true">🕰️</span><span id="simulation-time">--</span> sim s
             </div>
-            <div class="status-metric" role="group" title="Mean rim-to-sink water transit time">
+            <div class="status-metric" role="group" title="Average time for a drop to travel from the edge to the drain">
                 <span aria-hidden="true">⏱️</span><span id="mean-transit-time">--</span> sim s
             </div>
-            <div class="status-metric" role="group" title="Water particles passing through the sink">
+            <div class="status-metric" role="group" title="Drops reaching the drain per simulated second">
                 <span aria-hidden="true">💧</span><span id="particle-throughput">0.00</span> particles/sim s
             </div>
         </div>
@@ -60,44 +60,63 @@
 
     <dialog id="status-help-dialog" class="status-help-dialog" aria-labelledby="status-help-title">
         <div class="status-help-heading">
-            <h2 id="status-help-title">Simulation status</h2>
+            <h2 id="status-help-title">What the status bar tells you</h2>
             <button id="status-help-close" type="button" aria-label="Close status help">×</button>
         </div>
-        <p>👥 <strong>Collaborators:</strong> distinct browser IDs seen by the Worker since it
-            began counting them; in parentheses, those that synchronized within the last two
-            synchronization intervals (about ten minutes), i.e. currently online.</p>
-        <p>🔄 <strong>Last sync:</strong> wall-clock seconds since this browser last synchronized successfully.</p>
-        <p>⌛ <strong>Next sync:</strong> wall-clock seconds until the next scheduled attempt;
-            retry delays increase after errors. “--” appears while syncing or when no
-            attempt is scheduled.</p>
-        <p>🔀 <strong>Next merge:</strong> wall-clock seconds until the Worker closes its
-            collection window and averages the pending contributions, as reported at the
-            last sync. 0 means the merge will be applied at the next request from any
-            browser; this browser receives the merged terrain at its next sync. “--” means
-            no contribution is pending. The number in parentheses counts the browsers whose
-            contributions are waiting to be averaged.</p>
-        <p>🤝 <strong>Last merge:</strong> number of browsers whose elevation changes were
-            averaged into the shared terrain at the Worker's last merge, then how long ago it
-            happened. ✓ means this browser's contribution was among them. Several browsers
-            mean the terrain combines different collaborators' work.</p>
-        <p>🕰️ <strong>Simulation time:</strong> cumulative simulated seconds in this browser,
-            saved locally every five seconds and summed across its open tabs. It is not
-            shared between browsers and starts counting from this feature's introduction.
-            Clearing browser storage erases it.</p>
-        <p>⏱️ <strong>Mean transit time:</strong> average simulated time from the rim to
-            the sink over the last 100 completed trips. Evaporated parcels are excluded.</p>
-        <p>💧 <strong>Particle flow:</strong> water parcels reaching the sink per simulated
-            second over the last 60 simulated seconds, or since startup if less.
-            Evaporated parcels are excluded; water and sediment are recycled.</p>
-        <p>“sim s” denotes simulation seconds, not wall-clock seconds.</p>
-        <p>The Worker averages accepted elevation changes per browser and vertex.
-            Contributions based on an older terrain version are discarded. Water, sediment,
-            particles, vegetation and microorganisms remain local to each browser.</p>
-        <p>The adaptive interval is at least five minutes and targets 80,000
-            synchronization-related requests per day; it is not a hard request limit.
-            The next sync may occur later if the browser suspends this tab.</p>
-        <p><strong>View</strong> or <kbd>D</kbd> changes the display mode.
-            🔒 identifies a signed-in GitHub account. The GitHub link opens the source code.</p>
+
+        <h3>How sharing works</h3>
+        <p>Picture a large map of sand that everyone draws on together. Your screen does not
+            draw on the map itself: it works on a sheet of tracing paper laid over it. Here,
+            the water flowing on your screen carves its own channels in the sand.</p>
+        <p>Every few minutes, like a postman on a round, your screen posts what its water
+            changed to a shared table, and brings back the latest version of the map.</p>
+        <p>The shared table collects the tracings it receives for a few minutes, then blends
+            them, as a jury averages its marks: where one screen dug and another piled sand,
+            the map takes the average. Everyone then copies this new map and carries on.</p>
+        <p>Only the shape of the sand is shared. The water, the plants and the microbes
+            stay on your own screen.</p>
+
+        <h3>Sharing</h3>
+        <p>👥 <strong>Visitors</strong>, for example “37 (3)”: 37 screens have taken part
+            since counting began on 2026-11-17, like names in a guest book; 3 of them are
+            here now (heard from in the last ten minutes or so).</p>
+        <p>🔄 <strong>Last post</strong>: seconds since your screen last exchanged with
+            the shared table.</p>
+        <p>⌛ <strong>Next post</strong>: seconds until the postman’s next round.
+            “--” means a post is on its way. If a round fails (no network, for example),
+            the postman waits twice as long before trying again, up to six hours.</p>
+        <p>🔀 <strong>Next blend</strong>: seconds until the shared table blends the
+            tracings it has collected; in brackets, how many screens are waiting.
+            “--” means nothing is waiting. 0 means the blend is due: it happens as soon as
+            any screen gets in touch, and you see the result at your next post.</p>
+        <p>🤝 <strong>Last blend</strong>, for example “3 ✓ · 12 min”: the last blend
+            mixed the work of 3 screens, 12 minutes ago. ✓ means yours was one of them.
+            Two screens or more means the sand you see was shaped together.</p>
+
+        <h3>Your own simulation</h3>
+        <p>The simulation runs on its own clock, like a time-lapse film: “sim s” are
+            simulated seconds, not seconds on your watch.</p>
+        <p>🕰️ <strong>Simulated time</strong>: how long the water has flowed on this
+            computer, all its tabs together. It is kept on this computer only and is not
+            shared.</p>
+        <p>⏱️ <strong>Journey time</strong>: how long a drop of water (a blue dot) takes,
+            on average, to travel from the edge of the disk to the drain at the bottom,
+            over its last 100 journeys.</p>
+        <p>💧 <strong>Flow</strong>: how many drops reach the drain each simulated second,
+            like cars counted at a toll booth, over the last minute of simulated time.
+            A drop that reaches the drain is put back near the edge with the sand it
+            carries, so the water keeps circulating. A drop can also evaporate on the way:
+            it turns white, leaves its sand where it is, reappears near the edge and is not
+            counted.</p>
+
+        <h3>Buttons</h3>
+        <p><strong>View</strong> (or the <kbd>D</kbd> key) changes what the map shows:
+            height, mesh, sand depth, water flow or sand carried by the water.
+            🔒 shows the GitHub account you are signed in with.
+            <strong>GitHub</strong> opens the source code.</p>
+        <p>To spare the shared table, rounds never come more often than every five
+            minutes, and they space out when many people are visiting. A tab left in the
+            background may be a little late.</p>
     </dialog>
 
     <!-- Help panel (bottom-left) -->
@@ -113,6 +132,11 @@
             <li><kbd>?</kbd> : Toggle help</li>
             <li>🖱️ Drag: Rotate | Scroll: Zoom</li>
         </ul>
+        <div id="timelapse-container" class="timelapse-container">
+            <button id="timelapse-button" type="button"
+                title="Save one PNG of the default view per second in a timelapse folder on this computer">📷 Start timelapse</button>
+            <p id="timelapse-status" class="timelapse-status" role="status" hidden></p>
+        </div>
         <button id="auth-button">🔓 Sign in with GitHub</button>
         <div id="reset-container" style="display: none;">
             <button id="reset-button" class="btn-danger">🔄 Reset Terrain</button>
@@ -139,6 +163,7 @@
     <script src="js/collaboration.js"></script>
     <script src="js/auth.js"></script>
     <script src="js/controls.js"></script>
+    <script src="js/timelapse.js"></script>
     <script src="js/ui.js"></script>
     <script src="js/main.js"></script>
 </body>

@@ -274,6 +274,13 @@ button:disabled {
     background: #b71c1c;
 }
 
+.timelapse-status {
+    font-size: 11px;
+    line-height: 1.5;
+    margin-top: 6px;
+    overflow-wrap: anywhere;
+}
+
 #reset-container {
     margin-top: 12px;
     padding-top: 12px;
@@ -367,4 +374,10 @@ button:disabled {
     .help-panel h2 {
         font-size: 12px;
     }
+}
+
+.status-help-dialog h3 {
+    margin: 14px 0 6px;
+    font-size: 14px;
+    color: #90caf9;
 }

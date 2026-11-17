@@ -6,6 +6,8 @@ STATIC SITE (GitHub Pages)
   URL        https://laurentperrinet.github.io/2026-11_tree-of-life/
   Deployed   on every push to main, by .github/workflows/deploy.yml
   Setting    Repository Settings > Pages > Source = GitHub Actions
+  Commit     version.json ({"commit": "<sha>"}) written by the workflow, not in
+             git; stamps the admin timelapse frames
 
 COLLABORATION WORKER (Cloudflare)
   URL        https://tree-of-life.laurent-perrinet.workers.dev

@@ -7,9 +7,10 @@ class TerrainRenderer {
         this.scene = new THREE.Scene();
         this.scene.background = new THREE.Color(0x05070d);
         this.camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 1000);
-        this.camera.position.set(0, 65, 0);
-        this.camera.up.set(0, 0, -1);
-        this.camera.lookAt(0, 0, 0);
+        TerrainRenderer.placeDefaultCamera(this.camera);
+        this.captureTarget = null;
+        this.captureCamera = null;
+        this.captureBuffer = null;
         this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.scene.add(new THREE.AmbientLight(0xffffff, 0.65));
@@ -19,7 +20,7 @@ class TerrainRenderer {
         this.terrainMesh = null;
         this.biologyMesh = null;
         this.particleMesh = null;
-        this.displayMode = 'elevation';
+        this.displayMode = TerrainRenderer.DEFAULT_DISPLAY_MODE;
         this.dummy = new THREE.Object3D();
         window.addEventListener('resize', () => this.onWindowResize());
         this.onWindowResize();
@@ -240,15 +241,67 @@ class TerrainRenderer {
         this.renderer.render(this.scene, this.camera);
     }
 
+    /**
+     * Render the default view (zenith camera, `elevation` mode) off screen, whatever
+     * the visitor's camera and display mode, and return its pixels.
+     *
+     * The image size is fixed rather than the window's, so that timelapse frames
+     * keep the same size; the visible canvas is left untouched.
+     *
+     * Args:
+     *   grid: TerrainGrid, to recolour the bed if another display mode is shown.
+     *   biology: BiologyGrid, idem for the vegetation overlay.
+     *   width: Image width (px).
+     *   height: Image height (px).
+     *
+     * Returns:
+     *   Uint8ClampedArray of width × height opaque RGBA pixels, top row first.
+     */
+    captureDefaultView(grid, biology, width, height) {
+        if (!this.captureTarget || this.captureTarget.width !== width || this.captureTarget.height !== height) {
+            this.captureTarget?.dispose();
+            // The default framebuffer is antialiased; a multisampled target (WebGL 2)
+            // gives frames the same smooth edges as the screen.
+            const Target = this.renderer.capabilities.isWebGL2 && THREE.WebGLMultisampleRenderTarget
+                ? THREE.WebGLMultisampleRenderTarget : THREE.WebGLRenderTarget;
+            this.captureTarget = new Target(width, height);
+            this.captureCamera = new THREE.PerspectiveCamera(55, width / height, 0.1, 1000);
+            this.captureBuffer = new Uint8Array(width * height * 4);
+        }
+        TerrainRenderer.placeDefaultCamera(this.captureCamera);
+        this.captureCamera.aspect = width / height;
+        this.captureCamera.fov = TerrainRenderer.fieldOfView(this.captureCamera.aspect);
+        this.captureCamera.updateProjectionMatrix();
+
+        const mode = this.displayMode;
+        const recolour = mode !== TerrainRenderer.DEFAULT_DISPLAY_MODE;
+        if (recolour) {
+            this.displayMode = TerrainRenderer.DEFAULT_DISPLAY_MODE;
+            this.updateTerrainMesh(grid, biology);
+        }
+        try {
+            this.renderer.setRenderTarget(this.captureTarget);
+            this.renderer.render(this.scene, this.captureCamera);
+            this.renderer.readRenderTargetPixels(this.captureTarget, 0, 0, width, height, this.captureBuffer);
+        } finally {
+            this.renderer.setRenderTarget(null);
+            if (recolour) {
+                this.displayMode = mode;
+                this.updateTerrainMesh(grid, biology);
+            }
+        }
+        return TerrainRenderer.flipRows(this.captureBuffer, width, height);
+    }
+
     onWindowResize() {
         this.camera.aspect = window.innerWidth / window.innerHeight;
-        this.camera.fov = 2 * Math.atan(Math.tan(55 * Math.PI / 360) /
-            Math.min(1, this.camera.aspect)) * 180 / Math.PI;
+        this.camera.fov = TerrainRenderer.fieldOfView(this.camera.aspect);
         this.camera.updateProjectionMatrix();
         this.renderer.setSize(window.innerWidth, window.innerHeight);
     }
 
     dispose() {
+        this.captureTarget?.dispose();
         this.scene.traverse(object => {
             if (object.geometry) object.geometry.dispose();
             if (object.material) object.material.dispose();
@@ -256,6 +309,32 @@ class TerrainRenderer {
         this.renderer.dispose();
     }
 }
+
+TerrainRenderer.DEFAULT_DISPLAY_MODE = 'elevation';
+
+// Camera of the page at start-up and of timelapse frames: straight down at the disk.
+TerrainRenderer.placeDefaultCamera = camera => {
+    camera.position.set(0, 65, 0);
+    camera.up.set(0, 0, -1);
+    camera.lookAt(0, 0, 0);
+};
+
+// Vertical field of view (degrees): 55° when the image is wider than tall, widened
+// on portrait images so that the disk still fits horizontally.
+TerrainRenderer.fieldOfView = aspect =>
+    2 * Math.atan(Math.tan(55 * Math.PI / 360) / Math.min(1, aspect)) * 180 / Math.PI;
+
+// WebGL reads pixels bottom row first; images are stored top row first. Alpha is
+// forced to opaque, since transparent parcels blend into it in a render target.
+TerrainRenderer.flipRows = (pixels, width, height) => {
+    const out = new Uint8ClampedArray(width * height * 4);
+    const row = width * 4;
+    for (let y = 0; y < height; y++) {
+        out.set(pixels.subarray((height - 1 - y) * row, (height - y) * row), y * row);
+    }
+    for (let i = 3; i < out.length; i += 4) out[i] = 255;
+    return out;
+};
 
 TerrainRenderer.DEEP = [[0.993, 0.994, 0.8], [0.866, 0.947, 0.73], [0.734, 0.902, 0.676], [0.596, 0.857, 0.645],
     [0.47, 0.806, 0.639], [0.383, 0.747, 0.643], [0.334, 0.684, 0.641], [0.305, 0.62, 0.632], [0.283, 0.556, 0.619],

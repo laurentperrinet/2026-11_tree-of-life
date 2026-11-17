@@ -33,6 +33,10 @@ class Application {
         
         // Input
         this.controls = new InputControls(this.renderer);
+
+        // Admin timelapse: local PNG frames of the default view
+        this.timelapse = new TimelapseRecorder(this.renderer);
+        this.ui.setupTimelapse(this.timelapse);
         
         // Timing
         this.lastRenderTime = 0;
@@ -202,7 +206,9 @@ class Application {
         
         // Render
         this.renderer.render();
-        
+        // After the frame's state is final, so a frame matches what was just shown.
+        this.timelapse?.update(now, this.grid, this.biology);
+
         // FPS counter
         this.frameCount++;
         
@@ -215,6 +221,7 @@ class Application {
      */
     dispose() {
         this.collaboration.stop();
+        this.timelapse?.stop();
         try {
             this.simulationTime.save();
         } catch (error) {

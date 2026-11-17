@@ -64,7 +64,8 @@ leave the browser**. Only the elevation field is shared.
 2. Drag to orbit, scroll to zoom.
 3. Press **D** or click **View** to cycle through `elevation`, `mesh`,
    `sand depth`, `flux` and `sediment`.
-4. Click **❔** in the status bar for the meaning of each indicator.
+4. Click **❔** in the status bar: it explains, in plain words, each indicator
+   and how your screen shares the sand with other visitors.
 
 What you see: a circular bed of sand, 50 units across, inside a black square.
 Its bedrock is a shallow inverted cone. Water runs towards the centre, then down an
@@ -465,6 +466,7 @@ The page opens looking straight down at the disk.
 | **S** | Sync now, if the adaptive interval has elapsed | Signed-in, `?admin` |
 | **R**, twice within 3 s | Reset the shared terrain | Owner only |
 | **?** | Toggle the control panel | Signed-in, `?admin` |
+| **📷 Start timelapse** | Save one PNG of the default view per second on this computer ([Timelapse](#timelapse)) | `?admin`, Chrome or Edge |
 
 Touch gestures and double-click are not handled. For debugging, `window.app`
 exposes the running `Application`, for example `app.physics.timeScale = 3` in the
@@ -485,20 +487,44 @@ as flattened blue spheres. A bursting parcel turns white and fades.
 
 ### Status bar
 
-The status bar is refreshed at most once per second. Its **❔** button opens the
-same explanations; that text lives in `index.html` and must be kept in step with
-this table.
+The status bar is refreshed once per second. Its **❔** button opens the same
+explanations; that text lives in `index.html` and must be kept in step with this
+section.
 
-| Icon | Indicator | Meaning |
+**How sharing works, in pictures.** Picture a large map of sand that everyone draws
+on together. Your screen does not draw on the map itself: it works on a sheet of
+tracing paper laid over it, where its own water carves its own channels. Every few
+minutes, like a postman on a round, your screen posts what its water changed to a
+shared table and brings back the latest map. The table collects the tracings for a
+few minutes, then blends them as a jury averages its marks: where one screen dug and
+another piled sand, the map takes the average. Everyone then copies the new map and
+carries on. Only the shape of the sand is shared; the water, the plants and the
+microbes stay on each screen. (Technically, the table is the Cloudflare Worker and a
+blend is a merge; see [Collaboration protocol](#collaboration-protocol).)
+
+**Sharing**
+
+| Icon | Name | What it tells you |
 | --- | --- | --- |
-| 👥 | Collaborators | Distinct browser IDs counted since the Worker began counting them; in parentheses, those online (seen within two sync intervals, about 10 min) |
-| 🔄 | Last sync | Wall-clock seconds since the last successful sync |
-| ⌛ | Next sync | Wall-clock seconds to the next attempt, including retry backoff (also after a failed first or manual sync); `--` while syncing |
-| 🔀 | Next merge | Wall-clock seconds until the Worker's collection window closes, from `mergeInMs` at the last sync; `0` once due (applied by the next request), `--` when nothing is pending; in parentheses, the number of pending contributions |
-| 🤝 | Last merge | Browsers averaged at the last merge, ✓ if this browser contributed, then how long ago (s, min, h or d); `--` before the first merge or after a reset |
-| 🕰️ | Simulation time | Cumulative sim s in this browser, summed over its tabs and saved every 5 s; not shared, not reset with the terrain |
-| ⏱️ | Transit time | Mean rim-to-sink time over the last 100 trips (bursts excluded) |
-| 💧 | Particle flow | Parcels reaching the sink per sim s, over the last 60 sim s |
+| 👥 | Visitors | For example `37 (3)`: 37 screens have taken part since counting began on 2026-11-17, like names in a guest book; 3 of them are here now (heard from in the last ten minutes or so) |
+| 🔄 | Last post | Seconds since your screen last exchanged with the shared table |
+| ⌛ | Next post | Seconds until the postman's next round; `--` while a post is on its way. After a failed round (no network, for example) the postman waits twice as long before trying again, up to six hours |
+| 🔀 | Next blend | Seconds until the table blends the tracings it has collected; in brackets, how many screens are waiting. `--`: nothing is waiting. `0`: the blend is due, happens as soon as any screen gets in touch, and you see it at your next post |
+| 🤝 | Last blend | For example `3 ✓ · 12 min`: the last blend mixed the work of 3 screens, 12 minutes ago; ✓ means yours was one of them. Two screens or more means the sand was shaped together. `--` before the first blend or after a reset |
+
+**Your own simulation.** The simulation runs on its own clock, like a time-lapse
+film: `sim s` are simulated seconds, not seconds on your watch.
+
+| Icon | Name | What it tells you |
+| --- | --- | --- |
+| 🕰️ | Simulated time | How long the water has flowed on this computer, all its tabs together; kept on this computer only, not shared, not erased by a terrain reset |
+| ⏱️ | Journey time | How long a drop of water (a blue dot) takes, on average, to travel from the edge of the disk to the drain, over its last 100 journeys |
+| 💧 | Flow | How many drops reach the drain each simulated second, like cars counted at a toll booth, over the last 60 sim s. Drops that evaporate on the way (they turn white and leave their sand where they are) are not counted |
+
+**Buttons.** **View** (or **D**) changes what the map shows; 🔒 shows the GitHub
+account you are signed in with; **GitHub** opens the source code. To spare the shared
+table, rounds never come more often than every five minutes, and they space out when
+many people visit. A tab left in the background may be a little late.
 
 ### Administration
 
@@ -510,6 +536,35 @@ reinitialises the shared terrain, starts a new version, and resets the owner's
 local particles and biology. The URL parameters `?reset=1` and
 `?reset=1&hard=1` trigger the same reset once the owner is signed in. Other
 browsers adopt the reset terrain at their next sync, but keep their own biology.
+
+#### Timelapse
+
+The panel's **📷 Start timelapse** button saves one PNG of the default view per
+wall-clock second, numbered `000001.png`, `000002.png`, … (the 342nd frame is
+`000342.png`). It needs `?admin` but no sign-in, since it touches no shared state.
+
+- **Where the frames go.** On the recording computer only. The button opens a
+  folder picker (File System Access API, Chrome or Edge; Safari and Firefox lack
+  it); the frames go into a `timelapse` subfolder, created if needed, or into the
+  chosen folder itself if it is already named `timelapse`. Nothing is sent to the
+  Worker or to GitHub: at about 1–3 MB per frame, a day of recording (86,400
+  frames) would exceed both services' limits. Restarting appends to the sequence
+  (it resumes after the highest number found) instead of overwriting it.
+- **What is captured.** The default view whatever the visitor does: the start-up
+  zenith camera and the `elevation` mode, rendered off screen at 1920 × 1080 px
+  (`TimelapseRecorder` options `width`, `height`), without the status bar or
+  panels.
+- **Metadata.** Each PNG carries three `tEXt` chunks: `Creation Time` (ISO 8601,
+  UTC, e.g. `2026-11-17T18:42:03.123Z`), `Commit` (the deployed commit, read from
+  `version.json`; `unknown` when served locally) and `Software`. Read them with
+  `exiftool 000342.png` or, in Python, `PIL.Image.open('000342.png').text`.
+- **Limits.** Frames are taken by the animation loop, so a hidden tab or a
+  minimised window records nothing; keep the window visible. A frame is written
+  atomically (swap file renamed on completion); while one is being written, the
+  next waits rather than queueing. A write error (disk full, permission withdrawn)
+  stops the recording with a message.
+
+To make a video: `ffmpeg -framerate 30 -i timelapse/%06d.png -pix_fmt yuv420p timelapse.mp4`.
 
 [↑ Contents](#contents)
 
@@ -580,6 +635,7 @@ the mesh changes.
 | `localStorage` | `tree-of-life-collaborator-id` | Random browser ID | Until storage is cleared |
 | `localStorage` | `tree-of-life-simulation-time-v1:<uuid>` | Simulation time of one tab | Summed over all tabs |
 | `sessionStorage` | `github-oauth-token`, `tree-of-life-oauth-state` | GitHub token and OAuth `state` | Until the tab closes |
+| Local folder | `timelapse/000001.png`, … | Admin timelapse frames, one per second | On the recording computer, until deleted |
 
 Terrain saves from formats `10.0` to `13.0` were made on the polar-ring meshes
 and are ignored. A save that still holds per-vertex vegetation and microbe arrays (the
@@ -654,7 +710,8 @@ quota of an origin.
 | `js/collaboration.js` | `CollaborativeSync`: browser ID, gzip deltas, schedule, backoff, reset call |
 | `js/auth.js` | `AuthManager` (GitHub OAuth through the Worker), `ResetManager` |
 | `js/controls.js` | `InputControls`: keyboard and mouse |
-| `js/ui.js` | `UIManager`: status bar, toasts, admin panel, reset confirmation |
+| `js/timelapse.js` | `TimelapseRecorder`: admin timelapse frames, PNG `tEXt` metadata |
+| `js/ui.js` | `UIManager`: status bar, toasts, admin panel, reset confirmation, timelapse button |
 | `js/main.js` | `Application`: wiring, start-up order, animation loop, autosave |
 | `worker/index.mjs` | Cloudflare Worker (routing, CORS, OAuth, owner check) and the `Simulation` Durable Object |
 | `worker/mesh.mjs` | Mesh and sand profile mirrored from `js/terrain.js`; sync interval formula |
@@ -662,7 +719,7 @@ quota of an origin.
 | `tests/*.test.js` | Browser modules run in `node:vm` with DOM mocks |
 | `worker/index.test.mjs` | Worker protocol with a mocked Durable Object |
 | `package.json` | Scripts (`test`, `dev`, `dev:http`, `lint`, `format`) and dev dependencies |
-| `.github/workflows/deploy.yml` | Publishes the repository root to GitHub Pages |
+| `.github/workflows/deploy.yml` | Writes `version.json` (`{"commit": "<sha>"}`, not in git), then publishes the repository root to GitHub Pages |
 | `.nojekyll`, `.gitignore`, `LICENSE` | Pages setting, ignored paths (including `secrets/`), MIT licence |
 | `.DEPLOYMENT_STATUS.txt` | Deployment configuration recorded in the repository and checks to run |
 
@@ -685,7 +742,7 @@ numbers are omitted on purpose because they drift; search for the method name.
 - `Application.constructor()` builds, in order: `TerrainGrid` → `PhysicsEngine` →
   `BiologyGrid` → `TerrainRenderer`. Then the stores, `CollaborativeSync`,
   `AuthManager` (client ID, callback URL and Worker exchange URL are hard-coded
-  here), `ResetManager`, `UIManager` and `InputControls`.
+  here), `ResetManager`, `UIManager`, `InputControls` and `TimelapseRecorder`.
 - `initialize()` runs the OAuth callback or restores the session, loads the local
   terrain, then the local biology. An unreadable biology save is discarded with a
   warning and the biology restarts; a failed write is logged and does not stop
@@ -693,7 +750,8 @@ numbers are omitted on purpose because they drift; search for the method name.
   meshes and starts `animate()`.
 - `animate()` makes one `physics.step(deltaTime)` per `requestAnimationFrame`,
   with the wall-clock time since the previous frame, then `biology.step(dt)`. Every 5 s it saves the biology and the simulation time. It
-  then updates the renderer and the status bar.
+  then updates the renderer and the status bar, renders, and lets the timelapse
+  capture a frame if one is due.
 - `handleUrlParams()` handles `?reset=1[&hard=1]` one second after start-up, owner only.
 
 ### Terrain: `js/terrain.js`
@@ -756,6 +814,7 @@ vertices.
 | Sand-depth colour map | `deepColor(t)`, `TerrainRenderer.DEEP`, `SAND_DEPTH_DISPLAY_MAX` |
 | Instanced parcels with a burst shader patch | `updateParticles(physics)` |
 | Mode order | `cycleDisplayMode()` |
+| Default view off screen, for the timelapse | `captureDefaultView()`, `placeDefaultCamera()`, `fieldOfView()`, `flipRows()` |
 
 ### Collaboration: `js/collaboration.js`
 
@@ -845,6 +904,7 @@ node --test --test-name-pattern="avalanche" tests/terrain-physics.test.js
 | `tests/collaboration.test.js` | Deltas once per version, mesh mismatch, intervals, countdowns, reset during sync |
 | `tests/auth.test.js` | OAuth `state`, callback, admin view, reset failure handling |
 | `tests/ui.test.js` | Camera, display modes, status bar, simulation time, URL resets |
+| `tests/timelapse.test.js` | PNG `tEXt` chunks and CRC, frame numbering, 1 s cadence, folder choice, deployed commit, off-screen default view |
 | `worker/index.test.mjs` | Browser and Worker build the same mesh, migrations, averaging, validation, owner reset, CORS |
 
 Browser scripts are evaluated in `node:vm` contexts with minimal DOM, storage and
@@ -1053,8 +1113,8 @@ logs a message there.
 | "Collaboration unavailable: …" on a local server | Expected: the Worker allows only the GitHub Pages origin |
 | "Incompatible terrain mesh; reload the application" (409) | Page and Worker use different mesh signatures; deploy both, then reload |
 | "This browser does not support compressed collaboration updates" | `CompressionStream` is missing: the first, empty sync works, later syncs fail. Use a current browser |
-| Next sync hours away | Exponential backoff after failures (up to 6 h), or a large active population; background tabs may also delay timers |
-| Next merge stays at `0` | The window has closed; the merge is applied by the next request from any browser |
+| ⌛ Next post hours away | Earlier rounds failed, so the postman waits twice as long each time (up to 6 h); or very many visitors; a background tab may also be late |
+| 🔀 Next blend stays at `0` | The blend is due; it happens as soon as any screen gets in touch, and you see it at your next post |
 | **S** says "Sync is already rate-limited" | A manual sync never bypasses the Worker's interval |
 | "GitHub sign-in unavailable" | The page must be exactly the production URL over HTTPS; sign-in cannot work from `localhost` or `file://` |
 | "GitHub sign-in failed: invalid OAuth state" | The callback opened in another tab, or session storage was cleared; sign in again from the same tab |

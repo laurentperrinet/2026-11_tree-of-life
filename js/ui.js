@@ -153,6 +153,54 @@ class UIManager {
     }
     
     /**
+     * Wire the admin panel's timelapse button to a TimelapseRecorder.
+     *
+     * Recording is local to this computer and touches no shared state, so it is
+     * available with `?admin` without signing in (e.g. on an exhibition machine).
+     *
+     * Args:
+     *   timelapse: TimelapseRecorder; its onChange and onError are set here.
+     */
+    setupTimelapse(timelapse) {
+        const button = document.getElementById('timelapse-button');
+        const status = document.getElementById('timelapse-status');
+        if (!button || !status) return;
+        const supported = TimelapseRecorder.isSupported(window);
+        const refresh = () => {
+            button.textContent = timelapse.active ? '⏹ Stop timelapse' : '📷 Start timelapse';
+            button.disabled = !supported;
+            let text = '';
+            if (!supported) {
+                text = 'Timelapse needs Chrome or Edge (File System Access API).';
+            } else if (timelapse.directory && (timelapse.active || timelapse.lastFile)) {
+                const last = timelapse.lastFile ? `, last ${timelapse.lastFile}` : '';
+                text = `${timelapse.active ? 'Recording' : 'Stopped'}: ${timelapse.framesWritten} ` +
+                    `frames${last} in ${timelapse.directory.name}/ · commit ${timelapse.commit.slice(0, 7)}`;
+            }
+            status.textContent = text;
+            status.hidden = text === '';
+        };
+        timelapse.onChange = refresh;
+        timelapse.onError = error => this.showToast(`Timelapse stopped: ${error.message}`, 'error', 8000);
+        button.addEventListener('click', async () => {
+            if (timelapse.active) {
+                timelapse.stop();
+                this.showToast('Timelapse stopped', 'info');
+                return;
+            }
+            try {
+                await timelapse.start();
+                this.showToast('Timelapse recording', 'success');
+            } catch (error) {
+                // Closing the folder picker is a choice, not an error.
+                if (error.name !== 'AbortError') this.showToast(error.message, 'error', 8000);
+            }
+            refresh();
+        });
+        refresh();
+    }
+
+    /**
      * Confirm reset before executing
      */
     confirmReset() {
