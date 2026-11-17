@@ -3,7 +3,7 @@
  * Implements save/load with version checking
  */
 class LocalStorageManager {
-    constructor(storageKey = 'tree-of-life-terrain-arc-v5') {
+    constructor(storageKey = 'tree-of-life-terrain-arc-v8') {
         this.storageKey = storageKey;
         this.version = '1.0';
     }

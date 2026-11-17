@@ -8,8 +8,10 @@ class TerrainGrid {
         this.sectors = 64;
         this.rings = 64;
         this.sinkRadius = 0.8;
-        this.slope = 0.075;
+        this.slope = 0.09;
         this.initialSandDepth = 0.3;
+        this.channelLength = 9;
+        this.channelLift = 0.5;
         this.vertices = [{ x: 0, z: 0 }];
         this.triangles = [];
 
@@ -49,7 +51,7 @@ class TerrainGrid {
         const count = this.vertices.length;
         this.bedrock = new Float64Array(count);
         this.vertices.forEach((point, i) => {
-            this.bedrock[i] = this.slope * Math.hypot(point.x, point.z);
+            this.bedrock[i] = this.bedrockHeight(point.x, point.z);
         });
         this.elevation = new Float64Array(count);
         this.waterDepth = new Float64Array(count);
@@ -95,6 +97,19 @@ class TerrainGrid {
         this.totalEnergy = 0;
         this.particles = [];
         this.initialize();
+    }
+
+    // Funnel sloping towards the outlet; the flanks near the centre are raised
+    // so that a flared escape channel (floor on the funnel slope) leads to the sink.
+    bedrockHeight(x, z) {
+        const r = Math.hypot(x, z);
+        let lift = 0;
+        if (r < this.channelLength) {
+            const width = this.sinkRadius + 0.22 * r;
+            const t = Math.min(1, Math.abs(x) / width);
+            lift = this.channelLift * (1 - r / this.channelLength) * t * t * (3 - 2 * t);
+        }
+        return this.slope * r + lift;
     }
 
     initialize() {
@@ -159,7 +174,7 @@ class TerrainGrid {
 
     toJSON() {
         return {
-            version: '6.0',
+            version: '8.0',
             topology: 'semicircle-8196',
             timestamp: new Date().toISOString(),
             elevation: Array.from(this.elevation),
@@ -175,19 +190,16 @@ class TerrainGrid {
         const validParticles = Array.isArray(json.particles) && json.particles.length === this.particles.length &&
             json.particles.every(p => p && [p.x, p.z, p.vx, p.vz, p.sediment].every(Number.isFinite) &&
                 p.sediment >= 0 && this.locate(p.x, p.z));
-        if (!['5.0', '6.0'].includes(json.version) || json.topology !== 'semicircle-8196' || !validParticles ||
+        if (json.version !== '8.0' || json.topology !== 'semicircle-8196' || !validParticles ||
             arrays.some(a => !Array.isArray(a) || a.length !== this.elevation.length || !a.every(Number.isFinite))) {
             console.warn('Saved terrain is incompatible with the semi-circular mesh');
             return false;
         }
-        const oldSlope = json.version === '5.0' ? 0.06 : this.slope;
-        if (json.elevation.some((height, i) =>
-            height < oldSlope * Math.hypot(this.vertices[i].x, this.vertices[i].z))) {
+        if (json.elevation.some((height, i) => height < this.bedrock[i])) {
             console.warn('Saved terrain extends below the bedrock');
             return false;
         }
-        this.elevation.set(json.elevation.map((height, i) =>
-            height + (this.slope - oldSlope) * Math.hypot(this.vertices[i].x, this.vertices[i].z)));
+        this.elevation.set(json.elevation);
         this.waterDepth.set(json.waterDepth);
         this.sediment.set(json.sediment);
         this.particles.splice(0, this.particles.length, ...json.particles.map(p => ({ ...p })));

@@ -15,13 +15,13 @@ function totalSediment(grid, physics) {
         physics.particles.reduce((sum, particle) => sum + particle.sediment, 0);
 }
 
-test('semi-circular bed has 8196 nondegenerate faces and a uniform radial slope', () => {
+test('semi-circular bed has 8196 nondegenerate faces and a radial slope outside the channel zone', () => {
     const grid = new TerrainGrid();
     assert.equal(grid.triangles.length, 8196);
     assert.ok(grid.vertexArea.every(area => area > 0));
     grid.vertices.forEach((point, i) => {
         assert.ok(point.z <= 1e-12);
-        assert.ok(Math.abs(grid.bedrock[i] - grid.slope * Math.hypot(point.x, point.z)) < 1e-12);
+        assert.ok(Math.abs(grid.bedrock[i] - grid.bedrockHeight(point.x, point.z)) < 1e-12);
         assert.ok(Math.abs(grid.elevation[i] - grid.bedrock[i] - grid.initialSandDepth) < 1e-12);
     });
     const outerStart = 1 + (grid.rings - 1) * (grid.sectors + 1);
@@ -137,12 +137,13 @@ test('a loaded particle deposits sand when it slows, even below transport capaci
     const particle = physics.particles[0];
     Object.assign(particle, { x: 10, z: -5, vx: 2, vz: 0, sediment: 0.001 });
     const face = grid.sample(particle.x, particle.z).face;
-    face.forEach(i => { grid.elevation[i] = 1; });
+    const level = Math.max(...face.map(i => grid.bedrock[i])) + 0.3;
+    face.forEach(i => { grid.elevation[i] = level; });
     const before = totalSediment(grid, physics);
     physics.moveParticle(particle, 0.04);
     assert.ok(Math.hypot(particle.vx, particle.vz) < 2);
     assert.ok(particle.sediment > 0 && particle.sediment < 0.001);
-    assert.ok(face.some(i => grid.elevation[i] > 1));
+    assert.ok(face.some(i => grid.elevation[i] > level));
     assert.ok(Math.abs(totalSediment(grid, physics) - before) < 1e-10);
 });
 
@@ -165,26 +166,28 @@ test('sand avalanches at steep mesh edges without disturbing a stable slope', ()
     assert.ok(Math.abs(totalSediment(grid, physics) - before) < 1e-8);
 });
 
-test('version 5 terrain migrates to the steeper bed without losing sand or particle state', () => {
+test('saves from the previous planar bed are rejected, current ones round-trip', () => {
     const grid = new TerrainGrid();
-    const physics = new PhysicsEngine(grid);
-    const old = grid.toJSON();
-    old.version = '5.0';
-    old.elevation = grid.vertices.map((point, i) =>
-        0.06 * Math.hypot(point.x, point.z) + 0.1 + (i % 5) * 0.03);
-    old.particles[0].sediment = 0.2;
-    const expectedSand = old.elevation.reduce((sum, height, i) =>
-        sum + (height - 0.06 * Math.hypot(grid.vertices[i].x, grid.vertices[i].z)) * grid.vertexArea[i], 0);
-    assert.equal(grid.fromJSON(old), true);
-    assert.ok(Math.abs(totalSediment(grid, physics) - expectedSand - 0.2) < 1e-8);
-    assert.equal(physics.particles[0].sediment, 0.2);
-    assert.equal(grid.toJSON().version, '6.0');
-    const migrated = grid.toJSON();
-    assert.equal(grid.fromJSON(migrated), true);
-    assert.ok(grid.elevation.every((height, i) => height === migrated.elevation[i]));
-    old.elevation[1] = -1;
-    assert.equal(grid.fromJSON(old), false);
-    assert.ok(grid.elevation.every((height, i) => height === migrated.elevation[i]));
+    const saved = grid.toJSON();
+    assert.equal(saved.version, '8.0');
+    for (const version of ['5.0', '6.0', '7.0']) assert.equal(grid.fromJSON({ ...saved, version }), false);
+    assert.equal(grid.fromJSON(saved), true);
+});
+
+test('bed is a funnel with a flared escape channel leading to the sink', () => {
+    const grid = new TerrainGrid();
+    const width = height => {
+        const points = grid.vertices.map((p, i) => ({ p, i })).filter(({ p }) => Math.abs(Math.hypot(p.x, p.z) - height) < 0.2);
+        return Math.max(...points.filter(({ i }) => grid.bedrock[i] <= grid.slope * Math.hypot(grid.vertices[i].x, grid.vertices[i].z) + 0.05)
+            .map(({ p }) => Math.abs(p.x)));
+    };
+    assert.ok(width(7) > width(3));
+    grid.vertices.forEach((p, i) => {
+        const r = Math.hypot(p.x, p.z);
+        assert.ok(grid.bedrock[i] >= grid.slope * r - 1e-12);
+        if (r > grid.channelLength) assert.ok(Math.abs(grid.bedrock[i] - grid.slope * r) < 1e-12);
+        if (Math.abs(p.x) < 1e-9) assert.ok(Math.abs(grid.bedrock[i] - grid.slope * r) < 1e-12);
+    });
 });
 
 test('particle flow produces localized erosion on the initially uniform slope', () => {
