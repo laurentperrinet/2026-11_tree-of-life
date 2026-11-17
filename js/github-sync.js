@@ -147,19 +147,6 @@ class GitHubSync {
             console.warn('Incompatible terrain in merge, using local');
             return local;
         }
-        if (remote.vegetation !== undefined && (!Array.isArray(remote.vegetation) ||
-            remote.vegetation.length !== local.elevation.length ||
-            remote.vegetation.some(value => !Number.isFinite(value) || value < 0 || value > 1))) {
-            console.warn('Invalid vegetation in remote terrain, using local');
-            return local;
-        }
-        if ((remote.microbeU === undefined) !== (remote.microbeV === undefined) ||
-            [remote.microbeU, remote.microbeV].some(values => values !== undefined &&
-                (!Array.isArray(values) || values.length !== local.elevation.length ||
-                    values.some(value => !Number.isFinite(value) || value < 0 || value > 1)))) {
-            console.warn('Invalid microorganism state in remote terrain, using local');
-            return local;
-        }
         
         const merged = JSON.parse(JSON.stringify(local));
         
@@ -169,13 +156,6 @@ class GitHubSync {
                 local.elevation[i],
                 remote.elevation[i]
             );
-            if (merged.vegetation && remote.vegetation) {
-                merged.vegetation[i] = Math.max(merged.vegetation[i], remote.vegetation[i]);
-            }
-            if (merged.microbeV && remote.microbeV && remote.microbeV[i] > merged.microbeV[i]) {
-                merged.microbeU[i] = remote.microbeU[i];
-                merged.microbeV[i] = remote.microbeV[i];
-            }
         }
         
         // Update metadata

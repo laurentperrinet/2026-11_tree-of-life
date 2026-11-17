@@ -1,48 +1,14 @@
-import { calculateRows, createTerrain, DEFAULT_PARAMETERS, HEIGHT, WIDTH } from './physics.mjs';
+import { createInitialMesh, getSyncIntervalMs } from './mesh.mjs';
 
-const LEASE_MS = 60_000;
-const PARTITIONS = 4;
-const MAX_BODY_BYTES = 100_000;
+const ACTIVE_CLIENT_MS = 24 * 60 * 60 * 1000;
+const DAILY_REQUEST_BUDGET = 80_000;
+const MAX_COMPRESSED_BYTES = 100_000;
+const MAX_DELTA = 10;
 const ORIGIN = 'https://laurentperrinet.github.io';
 const FRONTEND_URL = `${ORIGIN}/2026-11_tree-of-life/`;
-const FIELDS = ['elevation', 'waterDepth', 'sediment'];
 
 function json(data, status = 200) {
     return Response.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
-}
-
-function randomToken() {
-    return Array.from(crypto.getRandomValues(new Uint8Array(24)), byte =>
-        byte.toString(16).padStart(2, '0')
-    ).join('');
-}
-
-async function readJson(request) {
-    if (!request.body) throw new HttpError(400, 'A JSON body is required');
-    const reader = request.body.getReader();
-    const chunks = [];
-    let length = 0;
-    for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        length += value.byteLength;
-        if (length > MAX_BODY_BYTES) {
-            await reader.cancel();
-            throw new HttpError(413, 'Request body is too large');
-        }
-        chunks.push(value);
-    }
-    const bytes = new Uint8Array(length);
-    let offset = 0;
-    for (const chunk of chunks) {
-        bytes.set(chunk, offset);
-        offset += chunk.byteLength;
-    }
-    try {
-        return JSON.parse(new TextDecoder().decode(bytes));
-    } catch {
-        throw new HttpError(400, 'Invalid JSON');
-    }
 }
 
 class HttpError extends Error {
@@ -58,31 +24,66 @@ function errorResponse(error) {
     return json({ error: 'Internal server error' }, 500);
 }
 
-function validateParameters(value) {
-    if (!value || typeof value !== 'object' || Array.isArray(value) ||
-        Object.keys(value).some(key => !['flow', 'speed'].includes(key)) ||
-        !Number.isFinite(value.flow) || value.flow < 0 || value.flow > 2 ||
-        !Number.isFinite(value.speed) || value.speed < 0.1 || value.speed > 5) {
-        throw new HttpError(400, 'Invalid simulation parameters');
+async function readStreamLimited(stream, maxBytes) {
+    if (!stream) throw new HttpError(400, 'A request body is required');
+    const reader = stream.getReader();
+    const chunks = [];
+    let length = 0;
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        length += value.byteLength;
+        if (length > maxBytes) {
+            await reader.cancel();
+            throw new HttpError(413, 'Request body is too large');
+        }
+        chunks.push(value);
     }
-    return { flow: value.flow, speed: value.speed };
+    const bytes = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
+    }
+    return bytes;
 }
 
-function validateResult(result, rows) {
-    if (!result || typeof result !== 'object' || Array.isArray(result) ||
-        Object.keys(result).length !== FIELDS.length) {
-        throw new HttpError(400, 'Invalid result');
+async function readDelta(request, expectedLength) {
+    const encoding = request.headers.get('X-Payload-Encoding');
+    if (encoding !== 'gzip') {
+        throw new HttpError(400, 'Compressed contribution payload is required');
     }
-    for (const field of FIELDS) {
-        const values = result[field];
-        if (!Array.isArray(values) || values.length !== rows * WIDTH ||
-            values.some(value => !Number.isFinite(value) ||
-                (field === 'elevation' && (value < -5 || value > 1000)) ||
-                (field === 'waterDepth' && (value < 0 || value > 1000)) ||
-                (field === 'sediment' && (value < 0 || value > 1)))) {
-            throw new HttpError(400, `Invalid ${field} values`);
-        }
+    if (typeof DecompressionStream !== 'function') {
+        throw new HttpError(503, 'Gzip decompression is unavailable');
     }
+    const compressed = await readStreamLimited(request.body, MAX_COMPRESSED_BYTES);
+    let decompressed;
+    try {
+        decompressed = await readStreamLimited(
+            new Blob([compressed]).stream().pipeThrough(new DecompressionStream('gzip')),
+            expectedLength
+        );
+    } catch (error) {
+        if (error instanceof HttpError) throw error;
+        throw new HttpError(400, 'Invalid compressed contribution');
+    }
+    if (decompressed.byteLength !== expectedLength) {
+        throw new HttpError(400, 'Contribution has the wrong mesh size');
+    }
+    if (decompressed.byteOffset % Float32Array.BYTES_PER_ELEMENT !== 0) {
+        throw new HttpError(400, 'Contribution has invalid alignment');
+    }
+    return new Float32Array(
+        decompressed.buffer, decompressed.byteOffset,
+        decompressed.byteLength / Float32Array.BYTES_PER_ELEMENT
+    );
+}
+
+function validateContributorId(value) {
+    if (typeof value !== 'string' || !/^[a-f0-9]{32}$/.test(value)) {
+        throw new HttpError(400, 'Invalid collaborator ID');
+    }
+    return value;
 }
 
 async function authenticateOwner(request, env) {
@@ -113,7 +114,12 @@ async function exchangeCode(request, env) {
     if (!env.GITHUB_CLIENT_ID || !env.GITHUB_CLIENT_SECRET) {
         throw new HttpError(503, 'GitHub OAuth is not configured');
     }
-    const body = await readJson(request);
+    let body;
+    try {
+        body = await request.json();
+    } catch {
+        throw new HttpError(400, 'Invalid JSON');
+    }
     if (!body || typeof body.code !== 'string' || body.code.length < 1 || body.code.length > 512) {
         throw new HttpError(400, 'Invalid authorization code');
     }
@@ -142,18 +148,22 @@ export default {
         const corsHeaders = {
             'Access-Control-Allow-Origin': ORIGIN,
             'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+            'Access-Control-Allow-Headers': [
+                'Content-Type', 'Authorization', 'X-Collaborator-ID',
+                'X-Terrain-Version', 'X-Payload-Encoding'
+            ].join(', '),
             'Vary': 'Origin'
         };
-        if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
+        if (request.method === 'OPTIONS') {
+            return new Response(null, { status: 204, headers: corsHeaders });
+        }
         let response;
         try {
             const path = new URL(request.url).pathname;
             if (path === '/api/auth/exchange' && request.method === 'POST') {
                 response = await exchangeCode(request, env);
-            } else if (['/api/state', '/api/tasks/claim', '/api/tasks/submit',
-                '/api/admin/parameters', '/api/admin/reset'].includes(path)) {
-                if (path.startsWith('/api/admin/')) await authenticateOwner(request, env);
+            } else if (['/api/state', '/api/sync', '/api/admin/reset'].includes(path)) {
+                if (path === '/api/admin/reset') await authenticateOwner(request, env);
                 const id = env.SIMULATION.idFromName('global');
                 response = await env.SIMULATION.get(id).fetch(request);
             } else {
@@ -176,93 +186,158 @@ export class Simulation {
     async fetch(request) {
         try {
             const path = new URL(request.url).pathname;
-            const needsBody = request.method === 'POST' &&
-                (path === '/api/tasks/submit' || path === '/api/admin/parameters');
-            const body = needsBody ? await readJson(request) : undefined;
-            return await this.ctx.blockConcurrencyWhile(() => this.handle(request, body));
+            let delta;
+            if (path === '/api/sync' && request.method === 'POST' && request.body) {
+                const initial = createInitialMesh();
+                delta = await readDelta(
+                    request, initial.elevation.length * Float32Array.BYTES_PER_ELEMENT
+                );
+            }
+            return await this.ctx.blockConcurrencyWhile(() => this.handle(request, delta));
         } catch (error) {
             return errorResponse(error);
         }
     }
 
-    async handle(request, body) {
+    async loadState() {
         let state = await this.ctx.storage.get('state');
         if (!state) {
+            const mesh = createInitialMesh();
             state = {
                 version: 0,
-                terrain: createTerrain(),
-                parameters: { ...DEFAULT_PARAMETERS },
-                tasks: Array(PARTITIONS).fill(null)
+                elevation: mesh.elevation,
+                bedrock: mesh.bedrock,
+                erodibleCount: mesh.erodibleCount,
+                activeClients: {},
+                contributions: {},
+                contributionIds: [],
+                sumDelta: new Float64Array(mesh.elevation.length),
+                windowEndsAt: null
             };
             await this.ctx.storage.put('state', state);
         }
+        return state;
+    }
+
+    async handle(request, delta) {
         const path = new URL(request.url).pathname;
+        const state = await this.loadState();
 
         if (path === '/api/state' && request.method === 'GET') {
-            return json({ version: state.version, terrain: state.terrain, parameters: state.parameters });
+            return this.stateResponse(state);
         }
-        if (path === '/api/tasks/claim' && request.method === 'POST') {
-            const now = Date.now();
-            const index = state.tasks.findIndex(task => !task || (!task.result && task.expires <= now));
-            if (index < 0) return json({ error: 'No task available' }, 409);
-            const start = Math.floor(index * HEIGHT / PARTITIONS);
-            const end = Math.floor((index + 1) * HEIGHT / PARTITIONS);
-            const lease = randomToken();
-            state.tasks[index] = { lease, expires: now + LEASE_MS, result: null };
-            await this.ctx.storage.put('state', state);
-            return json({
-                version: state.version, lease, start, end,
-                terrain: state.terrain, parameters: state.parameters
-            });
-        }
-        if (path === '/api/tasks/submit' && request.method === 'POST') {
-            if (!body || !Number.isSafeInteger(body.version) || typeof body.lease !== 'string' ||
-                body.version !== state.version) {
-                throw new HttpError(409, 'Task version is no longer current');
-            }
-            const index = state.tasks.findIndex(task => task && task.lease === body.lease);
-            const task = state.tasks[index];
-            if (!task || task.result || task.expires <= Date.now()) {
-                throw new HttpError(409, 'Task lease is invalid or expired');
-            }
-            const start = Math.floor(index * HEIGHT / PARTITIONS);
-            const end = Math.floor((index + 1) * HEIGHT / PARTITIONS);
-            validateResult(body.result, end - start);
-
-            const row = start + (crypto.getRandomValues(new Uint32Array(1))[0] % (end - start));
-            const expected = calculateRows(state.terrain, state.parameters, row, row + 1);
-            for (const field of FIELDS) {
-                for (let x = 0; x < WIDTH; x++) {
-                    if (Math.abs(body.result[field][(row - start) * WIDTH + x] - expected[field][x]) > 1e-5) {
-                        throw new HttpError(422, 'Result failed the sample calculation check');
-                    }
-                }
-            }
-            task.result = body.result;
-            if (state.tasks.every(item => item && item.result)) {
-                for (const field of FIELDS) {
-                    state.terrain[field] = state.tasks.flatMap(item => item.result[field]);
-                }
-                state.version++;
-                state.tasks = Array(PARTITIONS).fill(null);
-            }
-            await this.ctx.storage.put('state', state);
-            return json({ version: state.version, completed: state.tasks.every(item => item === null) });
-        }
-        if (path === '/api/admin/parameters' && request.method === 'POST') {
-            state.parameters = validateParameters(body);
-            state.version++;
-            state.tasks = Array(PARTITIONS).fill(null);
-            await this.ctx.storage.put('state', state);
-            return json({ version: state.version, parameters: state.parameters });
+        if (path === '/api/sync' && request.method === 'POST') {
+            return this.sync(request, state, delta);
         }
         if (path === '/api/admin/reset' && request.method === 'POST') {
-            state.terrain = createTerrain();
+            const mesh = createInitialMesh();
             state.version++;
-            state.tasks = Array(PARTITIONS).fill(null);
+            state.elevation = mesh.elevation;
+            state.bedrock = mesh.bedrock;
+            state.erodibleCount = mesh.erodibleCount;
+            state.contributions = {};
+            state.contributionIds = [];
+            state.sumDelta = new Float64Array(mesh.elevation.length);
+            state.windowEndsAt = null;
             await this.ctx.storage.put('state', state);
-            return json({ version: state.version });
+            return this.stateResponse(state);
         }
         return json({ error: 'Method not allowed' }, 405);
+    }
+
+    async sync(request, state, delta) {
+        const clientId = validateContributorId(request.headers.get('X-Collaborator-ID'));
+        const now = Date.now();
+        const versionHeader = request.headers.get('X-Terrain-Version');
+        let clientVersion = null;
+        if (versionHeader !== null) {
+            if (!/^\d+$/.test(versionHeader)) {
+                throw new HttpError(400, 'Invalid terrain version');
+            }
+            clientVersion = Number(versionHeader);
+            if (!Number.isSafeInteger(clientVersion)) {
+                throw new HttpError(400, 'Invalid terrain version');
+            }
+        }
+        for (const [id, lastSeen] of Object.entries(state.activeClients)) {
+            if (now - lastSeen > ACTIVE_CLIENT_MS) delete state.activeClients[id];
+        }
+        state.activeClients[clientId] = now;
+
+        let finalized = false;
+        if (state.windowEndsAt !== null && now >= state.windowEndsAt) {
+            this.finalizeContributions(state);
+            finalized = true;
+        }
+
+        let accepted = false;
+        let duplicate = false;
+        if (delta) {
+            if (clientVersion === null) {
+                throw new HttpError(400, 'A valid terrain version is required');
+            }
+            if (clientVersion === state.version && !finalized) {
+                if (Object.hasOwn(state.contributions, clientId)) {
+                    duplicate = true;
+                } else {
+                    for (let i = 0; i < delta.length; i++) {
+                        const value = delta[i];
+                        if (!Number.isFinite(value) || Math.abs(value) > MAX_DELTA ||
+                            (i >= state.erodibleCount && value !== 0)) {
+                            throw new HttpError(400, 'Contribution contains invalid terrain changes');
+                        }
+                    }
+                    for (let i = 0; i < delta.length; i++) state.sumDelta[i] += delta[i];
+                    state.contributions[clientId] = true;
+                    state.contributionIds.push(clientId);
+                    if (state.windowEndsAt === null) {
+                        const interval = getSyncIntervalMs(
+                            Object.keys(state.activeClients).length, DAILY_REQUEST_BUDGET
+                        );
+                        state.windowEndsAt = now + interval;
+                    }
+                    accepted = true;
+                }
+            }
+        }
+
+        await this.ctx.storage.put('state', state);
+        return this.stateResponse(
+            state,
+            { accepted, duplicate },
+            clientVersion === null || clientVersion !== state.version
+        );
+    }
+
+    finalizeContributions(state) {
+        const count = state.contributionIds.length;
+        if (count > 0) {
+            for (let i = 0; i < state.elevation.length; i++) {
+                if (i >= state.erodibleCount) continue;
+                state.elevation[i] = Math.max(
+                    state.bedrock[i],
+                    state.elevation[i] + state.sumDelta[i] / count
+                );
+            }
+            state.version++;
+        }
+        state.contributions = {};
+        state.contributionIds = [];
+        state.sumDelta = new Float64Array(state.elevation.length);
+        state.windowEndsAt = null;
+    }
+
+    stateResponse(state, extra = {}, includeTerrain = true) {
+        const activeCollaborators = Object.keys(state.activeClients).length;
+        const result = {
+            version: state.version,
+            activeCollaborators,
+            acceptedContributions: state.contributionIds.length,
+            syncIntervalMs: getSyncIntervalMs(activeCollaborators, DAILY_REQUEST_BUDGET),
+            dailyRequestBudget: DAILY_REQUEST_BUDGET,
+            ...extra
+        };
+        if (includeTerrain) result.terrain = { elevation: Array.from(state.elevation) };
+        return json(result);
     }
 }

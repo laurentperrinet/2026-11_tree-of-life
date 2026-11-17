@@ -250,10 +250,6 @@ class TerrainGrid {
             elevation: Array.from(this.elevation),
             waterDepth: Array.from(this.waterDepth),
             sediment: Array.from(this.sediment),
-            flowHistory: Array.from(this.flowHistory),
-            vegetation: Array.from(this.vegetation),
-            microbeU: Array.from(this.microbeU, value => Math.round(value * 1e6) / 1e6),
-            microbeV: Array.from(this.microbeV, value => Math.round(value * 1e6) / 1e6),
             particles: this.particles.map(p => ({ ...p })),
             metadata: { totalEnergy: this.totalEnergy, convergenceChecked: this.checkConvergence() }
         };
@@ -261,7 +257,9 @@ class TerrainGrid {
 
     fromJSON(json) {
         const arrays = [json.elevation, json.waterDepth, json.sediment];
-        const validParticles = Array.isArray(json.particles) && json.particles.length === this.particles.length &&
+        const validParticles = Array.isArray(json.particles) &&
+            (json.particles.length === this.particles.length ||
+                (json.particles.length === 500 && this.particles.length === 1000)) &&
             json.particles.every(p => p && [p.x, p.z, p.vx, p.vz, p.sediment].every(Number.isFinite) &&
                 p.sediment >= 0 && this.locate(p.x, p.z));
         if (!['10.0', '11.0'].includes(json.version) || json.topology !== 'disk-square-polar-v1' || !validParticles ||
@@ -321,7 +319,12 @@ class TerrainGrid {
             this.microbeU.set(json.microbeU);
             this.microbeV.set(json.microbeV);
         }
-        this.particles.splice(0, this.particles.length, ...json.particles.map(p => ({ ...p })));
+        this.hasLegacyBiology = json.vegetation !== undefined && json.microbeU !== undefined;
+        const addedParticles = this.particles.slice(json.particles.length).map(p => ({
+            x: p.x, z: p.z, vx: 0, vz: 0, sediment: 0
+        }));
+        this.particles.splice(0, this.particles.length,
+            ...json.particles.map(p => ({ ...p })), ...addedParticles);
         return true;
     }
 }

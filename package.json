@@ -1,7 +1,7 @@
 {
   "name": "tree-of-life",
   "version": "1.0.0",
-  "description": "Collaborative hydromorphodynamic terrain simulation with GitHub persistence",
+  "description": "Collaborative hydromorphodynamic terrain simulation with Cloudflare persistence",
   "main": "index.html",
   "scripts": {
     "dev": "npx serve",
@@ -10,7 +10,7 @@
     "format": "prettier --write '**/*.{js,css,html,json,md}'",
     "build": "echo 'No build step needed - static files only'",
     "deploy": "git push origin main",
-    "test": "echo 'No automated tests configured yet'"
+    "test": "node --test worker/index.test.mjs tests/auth.test.js tests/collaboration.test.js"
   },
   "keywords": [
     "simulation",

@@ -4,6 +4,56 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+test('default camera centers the disk at the zenith and controls preserve its target', () => {
+    class Vector {
+        set(x, y, z) { Object.assign(this, { x, y, z }); }
+    }
+    class Camera {
+        constructor() { this.position = new Vector(); this.up = new Vector(); }
+        lookAt(x, y, z) { this.target = [x, y, z]; }
+        updateProjectionMatrix() {}
+    }
+    class Scene { add() {} }
+    class Light { constructor() { this.position = new Vector(); } }
+    const THREE = {
+        Scene, Color: class {}, PerspectiveCamera: Camera,
+        WebGLRenderer: class { setSize() {} }, AmbientLight: Light, DirectionalLight: Light,
+        Object3D: class {}
+    };
+    const window = { innerWidth: 1200, innerHeight: 800, addEventListener() {} };
+    const context = vm.createContext({ THREE, window, document: { addEventListener() {} } });
+    for (const file of ['renderer.js', 'controls.js']) {
+        vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', file), 'utf8'), context);
+    }
+    const { TerrainRenderer, InputControls } = vm.runInContext('({ TerrainRenderer, InputControls })', context);
+    const renderer = new TerrainRenderer({});
+    const camera = renderer.camera;
+    const controls = new InputControls(renderer);
+    assert.deepEqual([camera.position.x, camera.position.z], [0, 0]);
+    assert.ok(camera.position.y > 0);
+    assert.deepEqual(camera.target, [0, 0, 0]);
+    assert.deepEqual([camera.up.x, camera.up.y, camera.up.z], [0, 0, -1]);
+
+    controls.onMouseWheel({ deltaY: -1, preventDefault() {} });
+    assert.ok(Math.abs(camera.position.x) < 1e-10 && Math.abs(camera.position.z) < 1e-10);
+    assert.equal(camera.position.y, 64.5);
+    assert.deepEqual(camera.target, [0, 0, 0]);
+    assert.ok(camera.up.z < -0.999);
+
+    controls.cameraRotation.x -= 0.2;
+    controls.cameraRotation.y += 0.5;
+    controls.updateCameraPosition();
+    assert.deepEqual(camera.target, [0, 0, 0]);
+    assert.ok(Math.abs(camera.position.x * camera.up.x + camera.position.y * camera.up.y +
+        camera.position.z * camera.up.z) < 1e-10);
+
+    window.innerWidth = 400;
+    window.innerHeight = 800;
+    renderer.onWindowResize();
+    const halfWidth = 62 * Math.tan(camera.fov * Math.PI / 360) * camera.aspect;
+    assert.ok(halfWidth > 25);
+});
+
 test('authentication status is hidden until a user signs in', () => {
     const elements = {
         'auth-status': {

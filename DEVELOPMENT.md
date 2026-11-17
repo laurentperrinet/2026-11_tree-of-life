@@ -92,26 +92,23 @@ npm run dev  # Uses port 3000
 
 ---
 
-## Issue: Terrain Doesn't Sync with GitHub
+## Issue: Shared Terrain Doesn't Sync
 
-**Problem**: Local changes aren't being pushed to GitHub or pulled from it.
+The browser sends compressed elevation deltas to the Cloudflare Worker; it no
+longer reads or writes `data/terrain.json`.
 
 **Check**:
-1. Open DevTools (F12) → Console
-2. Look for errors like `401 Unauthorized` or `404 Not Found`
-3. Verify `data/terrain.json` exists in repo:
-   ```bash
-   git ls-files data/terrain.json
-   ```
+1. Open DevTools (F12) → Console and look for Worker or CORS errors.
+2. Confirm `https://2026-11-tree-of-life.laurent-perrinet.workers.dev/api/state`
+   returns the shared terrain.
+3. Confirm the Worker has the `SIMULATION` Durable Object binding and the
+   configured owner ID.
+4. In the admin view, press **S** to request a sync. Manual sync still respects
+   the adaptive interval.
 
-**Solution**:
-```bash
-# Create initial terrain if missing
-echo '{"cells":[],"width":64,"height":64,"timestamp":"2026-11-16T00:00:00Z"}' > data/terrain.json
-git add data/terrain.json
-git commit -m "Initialize terrain"
-git push origin main
-```
+The active-browser count is approximate and expires after 24 hours. The
+80,000-request daily target is based on normal browser sync cadence; it is not
+a hard limit against direct public Worker requests.
 
 ---
 
@@ -125,9 +122,9 @@ git push origin main
 3. Look for long bars (> 16ms = frame drop)
 
 **Common Causes**:
-- Grid size too large (try reducing from 64×64)
+- Mesh resolution too large (review `js/terrain.js`)
 - Heavy 3D rendering (reduce mesh complexity)
-- GitHub sync conflicts (check network calls)
+- Worker sync errors (check the browser console and network calls)
 
 **Solution**:
 ```js
@@ -172,7 +169,7 @@ const HEIGHT = 48; // was 64
    <script src="js/terrain.js"></script>
    <script src="js/physics.js"></script>
    <script src="js/renderer.js"></script>
-   <script src="js/github-sync.js"></script>
+   <script src="js/collaboration.js"></script>
    <script src="js/auth.js"></script>
    <script src="js/controls.js"></script>
    <script src="js/local-storage.js"></script>

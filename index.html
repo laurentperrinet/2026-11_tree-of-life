@@ -12,7 +12,7 @@
 
     <!-- Status badge (top-right) -->
     <div id="status-badge" class="status-badge">
-        <div>Contributors: <span id="contrib-count">1</span></div>
+        <div>Collaborators (24 h): <span id="contrib-count">0</span></div>
         <div>Last sync: <span id="last-sync">--</span>s ago</div>
         <div>Energy: <span id="energy-level">--</span>%</div>
         <div id="auth-status" hidden></div>
@@ -30,6 +30,17 @@
                     a relative change of 5% or more gives 0%. Values above 95% are
                     marked stable. This measures energy variation, not proof that the
                     terrain has converged.</p>
+            </div>
+        </details>
+        <details class="status-help">
+            <summary aria-label="Explain collaboration">ⓘ</summary>
+            <div class="status-help-content">
+                <p>Each browser is counted for 24 hours after its last sync. To stay
+                    under the 80,000-request daily target, the Worker lengthens the
+                    interval as the collaborator count grows, with a five-minute
+                    minimum. During each shared terrain version, it averages one
+                    elevation-change contribution per browser at every mesh vertex.
+                    Water, sediment, particles and vegetation remain local.</p>
             </div>
         </details>
     </div>
@@ -66,8 +77,9 @@
     <script src="js/local-storage.js"></script>
     <script src="js/terrain.js"></script>
     <script src="js/physics.js"></script>
+    <script src="js/biology.js"></script>
     <script src="js/renderer.js"></script>
-    <script src="js/github-sync.js"></script>
+    <script src="js/collaboration.js"></script>
     <script src="js/auth.js"></script>
     <script src="js/controls.js"></script>
     <script src="js/ui.js"></script>

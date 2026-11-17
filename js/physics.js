@@ -10,27 +10,13 @@ class PhysicsEngine {
         this.friction = 1.8;
         this.Q_inlet = 0.5;
         this.timeScale = 1;
-        this.particleCount = 500;
+        this.particleCount = 1000;
         this.waterPerParticle = 0.02;
         this.transportCapacity = 6;
         this.erosionBorderWidth = 2;
         this.particleRadius = 0.105;
         this.maxSpeed = 3;
         this.sandReposeSlope = Math.tan(34 * Math.PI / 180);
-        this.nearbyFlow = new Float32Array(grid.elevation.length);
-        this.flowScratch = new Float32Array(grid.elevation.length);
-        this.flowEdgeWeights = Float32Array.from(grid.edges, edge => Math.exp(-edge.length / 0.6));
-        this.vegetationElapsed = 0;
-        this.microbeHabitat = new Float32Array(grid.elevation.length);
-        this.microbeDeltaU = new Float32Array(grid.elevation.length);
-        this.microbeDeltaV = new Float32Array(grid.elevation.length);
-        this.microbeDegree = new Uint16Array(grid.elevation.length);
-        for (const edge of grid.edges) {
-            if (edge.a < grid.erodibleCount && edge.b < grid.erodibleCount) {
-                this.microbeDegree[edge.a]++;
-                this.microbeDegree[edge.b]++;
-            }
-        }
         this.particles = [];
         this.createParticles();
     }
@@ -101,85 +87,8 @@ class PhysicsEngine {
                 grid.velocityY[index] += particle.vz * weight;
             });
         }
-        this.updateVegetation(dt);
         grid.calculateEnergy();
-    }
-
-    updateVegetation(dt) {
-        if (dt <= 0) return;
-        const grid = this.grid;
-        const alpha = 1 - Math.exp(-dt / 20);
-        for (let i = 0; i < grid.erodibleCount; i++) {
-            const flux = grid.waterDepth[i] > 0
-                ? grid.waterDepth[i] * Math.hypot(grid.velocityX[i], grid.velocityY[i]) : 0;
-            grid.flowHistory[i] += alpha * (flux - grid.flowHistory[i]);
-        }
-        this.vegetationElapsed += dt;
-        if (this.vegetationElapsed < 0.4) return;
-        const growthTime = this.vegetationElapsed;
-        this.vegetationElapsed = 0;
-        this.nearbyFlow.set(grid.flowHistory);
-        let nearby = this.nearbyFlow;
-        let scratch = this.flowScratch;
-        // Spread the sustained flow across a few mesh edges to reach the channel banks.
-        for (let pass = 0; pass < 4; pass++) {
-            scratch.set(nearby);
-            for (let j = 0; j < grid.edges.length; j++) {
-                const edge = grid.edges[j];
-                if (edge.a >= grid.erodibleCount || edge.b >= grid.erodibleCount) continue;
-                const weight = this.flowEdgeWeights[j];
-                scratch[edge.a] = Math.max(scratch[edge.a], nearby[edge.b] * weight);
-                scratch[edge.b] = Math.max(scratch[edge.b], nearby[edge.a] * weight);
-            }
-            [nearby, scratch] = [scratch, nearby];
-        }
-        const growthRate = 1 - Math.exp(-growthTime / 12);
-        for (let i = 0; i < grid.erodibleCount; i++) {
-            if (grid.elevation[i] <= grid.bedrock[i] + 1e-8) continue;
-            const wetness = Math.min(1, Math.max(0, (nearby[i] - 0.002) / 0.013));
-            const bank = Math.min(1, Math.max(0, (0.8 - grid.flowHistory[i] / Math.max(nearby[i], 1e-12)) / 0.6));
-            const target = wetness * bank;
-            if (target > grid.vegetation[i]) {
-                grid.vegetation[i] += (target - grid.vegetation[i]) * growthRate;
-            }
-        }
-        this.updateMicrobes(growthTime);
-    }
-
-    updateMicrobes(dt) {
-        const grid = this.grid;
-        const habitat = this.microbeHabitat;
-        for (let i = 0; i < grid.erodibleCount; i++) {
-            habitat[i] = grid.microbeSuitability(i);
-        }
-        const steps = Math.ceil(2 * dt);
-        if (steps === 0) return;
-        const step = 2 * dt / steps;
-        const u = grid.microbeU, v = grid.microbeV;
-        const du = this.microbeDeltaU, dv = this.microbeDeltaV;
-        // Gray–Scott with a degree-normalized graph Laplacian and no flux through unsuitable ground.
-        for (let n = 0; n < steps; n++) {
-            du.fill(0);
-            dv.fill(0);
-            for (const edge of grid.edges) {
-                if (edge.a >= grid.erodibleCount || edge.b >= grid.erodibleCount) continue;
-                const weight = Math.min(habitat[edge.a], habitat[edge.b]);
-                const flowU = (u[edge.b] - u[edge.a]) * weight;
-                const flowV = (v[edge.b] - v[edge.a]) * weight;
-                du[edge.a] += flowU;
-                du[edge.b] -= flowU;
-                dv[edge.a] += flowV;
-                dv[edge.b] -= flowV;
-            }
-            for (let i = 0; i < grid.erodibleCount; i++) {
-                const reaction = u[i] * v[i] * v[i] * habitat[i];
-                const degree = this.microbeDegree[i] || 1;
-                u[i] = Math.max(0, Math.min(1, u[i] + step *
-                    (0.64 * du[i] / degree - reaction + 0.035 * (1 - u[i]))));
-                v[i] = Math.max(0, Math.min(1, v[i] + step *
-                    (0.32 * dv[i] / degree + reaction - (0.035 + 0.062 + 0.15 * (1 - habitat[i])) * v[i])));
-            }
-        }
+        return dt;
     }
 
     relaxSand(dt) {
@@ -311,7 +220,6 @@ class PhysicsEngine {
 
     reset() {
         this.grid.initialize();
-        this.vegetationElapsed = 0;
         this.createParticles();
     }
 }

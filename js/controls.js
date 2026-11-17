@@ -8,8 +8,9 @@ class InputControls {
         
         // Mouse controls
         this.mouse = { x: 0, y: 0, down: false };
-        this.cameraRotation = { x: 1.0, y: 0 };
-        this.cameraDistance = 50;
+        const { x, y, z } = this.camera.position;
+        this.cameraRotation = { x: Math.atan2(y, Math.hypot(x, z)), y: Math.atan2(x, z) };
+        this.cameraDistance = Math.hypot(x, y, z);
         
         // Setup listeners
         this.setupKeyboardListener();
@@ -66,8 +67,13 @@ class InputControls {
             
             // Force sync
             case 'S':
-                app.ui.showToast('Forcing GitHub sync...', 'warning');
-                app.syncLoop.fetchAndMerge();
+                app.collaboration.fetchAndMerge().then(
+                    synced => app.ui.showToast(
+                        synced ? 'Collaboration synchronized' : 'Sync is already rate-limited',
+                        synced ? 'success' : 'info'
+                    ),
+                    error => app.ui.showToast(error.message, 'error', 8000)
+                );
                 break;
             
             // Reset (if authorized)
@@ -159,9 +165,11 @@ class InputControls {
         
         this.camera.position.x = distance * Math.sin(theta) * Math.cos(phi);
         this.camera.position.y = distance * Math.sin(phi);
-        this.camera.position.z = -10 + distance * Math.cos(theta) * Math.cos(phi);
-        
-        this.camera.lookAt(0, 0, -10);
+        this.camera.position.z = distance * Math.cos(theta) * Math.cos(phi);
+        this.camera.up.set(-Math.sin(theta) * Math.sin(phi), Math.cos(phi),
+            -Math.cos(theta) * Math.sin(phi));
+
+        this.camera.lookAt(0, 0, 0);
     }
     
     /**

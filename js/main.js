@@ -12,12 +12,7 @@ class Application {
         
         // Storage and sync
         this.localStore = new LocalStorageManager();
-        this.github = new GitHubSync({
-            owner: 'laurentperrinet',
-            repo: '2026-11_tree-of-life',
-            filePath: 'data/terrain.json'
-        });
-        this.syncLoop = new SyncLoop(this.grid, this.physics, this.github, this.localStore);
+        this.collaboration = new CollaborativeSync(this.grid, this.localStore);
         
         // Auth and reset
         this.auth = new AuthManager({
@@ -25,7 +20,9 @@ class Application {
             redirectUri: 'https://laurentperrinet.github.io/2026-11_tree-of-life/',
             exchangeUrl: 'https://2026-11-tree-of-life.laurent-perrinet.workers.dev/api/auth/exchange'
         });
-        this.reset = new ResetManager(this.auth, this.grid, this.physics, this.localStore, this.github);
+        this.reset = new ResetManager(
+            this.auth, this.grid, this.physics, this.localStore, this.collaboration
+        );
         
         // UI
         this.ui = initializeUI(this.auth, this.reset);
@@ -101,31 +98,16 @@ class Application {
             this.ui.updateAdminPanel();
             this.ui.updateAuthStatus();
             
-            // Try to load from localStorage
-            const loaded = this.localStore.load(this.grid);
-            
-            if (!loaded) {
-                // Try to fetch from GitHub
-                const remote = await this.github.fetchTerrain();
-                if (remote) {
-                    if (!this.grid.fromJSON(remote)) {
-                        this.ui.showToast('Saved terrain is incompatible; starting a new bed', 'warning');
-                    }
-                } else {
-                    this.ui.showToast('No saved terrain found, using a fresh bed', 'info');
-                }
+            this.localStore.load(this.grid);
+
+            try {
+                await this.collaboration.start();
+            } catch (error) {
+                console.error('Initial collaboration sync failed:', error);
+                this.ui.showToast(`Collaboration unavailable: ${error.message}`, 'warning', 8000);
             }
-            
-            // Create renderer mesh
+
             this.renderer.createTerrainMesh(this.grid);
-            
-            // Setup GitHub sync integration
-            if (this.auth.token) {
-                this.github.setToken(this.auth.token);
-            }
-            
-            // Start sync loop
-            this.syncLoop.start();
             
             this.ui.showLoading(false);
             this.ui.showToast(authError ? authError.message : '✓ Simulation ready',
@@ -151,15 +133,12 @@ class Application {
         // Physics step
         this.physics.step();
         
-        // Track changes for sync
-        this.syncLoop.recordChange(Math.round(Math.random() * 5)); // Simplified
-        
         // Update renderer
         this.renderer.updateTerrainMesh(this.grid);
         this.renderer.updateParticles(this.physics);
         
         // Update UI
-        this.ui.updateStatus(this.grid, this.github, this.syncLoop);
+        this.ui.updateStatus(this.grid, this.collaboration);
         
         // Render
         this.renderer.render();
@@ -175,7 +154,7 @@ class Application {
      * Cleanup on unload
      */
     dispose() {
-        this.syncLoop.stop();
+        this.collaboration.stop();
         this.renderer.dispose();
     }
 }

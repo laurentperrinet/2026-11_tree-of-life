@@ -449,6 +449,27 @@ test('version 10 saves raise the surround without changing the sand or particles
     assert.equal(grid.fromJSON(saved), false);
 });
 
+test('500-particle saves gain new water without losing saved sediment', () => {
+    const grid = new TerrainGrid();
+    const physics = new PhysicsEngine(grid);
+    const saved = grid.toJSON();
+    saved.particles = saved.particles.slice(0, 500);
+    saved.particles[0].sediment = 0.25;
+    physics.particles[700].sediment = 0.75;
+    const expected = saved.elevation.reduce((sum, height, i) =>
+        sum + (height - grid.bedrock[i]) * grid.vertexArea[i], 0) + 0.25;
+    assert.equal(grid.fromJSON(saved), true);
+    assert.equal(physics.particles, grid.particles);
+    assert.equal(physics.particles.length, 1000);
+    assert.deepEqual({ ...physics.particles[0] }, { ...saved.particles[0] });
+    assert.ok(physics.particles.slice(500).every(p =>
+        p.sediment === 0 && p.vx === 0 && p.vz === 0 && grid.locate(p.x, p.z)));
+    assert.ok(Math.abs(totalSediment(grid, physics) - expected) < 1e-8);
+    const restored = grid.toJSON();
+    assert.equal(grid.fromJSON(restored), true);
+    assert.equal(grid.fromJSON({ ...saved, particles: saved.particles.slice(0, 499) }), false);
+});
+
 test('fixed surround never gains or loses sediment', () => {
     const grid = new TerrainGrid();
     const physics = new PhysicsEngine(grid);

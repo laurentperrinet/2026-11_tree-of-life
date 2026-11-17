@@ -208,12 +208,12 @@ class AuthManager {
  * Reset manager - handles terrain reset with auth check
  */
 class ResetManager {
-    constructor(auth, terrain, physics, localStore, github) {
+    constructor(auth, terrain, physics, localStore, collaboration) {
         this.auth = auth;
         this.terrain = terrain;
         this.physics = physics;
         this.localStore = localStore;
-        this.github = github;
+        this.collaboration = collaboration;
     }
     
     /**
@@ -233,24 +233,11 @@ class ResetManager {
         }
         
         try {
-            // Clear local cache
+            this.physics.reset();
+            await this.collaboration.reset(this.auth.token);
             this.localStore.clear();
             
-            // Fetch latest from GitHub
-            const remote = await this.github.fetchTerrain();
-            
-            if (remote) {
-                // Load remote terrain
-                this.terrain.fromJSON(remote);
-            } else {
-                // Re-initialize if no remote
-                this.terrain.initialize();
-            }
-            
-            // Reset physics
-            this.physics.reset();
-            
-            console.log('Soft reset complete');
+            console.log('Shared terrain reset complete');
             return true;
         } catch (error) {
             console.error('Soft reset failed:', error);
@@ -274,16 +261,7 @@ class ResetManager {
         }
         
         try {
-            // Delete local cache
-            this.localStore.clear();
-            
-            // Would need admin privileges to delete from GitHub
-            // For now, just reinitialize locally
-            this.terrain.initialize();
-            this.physics.reset();
-            
-            console.log('Hard reset complete (local only)');
-            return true;
+            return await this.softReset();
         } catch (error) {
             console.error('Hard reset failed:', error);
             return false;

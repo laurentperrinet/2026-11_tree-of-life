@@ -3,8 +3,9 @@
  * Implements save/load with version checking
  */
 class LocalStorageManager {
-    constructor(storageKey = 'tree-of-life-terrain-disk-v10') {
+    constructor(storageKey = 'tree-of-life-terrain-disk-v10', maxAgeHours = 24) {
         this.storageKey = storageKey;
+        this.maxAgeHours = maxAgeHours;
         this.version = '1.0';
     }
     
@@ -51,8 +52,8 @@ class LocalStorageManager {
             // Age check (don't load if > 24 hours old)
             const savedTime = new Date(wrapped.savedAt);
             const ageHours = (Date.now() - savedTime.getTime()) / (1000 * 60 * 60);
-            if (ageHours > 24) {
-                console.warn('Saved terrain too old (>24h), ignoring');
+            if (this.maxAgeHours !== null && ageHours > this.maxAgeHours) {
+                console.warn(`Saved data too old (>${this.maxAgeHours}h), ignoring`);
                 return false;
             }
             

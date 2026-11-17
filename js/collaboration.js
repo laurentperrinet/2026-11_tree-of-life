@@ -1,0 +1,189 @@
+/**
+ * Synchronizes averaged terrain-elevation changes through the Cloudflare Worker.
+ */
+class CollaborativeSync {
+    constructor(terrain, localStore, config = {}) {
+        this.terrain = terrain;
+        this.localStore = localStore;
+        this.endpoint = config.endpoint ||
+            'https://2026-11-tree-of-life.laurent-perrinet.workers.dev/api/sync';
+        this.resetEndpoint = this.endpoint.replace(/\/api\/sync$/, '/api/admin/reset');
+        this.clientId = this.getClientId();
+        this.version = null;
+        this.baseElevation = null;
+        this.submittedVersion = null;
+        this.activeCollaborators = 0;
+        this.syncIntervalMs = 300_000;
+        this.lastSyncTime = 0;
+        this.running = false;
+        this.timer = null;
+        this.inFlight = null;
+        this.failureCount = 0;
+    }
+
+    getClientId() {
+        const key = 'tree-of-life-collaborator-id';
+        try {
+            const existing = localStorage.getItem(key);
+            if (existing && /^[a-f0-9]{32}$/.test(existing)) return existing;
+            const bytes = crypto.getRandomValues(new Uint8Array(16));
+            const id = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+            localStorage.setItem(key, id);
+            return id;
+        } catch (error) {
+            console.error('Could not persist collaborator ID; using a session-only ID:', error);
+            return Array.from(crypto.getRandomValues(new Uint8Array(16)),
+                byte => byte.toString(16).padStart(2, '0')).join('');
+        }
+    }
+
+    async start() {
+        if (this.running) return;
+        this.running = true;
+        try {
+            await this.sync();
+        } finally {
+            this.schedule();
+        }
+    }
+
+    async syncNow() {
+        if (this.inFlight) return this.inFlight;
+        if (Date.now() - this.lastSyncTime < this.syncIntervalMs) return false;
+        try {
+            await this.sync();
+            this.schedule();
+            return true;
+        } catch (error) {
+            this.schedule();
+            throw error;
+        }
+    }
+
+    async sync() {
+        if (this.inFlight) return this.inFlight;
+        this.inFlight = this.performSync();
+        try {
+            return await this.inFlight;
+        } finally {
+            this.inFlight = null;
+        }
+    }
+
+    async performSync() {
+        const headers = { 'X-Collaborator-ID': this.clientId };
+        let body;
+        let submittedVersion = null;
+        if (this.version !== null) headers['X-Terrain-Version'] = String(this.version);
+        if (this.version !== null && this.submittedVersion !== this.version) {
+            const delta = Float32Array.from(
+                this.terrain.elevation,
+                (height, index) => height - this.baseElevation[index]
+            );
+            const compressed = await this.compress(delta);
+            headers['Content-Type'] = 'application/octet-stream';
+            headers['X-Payload-Encoding'] = 'gzip';
+            body = compressed;
+            submittedVersion = this.version;
+        }
+
+        const response = await fetch(this.endpoint, {
+            method: 'POST',
+            headers,
+            body
+        });
+        if (!response.ok) {
+            const details = await response.json().catch(() => ({}));
+            throw new Error(details.error || `Collaboration sync failed (${response.status})`);
+        }
+        const data = await response.json();
+        this.applyState(data);
+        if (data.version === submittedVersion && data.accepted) {
+            this.submittedVersion = submittedVersion;
+        }
+        this.lastSyncTime = Date.now();
+        this.failureCount = 0;
+        return data;
+    }
+
+    async compress(delta) {
+        if (typeof CompressionStream !== 'function') {
+            throw new Error('This browser does not support compressed collaboration updates');
+        }
+        const stream = new Blob([delta.buffer]).stream().pipeThrough(new CompressionStream('gzip'));
+        return new Response(stream).arrayBuffer();
+    }
+
+    applyState(data) {
+        if (!data || !Number.isSafeInteger(data.version)) {
+            throw new Error('Collaboration Worker returned an incompatible terrain');
+        }
+        if (!Number.isSafeInteger(data.activeCollaborators) ||
+            !Number.isFinite(data.syncIntervalMs) || data.syncIntervalMs < 1) {
+            throw new Error('Collaboration Worker returned invalid synchronization metadata');
+        }
+
+        if (this.version !== data.version || this.baseElevation === null) {
+            if (!Array.isArray(data.terrain?.elevation) ||
+                data.terrain.elevation.length !== this.terrain.elevation.length ||
+                data.terrain.elevation.some(value => !Number.isFinite(value))) {
+                throw new Error('Collaboration Worker omitted or corrupted the shared terrain');
+            }
+            this.terrain.elevation.set(data.terrain.elevation);
+            this.baseElevation = Float64Array.from(data.terrain.elevation);
+            this.version = data.version;
+            this.submittedVersion = null;
+            if (this.localStore) this.localStore.save(this.terrain);
+        }
+        this.activeCollaborators = data.activeCollaborators;
+        this.syncIntervalMs = Math.max(300_000, data.syncIntervalMs);
+    }
+
+    async reset(token) {
+        const response = await fetch(this.resetEndpoint, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!response.ok) {
+            const details = await response.json().catch(() => ({}));
+            throw new Error(details.error || `Terrain reset failed (${response.status})`);
+        }
+        const data = await response.json();
+        this.applyState(data);
+        this.lastSyncTime = Date.now();
+        return true;
+    }
+
+    getSecondsSinceSync() {
+        return this.lastSyncTime ? Math.floor((Date.now() - this.lastSyncTime) / 1000) : null;
+    }
+
+    recordChange() {}
+
+    fetchAndMerge() {
+        return this.syncNow();
+    }
+
+    schedule() {
+        if (!this.running) return;
+        clearTimeout(this.timer);
+        const backoff = this.failureCount
+            ? Math.min(this.syncIntervalMs * (2 ** this.failureCount), 6 * 60 * 60 * 1000)
+            : this.syncIntervalMs;
+        this.timer = setTimeout(async () => {
+            try {
+                await this.sync();
+            } catch (error) {
+                this.failureCount++;
+                console.error('Collaboration sync failed:', error);
+            } finally {
+                this.schedule();
+            }
+        }, backoff);
+    }
+
+    stop() {
+        this.running = false;
+        clearTimeout(this.timer);
+    }
+}

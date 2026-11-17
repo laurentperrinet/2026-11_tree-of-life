@@ -7,7 +7,8 @@ class TerrainRenderer {
         this.scene = new THREE.Scene();
         this.scene.background = new THREE.Color(0x05070d);
         this.camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 1000);
-        this.camera.position.set(0, 85, 40);
+        this.camera.position.set(0, 65, 0);
+        this.camera.up.set(0, 0, -1);
         this.camera.lookAt(0, 0, 0);
         this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
         this.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -16,6 +17,7 @@ class TerrainRenderer {
         light.position.set(20, 40, 20);
         this.scene.add(light);
         this.terrainMesh = null;
+        this.biologyMesh = null;
         this.particleMesh = null;
         this.displayMode = 'elevation';
         this.dummy = new THREE.Object3D();
@@ -23,7 +25,7 @@ class TerrainRenderer {
         this.onWindowResize();
     }
 
-    createTerrainMesh(grid) {
+    createTerrainMesh(grid, biology) {
         if (this.terrainMesh) {
             this.scene.remove(this.terrainMesh);
             this.terrainMesh.geometry.dispose();
@@ -45,14 +47,70 @@ class TerrainRenderer {
         }));
         this.scene.add(this.terrainMesh);
         this.updateTerrainColors(grid);
+        this.createBiologyMesh(biology);
     }
 
-    updateTerrainMesh(grid) {
+    createBiologyMesh(biology) {
+        if (this.biologyMesh) {
+            this.scene.remove(this.biologyMesh);
+            this.biologyMesh.geometry.dispose();
+            this.biologyMesh.material.dispose();
+        }
+        const positions = new Float32Array(biology.active.length * 3);
+        const indices = [];
+        for (let z = 0; z < biology.size; z++) {
+            for (let x = 0; x < biology.size; x++) {
+                const i = z * biology.size + x;
+                positions[3 * i] = x * biology.spacing - biology.terrain.radius;
+                positions[3 * i + 2] = z * biology.spacing - biology.terrain.radius;
+                if (x + 1 >= biology.size || z + 1 >= biology.size) continue;
+                const right = i + 1, below = i + biology.size, diagonal = below + 1;
+                if (biology.active[i] && biology.active[below] && biology.active[right]) {
+                    indices.push(i, below, right);
+                }
+                if (biology.active[right] && biology.active[below] && biology.active[diagonal]) {
+                    indices.push(right, below, diagonal);
+                }
+            }
+        }
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(positions.length), 3));
+        geometry.setIndex(indices);
+        this.biologyMesh = new THREE.Mesh(geometry, new THREE.MeshPhongMaterial({
+            vertexColors: true, side: THREE.DoubleSide, shininess: 25
+        }));
+        this.scene.add(this.biologyMesh);
+        this.updateBiologyMesh(biology);
+    }
+
+    updateTerrainMesh(grid, biology) {
         const positions = this.terrainMesh.geometry.attributes.position;
         for (let i = 0; i < grid.elevation.length; i++) positions.array[3 * i + 1] = grid.elevation[i];
         positions.needsUpdate = true;
         this.terrainMesh.geometry.computeVertexNormals();
         this.updateTerrainColors(grid);
+        this.biologyMesh.visible = this.displayMode === 'elevation';
+        if (this.biologyMesh.visible) this.updateBiologyMesh(biology);
+    }
+
+    updateBiologyMesh(biology) {
+        const geometry = this.biologyMesh.geometry;
+        const positions = geometry.attributes.position;
+        for (let i = 0; i < biology.active.length; i++) {
+            if (biology.active[i]) positions.array[3 * i + 1] = biology.terrainValue(i, biology.terrain.elevation) + 0.015;
+        }
+        positions.needsUpdate = true;
+        geometry.computeVertexNormals();
+        const colors = geometry.attributes.color;
+        const normals = geometry.attributes.normal;
+        const color = new THREE.Color();
+        for (let i = 0; i < biology.active.length; i++) {
+            if (!biology.active[i]) continue;
+            this.volcanicColor(biology, i, normals, color);
+            colors.setXYZ(i, color.r, color.g, color.b);
+        }
+        colors.needsUpdate = true;
     }
 
     updateTerrainColors(grid) {
@@ -72,7 +130,7 @@ class TerrainRenderer {
             if (i >= grid.erodibleCount) {
                 color.setRGB(0, 0, 0);
             } else if (this.displayMode === 'elevation') {
-                this.volcanicColor(grid, i, normals, color);
+                color.setRGB(0.053, 0.053, 0.055);
             } else if (this.displayMode === 'sand depth') {
                 const depth = (grid.elevation[i] - grid.bedrock[i]) / grid.initialSandDepth;
                 this.deepColor(depth, color);
@@ -89,20 +147,21 @@ class TerrainRenderer {
         colors.needsUpdate = true;
     }
 
-    volcanicColor(grid, i, normals, color) {
-        const growth = grid.vegetation[i];
+    volcanicColor(biology, i, normals, color) {
+        const growth = biology.plants[i];
         const ny = normals.getY(i);
         const nx = normals.getX(i);
         const facing = Math.max(0, Math.min(1, 0.5 + 0.9 * (nx * 0.4 + ny - 0.85)));
         const hue = 0.17 + 0.04 * (1 - facing);
         const lightness = 0.035 + 0.45 * growth * (0.5 + 0.5 * facing);
         color.setHSL(hue, 0.95 * growth, lightness);
-        const rock = grid.elevation[i] <= grid.bedrock[i] + 1e-8 ? 0.035 : 0.018;
+        const rock = biology.sand[i] ? 0.018 : 0.035;
         color.r += rock; color.g += rock; color.b += rock * 1.1;
-        const habitat = grid.microbeSuitability(i);
-        const density = Math.min(1, Math.max(0, (grid.microbeV[i] - 0.025) / 0.3));
+        const habitat = biology.sand[i] * Math.max(0, 1 - biology.flow[i] / 0.04) *
+            Math.max(0, 1 - growth / 0.6);
+        const density = Math.min(1, Math.max(0, (biology.microbeV[i] - 0.025) / 0.3));
         const amount = density * density * habitat;
-        const purple = Math.min(1, grid.microbeV[i] / 0.35);
+        const purple = Math.min(1, biology.microbeV[i] / 0.35);
         color.r += ((0.55 - 0.18 * purple) - color.r) * amount;
         color.g += ((0.30 - 0.18 * purple) - color.g) * amount;
         color.b += ((0.07 + 0.28 * purple) - color.b) * amount;

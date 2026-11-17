@@ -1,12 +1,13 @@
 # 🌊 Tree of Life - Collaborative Hydromorphodynamic Simulation
 
-> **Current status:** The GitHub Pages site runs a local simulation. The
-> Cloudflare Worker in `worker/` is deployed as an experimental backend. The
-> frontend is configured to use its OAuth endpoint, but sign-in has not been
-> verified end to end and collaborative computation is not integrated.
-> Statements below about production
-> readiness, automatic GitHub synchronization, and deployment describe the
-> older prototype and should not be relied on.
+> **Current collaboration protocol:** The browser keeps the triangular-mesh
+> physics local and sends only per-vertex elevation deltas to the Cloudflare
+> Worker. The Worker averages one contribution per browser ID for each shared
+> terrain version. Water, sediment, particles, vegetation and microbes remain
+> local to each browser. A browser ID is counted as active for 24 hours.
+> Synchronization is scheduled toward an 80,000-request daily target, with a
+> five-minute minimum interval. This is an application-level target, not a hard
+> Cloudflare quota or protection against arbitrary direct requests.
 
 ## Current browser simulation
 
@@ -20,7 +21,10 @@ vertices lie on the disk boundary. The black, non-erodible surround rises
 outwards so water on it flows back towards the disk; the outlet channel remains
 open and slopes down to the sink.
 
-Blue spheres represent a fixed number of water parcels. Gravity follows the
+Blue spheres represent 1,000 water parcels, each carrying the same volume as
+before, doubling the circulating water relative to the 500-parcel model.
+Older 500-parcel saves retain their water and sediment and receive 500
+additional sediment-free parcels. Gravity follows the
 local slope of each triangle, with friction. The square boundary reflects water
 except at the sink in the middle of its bottom edge. On reaching the sink, each
 parcel is reintroduced three mesh rings inside the disk at a uniformly random angle,
@@ -58,27 +62,37 @@ from older meshes are not loaded. Version 10 saves are migrated by raising
 only the fixed surround, preserving the sand and particle state.
 Test the browser model with `node --test tests/terrain-physics.test.js`.
 
-## Experimental Cloudflare Worker
+## Cloudflare collaboration Worker
 
-The Worker coordinates a single 64 x 64 terrain with a SQLite-backed Durable
-Object. It divides each step into four row ranges, gives each contributor a
-60-second lease, and commits the next terrain only after all four results for
-the current version have arrived. Expired leases can be reassigned. An owner
-parameter change or reset invalidates all outstanding leases.
+The Worker stores the shared elevation array for the browser's
+`disk-square-polar-v1` mesh in a SQLite-backed Durable Object. Its
+`worker/mesh.mjs` initialization mirrors the mesh vertex order and initial
+bedrock/sand profile used by `js/terrain.js`.
 
-`worker/physics.mjs` contains the matching row calculation. It preserves
-sediment updates across steps; it is not identical to the existing browser
-engine, which needs to be replaced or adapted before integration.
+Each browser has a random local ID. A single `POST /api/sync` request both
+submits a compressed elevation delta and returns the latest shared state.
+Submissions include a terrain version; the Worker accepts at most one per
+browser and version. After an adaptive collection interval, it applies the
+arithmetic mean of the accepted elevation deltas per vertex. A stale
+contribution is discarded and the browser receives the newer terrain instead.
+Collaborator IDs expire after 24 hours without a sync.
+
+The interval is `max(5 minutes, active browsers × 2 × 86,400,000 ms / 80,000)`,
+rounded up to a whole millisecond. The factor of two conservatively budgets a
+possible CORS preflight plus the sync request. This targets no more than 80,000
+sync-related Worker requests/day for a stable, accurately observed
+active-browser count. OAuth, reset and other requests are outside that
+calculation, and public Worker traffic cannot be capped by this client schedule
+alone. Configure Cloudflare-side abuse and quota controls before relying on a
+strict ceiling.
 
 Endpoints:
 
 | Method and path | Purpose |
 | --- | --- |
-| `GET /api/state` | Read the current terrain, parameters, and version |
-| `POST /api/tasks/claim` | Claim a row range and receive its input state |
-| `POST /api/tasks/submit` | Submit `{version, lease, result}` for that range |
+| `GET /api/state` | Read the current shared elevation and version |
+| `POST /api/sync` | Submit one compressed elevation delta and receive shared state |
 | `POST /api/auth/exchange` | Exchange a GitHub OAuth authorization code |
-| `POST /api/admin/parameters` | Set `{flow, speed}` as the GitHub owner |
 | `POST /api/admin/reset` | Reset the terrain as the GitHub owner |
 
 Administration uses a bearer token verified against GitHub's `/user` endpoint
@@ -92,15 +106,11 @@ enable sign-in, the Worker at
 `https://2026-11-tree-of-life.laurent-perrinet.workers.dev` must have
 `GITHUB_CLIENT_SECRET` configured as a Cloudflare secret (never in source
 code). The frontend points to its `/api/auth/exchange` endpoint.
-Sign-in requires the GitHub
-Pages origin; `file://` and localhost cannot use the configured callback.
-The authentication flow has not yet been verified end to end; the Worker's
-collaborative simulation is not integrated with the particle model.
-
-Submitted arrays are bounded and one randomly chosen row is recalculated, but
-this sampling **does not prove an anonymous contribution is correct**. Leases
-also do not prevent intentional denial of service. Abuse controls and stronger
-result verification are required before accepting public contributions.
+Sign-in requires the GitHub Pages origin; `file://` and localhost cannot use
+the configured callback. A contribution is anonymous and is not independently
+verified; averaging reduces the influence of a single submission but does not
+make public input trustworthy. The Worker shares elevation only; it does not
+claim to average the complete physical state.
 The deployment needs a Cloudflare account, the Durable Object binding in
 `wrangler.toml`, and the three configuration values above. No secret
 should be shared in chat. Do not deploy this prototype as a production service.
@@ -108,14 +118,16 @@ should be shared in chat. Do not deploy this prototype as a production service.
 Run the local tests from the project root:
 
 ```bash
-node --test worker/physics.test.mjs worker/index.test.mjs
+npm test
 ```
 
-These tests use a local mock, not the Cloudflare runtime or a deployed OAuth
-application. The deployed Worker's state endpoint has been checked separately.
-The GitHub Pages client still needs integration and end-to-end testing.
+These tests use local mocks, not the Cloudflare runtime or a deployed OAuth
+application. Browser-to-Worker behavior still needs end-to-end validation after
+the Worker code is deployed. The older `tests/terrain-physics.test.js` suite
+covers a different browser-model snapshot and is not included in this targeted
+protocol test command.
 
-An interactive web-based simulation of water-driven terrain erosion creating natural branching patterns, inspired by the "Tree of Life" photograph from Iceland. Each browser visitor contributes to building a shared terrain through a collaborative, persistent GitHub-backed system.
+An interactive web-based simulation of water-driven terrain erosion creating natural branching patterns, inspired by the "Tree of Life" photograph from Iceland. Browsers contribute elevation changes to shared terrain through a Cloudflare Worker.
 
 The current simulation is an exploratory particle model, not a validated hydrodynamic solver.
 In the elevation view, vegetation grows on sandy mesh vertices near sustained
@@ -131,7 +143,7 @@ are saved with the terrain; reset starts the pattern again from seeded patches.
 ### For Users
 Just visit: **https://laurentperrinet.github.io/2026-11_tree-of-life/**
 - Observe water parcels eroding and depositing sediment
-- Drag or scroll to adjust the view
+- The initial view looks straight down at the center of the disk; drag or scroll to adjust it
 - Open [the admin view](https://laurentperrinet.github.io/2026-11_tree-of-life/?admin)
   for the control panel and keyboard shortcuts. Reset still requires signing in
   as the authorized GitHub owner; the URL itself grants no permissions.
@@ -156,35 +168,29 @@ This project visualizes how flowing water carrying sediment creates self-similar
 - **Mountain scale**: Glacial meltwater valleys and avalanche chutes  
 - **Desert scale**: Ephemeral gully networks
 
-The simulation runs in your browser and contributes to a shared, evolving terrain stored in Git.
+The simulation runs in your browser and contributes elevation changes to shared
+terrain stored by the Cloudflare Worker.
 
 **Key Innovation**: Natural branching emerges from physics—no explicit branching algorithm!
 
 ## 🌊 Physics Engine
 
-### Equations
+### Model and parameters
 
-The simulation uses **shallow water equations** + **sediment transport** (Exner equation):
-
-```
-Shallow Water (momentum):
-∂u/∂t + u·∇u = -g∇h - c|u|u    [momentum with friction]
-∂h/∂t + ∇·(hu) = 0               [continuity - water conservation]
-
-Sediment Transport (Exner):
-∂z/∂t = -∇·q_s = -K(τ_b - τ_c)^n [bed elevation change]
-c = |u| * S                       [sediment concentration]
-```
-
-### Key Parameters (All Adjustable)
+The browser uses Lagrangian water parcels on a triangular terrain mesh. Gravity
+accelerates each parcel down the local slope; friction damps its velocity.
+Moving parcels erode sand when below transport capacity and deposit sediment
+when slowing down. Neighboring vertices relax when their slope exceeds the
+angle of repose. This exploratory particle model is not a shallow-water or
+Exner-equation solver, and branching is not guaranteed.
 
 | Parameter | Keyboard | Default | Effect |
 |-----------|----------|---------|--------|
-| **Q** (flow rate) | **+** / **-** | 0.5 | Water input per timestep |
-| **V** (viscosity) | **↑** / **↓** | 0.01 | Friction/damping coefficient |
-| **g** (gravity) | fixed | 9.81 | Pressure gradient |
-| **K** (sediment coeff) | fixed | 0.1 | Erosion rate |
-| **dt** (timestep) | adaptive | CFL-limited | Stability control |
+| **Q_inlet** (flow rate) | **+** / **-** | 0.5 | Water-parcel circulation rate |
+| **timeScale** | **↑** / **↓** | 1 | Simulation speed multiplier |
+| Gravity | fixed | 9.81 | Acceleration along the terrain slope |
+| Friction | fixed | 1.8 | Velocity damping |
+| Transport capacity | fixed | 6 | Sediment load capacity |
 
 ### Why Branching Forms Naturally
 
@@ -192,18 +198,18 @@ c = |u| * S                       [sediment concentration]
 Feedback Loop:
   More water → Deeper channel
      ↓
-  Deeper channel → Lower friction
+  Deeper channel → Redirected particle paths
      ↓
-  Lower friction → Faster flow
+  More parcels follow the channel
      ↓
-  Faster flow → More erosion
+  More erosion along those paths
      ↓
   More erosion → Even deeper channel
      ↓
   [LOOP] = Self-organizing branching network!
 ```
 
-No explicit branching code—it emerges from physics!
+No explicit branching code is used.
 
 ## 🎮 Complete Controls Reference
 
@@ -245,8 +251,8 @@ The control panel and keyboard shortcuts are available with `?admin`.
 ### Status Badge (Top-Right Corner)
 
 Shows real-time statistics:
-- **Contributors**: How many unique GitHub users have synced
-- **Last Sync**: Seconds since last GitHub update
+- **Collaborators (24 h)**: Browser IDs seen by the Worker in the past day
+- **Last Sync**: Seconds since this browser last contacted the Worker
 - **Energy**: Relative motion indicator, Σ(u²+v²)h; the displayed percentage is
   rounded and capped at 100%, not a physical energy percentage.
 - **Stability**: Comparison of the last 15 energy samples with the previous 15.
@@ -262,37 +268,27 @@ When **Converged**, you can press **R** to reset terrain.
 ### How Your Changes Are Saved
 
 ```
-You                          GitHub
-  ↓                             ↓
-Local Browser Simulation    Remote Repository
-  ↓ (every 60 sec)             ↓
-  └──→ Commit terrain.json ←───┘
-         (Git commit)
-  ↑ (every 15 sec) ↓
-  └─← Fetch latest ←─┘
-       (Pull request)
+Browser A ── elevation delta ─┐
+Browser B ── elevation delta ─┼─→ Cloudflare Worker
+Browser C ── elevation delta ─┘         │
+                                        ├─ averages deltas per vertex
+Each browser ←─ shared elevation/version┘
 ```
 
-### Merge Strategy: Max-Elevation Wins
+### Averaging and request budget
 
-When your changes conflict with another user's:
-
-```json
-// You eroded here:          // They eroded here:
-{ h: 0.5 }                   { h: 0.3 }
-
-// After merge:
-{ h: max(0.5, 0.3) = 0.5 }   ← Erosion accumulates!
-```
-
-**Why?** Erosion is irreversible—once a channel is dug, it stays dug. Different visitors' erosion patterns combine naturally.
-
-### GitHub Integration
-
-- **Persistent storage**: `data/terrain.json` in your repo
-- **Full history**: `git log --oneline -- data/terrain.json` shows every change
-- **Timelapse**: `git show SHA:data/terrain.json` to see terrain at any commit
-- **Rate limiting**: Fetch (15s), Commit (60s) respects GitHub API limits (5000/hr with auth)
+- Each browser submits at most one elevation delta per shared terrain version.
+- The Worker averages accepted deltas at each mesh vertex; it does not merge
+  complete terrain states with a max-height rule.
+- Water depth, sediment, particles, vegetation and microorganisms remain
+  browser-local and are not averaged.
+- A random browser ID is kept in localStorage. The Worker considers it active
+  for 24 hours after its last sync.
+- Each sync request both submits a contribution and returns the latest state.
+  The interval starts at five minutes and grows with the active-browser count
+  toward an 80,000-request daily target.
+- The schedule is not an absolute quota: direct public Worker calls and
+  administration/OAuth requests are not constrained by the browser cadence.
 
 ### Authentication & Reset Permissions
 
@@ -341,9 +337,8 @@ js/main.js                      # App orchestrator - Initializes all modules
 js/terrain.js                   # TerrainGrid class - 2D state management
                                 # Contains: elevation(h), velocity(u,v), sediment(c)
                                 
-js/physics.js                   # PhysicsEngine class - Numerical solver
-                                # Implements: Shallow water + Exner equations
-                                # CFL stability checking, energy calculation
+js/physics.js                   # Water parcels, sediment transport, slope
+                                # relaxation and local energy calculation
                                 
 js/renderer.js                  # Renderer class - Three.js visualization
                                 # Updates mesh, applies colors, handles display modes
@@ -352,10 +347,11 @@ js/renderer.js                  # Renderer class - Three.js visualization
 ### Collaboration & Auth
 
 ```
-js/github-sync.js               # GitHubSync class - GitHub API integration
-                                # Fetch, merge, commit to data/terrain.json
-                                # Rate limiting: 15s fetch, 60s commit
-                                
+js/collaboration.js             # Cloudflare sync, compressed elevation deltas,
+                                # browser identity and adaptive request cadence
+worker/index.mjs                # Shared state, per-version contribution averaging
+worker/mesh.mjs                 # Shared mesh initialization and request-budget formula
+
 js/auth.js                      # AuthManager - GitHub OAuth2 flow
                                 # ResetManager - Reset logic & permissions
                                 # Only @laurentperrinet can reset
@@ -371,17 +367,15 @@ js/ui.js                        # UIManager - Status badge, toasts, help
                                 # Real-time statistics display
                                 
 js/local-storage.js             # LocalStorage class - Browser persistence
-                                # Caches terrain between GitHub syncs
+                                # Caches local simulation state
 ```
 
 ### Persistent Data
 
 ```
-data/terrain.json               # 🔑 CRITICAL - Shared simulation state
-                                # Format: {w, h, u, v, c, z} as Float32Arrays
-                                # Size: ~500 KB typical
-                                # Modified by: Every visitor (via GitHub API)
-                                # Accessed by: Fetched every 15 seconds
+data/terrain.json               # Legacy GitHub persistence prototype; not used
+                                # by the current collaboration protocol
+worker/                         # Shared elevation state and Durable Object
 ```
 
 ### Configuration & Deployment
@@ -507,7 +501,7 @@ git push -u origin main
 - [ ] Simulation runs and displays 3D terrain
 - [ ] Can adjust flow rate with **Q**/**E** keys
 - [ ] Reset button appears when converged + logged in
-- [ ] Terrain syncs to GitHub (check `data/terrain.json` in repo)
+- [ ] Shared elevation syncs through the Cloudflare Worker
 
 ### Troubleshooting Deployment
 
@@ -522,14 +516,13 @@ git push -u origin main
 - Check: Browser console for "CORS" errors (usually means wrong Client ID)
 
 **Terrain not syncing?**
-- Check: `data/terrain.json` exists in repo
-- Check: Browser console for GitHub API errors
-- Check: GitHub status page (github.com/status) isn't down
-- Manually trigger sync with **S** key
+- Check the browser console for Cloudflare Worker/CORS errors
+- Confirm the Worker has a SQLite-backed Durable Object binding
+- Use **S** in the admin view; it respects the adaptive sync interval
 
 **Performance issues?**
 - Grid too large? Check `js/terrain.js` line ~20 for `gridSize`
-- Too many updates? Check sync interval in `js/github-sync.js`
+- Too many updates? Check the active-browser cadence in `worker/mesh.mjs`
 - See PERFORMANCE.md for detailed optimization guide
 
 ## 📊 Technical Specifications
@@ -537,13 +530,12 @@ git push -u origin main
 ### Performance Targets
 
 ```
-Grid Size:          64×64 cells (configurable)
+Terrain:            Staggered polar triangular mesh
 FPS Target:         60 frames/second
-Timestep:           dt = 0.01s (adaptive with CFL)
-Stability Check:    dt ≤ dx / max(|u|, |v|)
-Memory Usage:       ~4 MB for 64×64 grid (Float32Array)
-Sync Overhead:      15s fetch, 60s commit intervals
-GitHub API Calls:   ~4/min = 240/hr (within limits)
+Timestep:           0.04 s, scaled by the local speed control
+Stability Check:    Particle travel is substepped below particle radius
+Sync Overhead:      Adaptive; minimum 5 minutes per browser
+Request Target:     80,000 collaboration requests/day
 ```
 
 ### Browser Compatibility
@@ -560,11 +552,9 @@ GitHub API Calls:   ~4/min = 240/hr (within limits)
 
 ### Scaling Path
 
-| Grid Size | FPS Target | Memory | Status | Path |
-|-----------|-----------|--------|--------|------|
-| 64×64 | 60 | 4 MB | ✅ Tested | Current |
-| 128×128 | 30-60 | 16 MB | 📋 Documented | CPU optimization |
-| 256×256 | 15-30 | 64 MB | 🚀 Possible | WebGL compute shaders |
+| Mesh | FPS Target | Status |
+|------|------------|--------|
+| Polar triangular mesh | Device-dependent | Current |
 
 See PERFORMANCE.md for scaling details.
 

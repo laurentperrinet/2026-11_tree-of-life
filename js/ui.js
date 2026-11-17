@@ -17,9 +17,9 @@ class UIManager {
     /**
      * Update status badge
      */
-    updateStatus(grid, github, syncLoop) {
-        const contribCount = github.contributorCount || 1;
-        const lastSync = github.getSecondsSinceSync();
+    updateStatus(grid, collaboration) {
+        const contribCount = collaboration.activeCollaborators || 0;
+        const lastSync = collaboration.getSecondsSinceSync();
         const syncText = lastSync !== null ? `${lastSync}` : '--';
         
         document.getElementById('contrib-count').textContent = contribCount;
@@ -170,7 +170,6 @@ class UIManager {
      */
     logout() {
         this.auth.logout();
-        if (window.app) window.app.github.setToken(null);
         this.updateAuthStatus();
         this.showToast('Logged out', 'info');
     }
