@@ -23,13 +23,13 @@
 
 **State** (terrain.js lines 1-230):
 - `TerrainGrid` class - 2D arrays for h, u, v, c, z
-- `calculateEnergy()` - Convergence detection
+- `PhysicsEngine` reports mean rim-to-sink transit time and rolling recycled-sand throughput
 - `toJSON()` / `fromJSON()` - Serialization
 
 **Key equations at**:
 - Line 60-90 (shallow water momentum)
 - Line 130-160 (sediment transport)
-- Line 145-150 (energy calculation)
+- `js/physics.js` sink crossing (outflow metrics)
 
 ---
 

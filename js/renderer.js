@@ -158,7 +158,7 @@ class TerrainRenderer {
         color.r += rock; color.g += rock; color.b += rock * 1.1;
         const habitat = biology.sand[i] * Math.max(0, 1 - biology.flow[i] / 0.04) *
             Math.max(0, 1 - growth / 0.6);
-        const density = Math.min(1, Math.max(0, (biology.microbeV[i] - 0.025) / 0.3));
+        const density = Math.min(1, Math.max(0, (biology.microbeV[i] - 0.025) / 0.16));
         const amount = density * density * habitat;
         const purple = Math.min(1, biology.microbeV[i] / 0.35);
         color.r += ((0.55 - 0.18 * purple) - color.r) * amount;

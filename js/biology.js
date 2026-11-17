@@ -20,6 +20,8 @@ class BiologyGrid {
         this.microbeSeeds = new Float32Array(count);
         this.nearby = new Float32Array(count);
         this.scratch = new Float32Array(count);
+        this.nearbyPlants = new Float32Array(count);
+        this.plantScratch = new Float32Array(count);
         this.nextPlants = new Float32Array(count);
         this.nextInhibitor = new Float32Array(count);
         this.nextU = new Float32Array(count);
@@ -146,6 +148,21 @@ class BiologyGrid {
             }
             [nearby, scratch] = [scratch, nearby];
         }
+        this.nearbyPlants.set(this.plants);
+        let nearbyPlants = this.nearbyPlants, plantScratch = this.plantScratch;
+        for (let pass = 0; pass < 12; pass++) {
+            plantScratch.set(nearbyPlants);
+            for (let z = 1; z < size - 1; z++) {
+                for (let x = 1; x < size - 1; x++) {
+                    const i = z * size + x;
+                    if (!this.active[i] || !this.sand[i]) continue;
+                    plantScratch[i] = Math.max(nearbyPlants[i], 0.84 * nearbyPlants[i - 1],
+                        0.84 * nearbyPlants[i + 1], 0.84 * nearbyPlants[i - size],
+                        0.84 * nearbyPlants[i + size]);
+                }
+            }
+            [nearbyPlants, plantScratch] = [plantScratch, nearbyPlants];
+        }
         const steps = Math.ceil(5 * dt);
         if (!steps) return;
         const step = 5 * dt / steps;
@@ -153,7 +170,8 @@ class BiologyGrid {
         for (let n = 0; n < steps; n++) {
             for (let i = 0; i < count; i++) {
                 this.habitat[i] = this.active[i] && this.sand[i]
-                    ? Math.max(0, 1 - this.flow[i] / 0.04) * Math.max(0, 1 - this.plants[i] / 0.6) : 0;
+                    ? Math.max(0, 1 - this.flow[i] / 0.04) * Math.max(0, 1 - this.plants[i] / 0.6) *
+                    Math.min(1, Math.max(0, (nearbyPlants[i] - 0.035) / 0.12)) : 0;
             }
             for (let z = 1; z < size - 1; z++) {
                 for (let x = 1; x < size - 1; x++) {
@@ -174,7 +192,7 @@ class BiologyGrid {
                     const wetness = Math.min(1, Math.max(0, (nearby[i] - 0.0008) / 0.008));
                     const bank = this.sand[i] * wetness *
                         Math.min(1, Math.max(0, (0.8 - this.flow[i] / Math.max(nearby[i], 1e-12)) / 0.6));
-                    const reaction = this.sand[i] * u * v * v;
+                    const reaction = (habitat > 0 ? 1 : 0) * u * v * v;
                     this.nextPlants[i] = Math.max(0, Math.min(1, p + step *
                         (0.15 * lapP + bank * (0.06 + 0.8 * p) * (1 - p) -
                             (0.9 * inhibitor + (this.sand[i] ? 0 : 0.2)) * p)));
@@ -182,9 +200,10 @@ class BiologyGrid {
                         (0.02 * lapI + 0.1 * p - 0.05 * inhibitor)));
                     this.nextU[i] = Math.max(0, Math.min(1, u + step *
                         (0.9 * lapU - reaction + 0.046 * (1 - u))));
+                    // A localized inoculum revives colonies lost from saved states.
                     this.nextV[i] = Math.max(0, Math.min(1, v + step *
-                        (0.45 * lapV + reaction - (0.109 + 0.05 * (1 - habitat)) * v +
-                            0.02 * this.microbeSeeds[i] * habitat)));
+                        (0.45 * lapV + reaction - (0.109 + 0.15 * (1 - habitat)) * v +
+                            0.06 * this.microbeSeeds[i] * habitat * Math.max(0, 1 - v / 0.15))));
                 }
             }
             [this.plants, this.nextPlants] = [this.nextPlants, this.plants];

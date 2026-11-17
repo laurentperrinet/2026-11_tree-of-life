@@ -132,8 +132,6 @@ class TerrainGrid {
                 }
             }
         });
-        this.energyHistory = [];
-        this.totalEnergy = 0;
         this.particles = [];
         this.initialize();
     }
@@ -158,8 +156,6 @@ class TerrainGrid {
         this.flowHistory.fill(0);
         this.vegetation.fill(0);
         this.seedMicrobes();
-        this.energyHistory = [];
-        this.totalEnergy = 0;
     }
 
     seedMicrobes() {
@@ -222,26 +218,6 @@ class TerrainGrid {
         };
     }
 
-    calculateEnergy() {
-        let energy = 0;
-        for (let i = 0; i < this.elevation.length; i++) {
-            energy += (this.velocityX[i] ** 2 + this.velocityY[i] ** 2) * this.waterDepth[i];
-        }
-        this.totalEnergy = energy;
-        this.energyHistory.push(energy);
-        if (this.energyHistory.length > 30) this.energyHistory.shift();
-        return energy;
-    }
-
-    checkConvergence() {
-        if (this.energyHistory.length < 30) return { converged: false, stability: 0 };
-        const old = this.energyHistory.slice(0, 15).reduce((a, b) => a + b, 0) / 15;
-        const recent = this.energyHistory.slice(15).reduce((a, b) => a + b, 0) / 15;
-        const delta = Math.abs(recent - old) / Math.max(old, 1e-6);
-        const stability = Math.max(0, 100 * (1 - Math.min(1, delta / 0.05)));
-        return { converged: stability > 95, stability };
-    }
-
     toJSON() {
         return {
             version: '11.0',
@@ -250,8 +226,7 @@ class TerrainGrid {
             elevation: Array.from(this.elevation),
             waterDepth: Array.from(this.waterDepth),
             sediment: Array.from(this.sediment),
-            particles: this.particles.map(p => ({ ...p })),
-            metadata: { totalEnergy: this.totalEnergy, convergenceChecked: this.checkConvergence() }
+            particles: this.particles.map(p => ({ ...p }))
         };
     }
 
@@ -261,7 +236,9 @@ class TerrainGrid {
             (json.particles.length === this.particles.length ||
                 ([500, 1000].includes(json.particles.length) && this.particles.length === 1500)) &&
             json.particles.every(p => p && [p.x, p.z, p.vx, p.vz, p.sediment].every(Number.isFinite) &&
-                p.sediment >= 0 && (p.burstProgress === undefined ||
+                p.sediment >= 0 &&
+                (p.travelTime === undefined || (Number.isFinite(p.travelTime) && p.travelTime >= 0)) &&
+                (p.burstProgress === undefined ||
                     (Number.isFinite(p.burstProgress) && p.burstProgress >= 0 && p.burstProgress < 1)) &&
                 this.locate(p.x, p.z));
         if (!['10.0', '11.0'].includes(json.version) || json.topology !== 'disk-square-polar-v1' || !validParticles ||
@@ -324,10 +301,10 @@ class TerrainGrid {
         }
         this.hasLegacyBiology = json.vegetation !== undefined && json.microbeU !== undefined;
         const addedParticles = this.particles.slice(json.particles.length).map(p => ({
-            x: p.x, z: p.z, vx: 0, vz: 0, sediment: 0
+            x: p.x, z: p.z, vx: 0, vz: 0, sediment: 0, travelTime: 0
         }));
         this.particles.splice(0, this.particles.length,
-            ...json.particles.map(p => ({ ...p })), ...addedParticles);
+            ...json.particles.map(p => ({ ...p, travelTime: p.travelTime ?? 0 })), ...addedParticles);
         return true;
     }
 }

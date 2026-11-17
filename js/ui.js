@@ -7,6 +7,7 @@ class UIManager {
         this.reset = reset;
         this.lastToastTime = 0;
         this.resetConfirmPending = false;
+        this.lastStatusUpdate = -Infinity;
     }
 
     updateAdminPanel() {
@@ -24,24 +25,25 @@ class UIManager {
     /**
      * Update status badge
      */
-    updateStatus(grid, collaboration) {
+    updateStatus(collaboration, physics, now) {
+        if (now - this.lastStatusUpdate < 1000) return;
+        this.lastStatusUpdate = now;
+
         const contribCount = collaboration.activeCollaborators || 0;
         const lastSync = collaboration.getSecondsSinceSync();
         const syncText = lastSync !== null ? `${lastSync}` : '--';
         
         document.getElementById('contrib-count').textContent = contribCount;
         document.getElementById('last-sync').textContent = syncText;
-        
-        // Energy level
-        const energy = grid.totalEnergy;
-        const energyPercent = Math.min(100, Math.round(energy * 100));
-        document.getElementById('energy-level').textContent = energyPercent;
-        
+
+        const transitTime = physics.getMeanTransitTime();
+        document.getElementById('mean-transit-time').textContent =
+            transitTime === null ? '--' : transitTime.toFixed(1);
+        document.getElementById('sand-throughput').textContent =
+            physics.getSandThroughput().toFixed(3);
+
         // Auth status
         this.updateAuthStatus();
-        
-        // Convergence indicator
-        this.updateConvergenceIndicator(grid);
     }
     
     /**
@@ -76,35 +78,6 @@ class UIManager {
                 ? '🔓 Sign in with GitHub' : '🔓 GitHub sign-in unavailable';
             
             resetContainer.style.display = 'none';
-        }
-    }
-    
-    /**
-     * Update convergence indicator
-     */
-    updateConvergenceIndicator(grid) {
-        const indicator = document.getElementById('convergence-indicator');
-        const convergence = grid.checkConvergence();
-        const stability = convergence.stability;
-        
-        indicator.textContent = `⊙ Stability: ${stability.toFixed(0)}%`;
-        
-        indicator.classList.remove('convergence-unknown', 'convergence-stable', 'convergence-unstable');
-        
-        if (stability > 95) {
-            indicator.classList.add('convergence-stable');
-            
-            // Show reset button if converged and authenticated
-            if (this.auth.canReset()) {
-                const resetBtn = document.getElementById('reset-button');
-                if (resetBtn) {
-                    resetBtn.disabled = false;
-                }
-            }
-        } else if (stability > 50) {
-            indicator.classList.add('convergence-unknown');
-        } else {
-            indicator.classList.add('convergence-unstable');
         }
     }
     

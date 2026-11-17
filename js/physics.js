@@ -2,6 +2,9 @@
  * Lagrangian water parcels on a piecewise-linear triangular bed.
  * Sediment exchanged with the bed is conserved as a volume.
  */
+const TRANSIT_SAMPLE_LIMIT = 100;
+const SAND_THROUGHPUT_WINDOW_SECONDS = 60;
+
 class PhysicsEngine {
     constructor(grid) {
         this.grid = grid;
@@ -18,6 +21,11 @@ class PhysicsEngine {
         this.maxSpeed = 3;
         this.particleHazardRate = 1 / 90;
         this.burstDuration = 0.8;
+        this.simulationTime = 0;
+        this.transitTimes = [];
+        this.transitTimeTotal = 0;
+        this.sandOutflowEvents = [];
+        this.sandOutflowHead = 0;
         this.sandReposeSlope = Math.tan(34 * Math.PI / 180);
         this.particles = [];
         this.createParticles();
@@ -42,6 +50,7 @@ class PhysicsEngine {
         particle.z = -radius * Math.sin(angle);
         particle.vx = 0;
         particle.vz = 0;
+        particle.travelTime = 0;
         delete particle.burstProgress;
     }
 
@@ -76,6 +85,7 @@ class PhysicsEngine {
         const subDt = dt / steps;
         for (let sub = 0; sub < steps; sub++) {
             if (subDt > 0) this.collideParticles(subDt);
+            this.simulationTime += subDt;
             for (const particle of this.particles) this.updateParticle(particle, subDt);
             if (subDt > 0) this.relaxSand(subDt);
         }
@@ -90,8 +100,55 @@ class PhysicsEngine {
                 grid.velocityY[index] += particle.vz * weight;
             });
         }
-        grid.calculateEnergy();
         return dt;
+    }
+
+    recordSinkExit(particle) {
+        if (Number.isFinite(particle.travelTime) && particle.travelTime > 0) {
+            if (this.transitTimes.length === TRANSIT_SAMPLE_LIMIT) {
+                this.transitTimeTotal -= this.transitTimes.shift();
+            }
+            this.transitTimes.push(particle.travelTime);
+            this.transitTimeTotal += particle.travelTime;
+        }
+        this.sandOutflowEvents.push({
+            time: this.simulationTime,
+            volume: particle.sediment
+        });
+        this.pruneSandOutflowEvents();
+    }
+
+    getMeanTransitTime() {
+        return this.transitTimes.length
+            ? this.transitTimeTotal / this.transitTimes.length
+            : null;
+    }
+
+    getSandThroughput() {
+        this.pruneSandOutflowEvents();
+        const elapsed = Math.min(SAND_THROUGHPUT_WINDOW_SECONDS, this.simulationTime);
+        if (elapsed <= 0) return 0;
+
+        let volume = 0;
+        for (let i = this.sandOutflowHead; i < this.sandOutflowEvents.length; i++) {
+            volume += this.sandOutflowEvents[i].volume;
+        }
+        return volume / elapsed;
+    }
+
+    pruneSandOutflowEvents() {
+        const cutoff = this.simulationTime - SAND_THROUGHPUT_WINDOW_SECONDS;
+        while (this.sandOutflowHead < this.sandOutflowEvents.length &&
+            this.sandOutflowEvents[this.sandOutflowHead].time < cutoff) {
+            this.sandOutflowHead++;
+        }
+        if (this.sandOutflowHead === this.sandOutflowEvents.length) {
+            this.sandOutflowEvents = [];
+            this.sandOutflowHead = 0;
+        } else if (this.sandOutflowHead > 128) {
+            this.sandOutflowEvents = this.sandOutflowEvents.slice(this.sandOutflowHead);
+            this.sandOutflowHead = 0;
+        }
     }
 
     relaxSand(dt) {
@@ -200,6 +257,7 @@ class PhysicsEngine {
 
     moveParticle(particle, dt) {
         if (dt === 0) return;
+        particle.travelTime = (Number.isFinite(particle.travelTime) ? particle.travelTime : 0) + dt;
         const grid = this.grid;
         const sample = grid.sample(particle.x, particle.z);
         if (!sample) throw new Error('Water particle outside the terrain mesh');
@@ -240,6 +298,7 @@ class PhysicsEngine {
             const fraction = (grid.halfSize - particle.z) / (z - particle.z);
             const exitX = particle.x + fraction * (x - particle.x);
             if (Math.abs(exitX) < grid.sinkRadius) {
+                this.recordSinkExit(particle);
                 this.reinject(particle);
                 return;
             }
@@ -262,6 +321,11 @@ class PhysicsEngine {
 
     reset() {
         this.grid.initialize();
+        this.simulationTime = 0;
+        this.transitTimes = [];
+        this.transitTimeTotal = 0;
+        this.sandOutflowEvents = [];
+        this.sandOutflowHead = 0;
         this.createParticles();
     }
 }

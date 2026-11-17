@@ -160,7 +160,7 @@ class Application {
         this.renderer.updateParticles(this.physics);
         
         // Update UI
-        this.ui.updateStatus(this.grid, this.collaboration);
+        this.ui.updateStatus(this.collaboration, this.physics, now);
         
         // Render
         this.renderer.render();

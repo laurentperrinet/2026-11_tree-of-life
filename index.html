@@ -12,37 +12,54 @@
 
     <!-- Status badge (top-right) -->
     <div id="status-badge" class="status-badge">
-        <div>Collaborators (24 h): <span id="contrib-count">0</span></div>
-        <div>Last sync: <span id="last-sync">--</span>s ago</div>
-        <div>Energy: <span id="energy-level">--</span>%</div>
+        <div class="status-metrics" aria-label="Simulation status">
+            <div class="status-metric" role="group" title="Active collaborators in the last 24 hours">
+                <span aria-hidden="true">👥</span><span id="contrib-count">0</span>
+            </div>
+            <div class="status-metric" role="group" title="Time since last successful sync">
+                <span aria-hidden="true">🔄</span><span id="last-sync">--</span>s
+            </div>
+            <div class="status-metric" role="group" title="Mean rim-to-sink water transit time">
+                <span aria-hidden="true">⏱️</span><span id="mean-transit-time">--</span> sim s
+            </div>
+            <div class="status-metric" role="group" title="Sediment volume passing through the sink">
+                <span aria-hidden="true">🏖️</span><span id="sand-throughput">0.000</span> vol/s
+            </div>
+        </div>
         <div id="auth-status" hidden></div>
-        <div id="convergence-indicator" class="convergence-unknown">⊙ Stability: --</div>
-        <details class="status-help">
-            <summary aria-label="Explain energy and stability">?</summary>
-            <div class="status-help-content">
-                <p><strong>Energy</strong> is a relative motion indicator, calculated as
-                    the sum of water depth times the squared velocity components at each
-                    mesh vertex. The display multiplies it by 100, rounds it and caps it
-                    at 100%; it is not a physical energy percentage.</p>
-                <p><strong>Stability</strong> compares the average energy of the latest
-                    15 simulation steps with the preceding 15. It starts at 0% until
-                    30 samples are available. An unchanged average gives 100%, while
-                    a relative change of 5% or more gives 0%. Values above 95% are
-                    marked stable. This measures energy variation, not proof that the
-                    terrain has converged.</p>
-            </div>
-        </details>
-        <details class="status-help">
-            <summary aria-label="Explain collaboration">ⓘ</summary>
-            <div class="status-help-content">
-                <p>Each browser is counted for 24 hours after its last sync. To stay
-                    under the 80,000-request daily target, the Worker lengthens the
-                    interval as the collaborator count grows, with a five-minute
-                    minimum. During each shared terrain version, it averages one
-                    elevation-change contribution per browser at every mesh vertex.
-                    Water, sediment, particles and vegetation remain local.</p>
-            </div>
-        </details>
+        <div class="status-tools">
+            <details class="status-help">
+                <summary aria-label="Explain transit time and sediment flow">❔</summary>
+                <div class="status-help-content">
+                    <p><strong>Mean transit time</strong> is the average model time from
+                        a water parcel entering at the rim to reaching the sink, over the
+                        last 100 completed trips. Evaporated parcels are not counted.
+                        “sim s” means simulation seconds, not wall-clock seconds.</p>
+                    <p><strong>Sand through sink</strong> is the sediment volume crossing
+                        the sink per simulation second, averaged over the last 60 simulation
+                        seconds. Sand is recycled with the water, so this is throughput,
+                        not net loss from the terrain.</p>
+                </div>
+            </details>
+            <details class="status-help">
+                <summary aria-label="Explain collaboration">ℹ️</summary>
+                <div class="status-help-content">
+                    <p>Each browser is counted for 24 hours after its last sync. To stay
+                        under the 80,000-request daily target, the Worker lengthens the
+                        interval as the collaborator count grows, with a five-minute
+                        minimum. It averages one elevation-change contribution per
+                        browser at each mesh vertex. Water, sediment, particles and
+                        vegetation remain local.</p>
+                </div>
+            </details>
+            <a class="status-source-link" href="https://github.com/laurentperrinet/2026-11_tree-of-life"
+                target="_blank" rel="noopener noreferrer" aria-label="Open source code on GitHub"
+                title="Source code on GitHub">
+                <svg viewBox="0 0 16 16" aria-hidden="true">
+                    <path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
+                </svg>
+            </a>
+        </div>
     </div>
 
     <!-- Help panel (bottom-left) -->

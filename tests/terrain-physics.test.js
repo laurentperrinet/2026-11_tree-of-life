@@ -19,7 +19,7 @@ test('local colonies grow on wet sandy banks and microbes diffuse only through s
     const biology = Object.create(BiologyGrid.prototype);
     biology.size = 5;
     for (const name of ['active', 'sand', 'flow', 'plants', 'inhibitor', 'microbeU', 'microbeV', 'microbeSeeds',
-        'nearby', 'scratch', 'nextPlants', 'nextInhibitor', 'nextU', 'nextV', 'habitat']) {
+        'nearby', 'scratch', 'nearbyPlants', 'plantScratch', 'nextPlants', 'nextInhibitor', 'nextU', 'nextV', 'habitat']) {
         biology[name] = new Float32Array(25);
     }
     biology.active.fill(1);
@@ -55,14 +55,70 @@ test('local biology round-trips independently of the shared terrain', () => {
     assert.ok(Math.abs(biology.plants[i] - 0.5) <= 1 / 65535);
     assert.ok(Math.abs(biology.inhibitor[i] - 0.2) <= 1 / 65535);
     assert.ok(Math.abs(biology.microbeV[i] - 0.3) <= 1 / 65535);
+    biology.microbeV.fill(0);
+    const extinct = biology.toJSON();
+    assert.equal(biology.fromJSON(extinct), true);
+    assert.ok(biology.microbeSeeds.some(value => value > 0));
+    assert.ok(Math.abs(biology.plants[i] - 0.5) <= 1 / 65535);
     assert.equal(biology.fromJSON({ ...saved, size: 2 }), false);
+});
+
+test('extinct microbes recover near plants and disappear far away', () => {
+    const biology = Object.create(BiologyGrid.prototype);
+    biology.size = 65;
+    biology.terrain = { radius: 5 };
+    biology.spacing = 10 / 64;
+    const count = biology.size ** 2;
+    for (const name of ['active', 'sand', 'flow', 'plants', 'inhibitor', 'microbeU', 'microbeV', 'microbeSeeds',
+        'nearby', 'scratch', 'nearbyPlants', 'plantScratch', 'nextPlants', 'nextInhibitor', 'nextU', 'nextV', 'habitat']) {
+        biology[name] = new Float32Array(count);
+    }
+    for (let z = 1; z < 64; z++) {
+        for (let x = 1; x < 64; x++) biology.active[z * 65 + x] = biology.sand[z * 65 + x] = 1;
+    }
+    biology.updateSand = () => {};
+    biology.reset();
+    biology.microbeV.fill(0);
+    for (let z = 8; z <= 56; z++) {
+        for (let x = 15; x <= 18; x++) biology.plants[z * 65 + x] = 0.2;
+    }
+    biology.microbeV[32 * 65 + 50] = 0.2;
+    for (let step = 0; step < 200; step++) {
+        biology.updateColonies(0.2);
+        for (let z = 8; z <= 56; z++) {
+            for (let x = 15; x <= 18; x++) biology.plants[z * 65 + x] = 0.2;
+        }
+    }
+    let nearMax = 0, nearVisible = 0;
+    for (let z = 8; z <= 56; z++) {
+        for (let x = 19; x <= 26; x++) {
+            const v = biology.microbeV[z * 65 + x];
+            nearMax = Math.max(nearMax, v);
+            if (v > 0.1) nearVisible++;
+        }
+    }
+    assert.ok(nearMax > 0.1 && nearVisible > 0);
+    assert.ok(biology.microbeV[32 * 65 + 50] < 0.001);
+    biology.flow.fill(0.04);
+    for (let step = 0; step < 100; step++) {
+        biology.updateColonies(0.2);
+        for (let z = 8; z <= 56; z++) {
+            for (let x = 15; x <= 18; x++) biology.plants[z * 65 + x] = 0.2;
+        }
+    }
+    assert.ok(biology.microbeV[32 * 65 + 19] < 0.001);
+    biology.flow.fill(0);
+    biology.plants.fill(0);
+    biology.microbeV[32 * 65 + 19] = 0.2;
+    for (let step = 0; step < 100; step++) biology.updateColonies(0.2);
+    assert.ok(biology.microbeV[32 * 65 + 19] < 0.001);
 });
 
 test('crowded plant centers fade while the colony edge remains brighter', () => {
     const biology = Object.create(BiologyGrid.prototype);
     biology.size = 25;
     for (const name of ['active', 'sand', 'flow', 'plants', 'inhibitor', 'microbeU', 'microbeV', 'microbeSeeds',
-        'nearby', 'scratch', 'nextPlants', 'nextInhibitor', 'nextU', 'nextV', 'habitat']) {
+        'nearby', 'scratch', 'nearbyPlants', 'plantScratch', 'nextPlants', 'nextInhibitor', 'nextU', 'nextV', 'habitat']) {
         biology[name] = new Float32Array(625);
     }
     biology.active.fill(1);
@@ -89,19 +145,19 @@ test('microorganisms spread farther than plants under the same conditions', () =
     const biology = Object.create(BiologyGrid.prototype);
     biology.size = 7;
     for (const name of ['active', 'sand', 'flow', 'plants', 'inhibitor', 'microbeU', 'microbeV', 'microbeSeeds',
-        'nearby', 'scratch', 'nextPlants', 'nextInhibitor', 'nextU', 'nextV', 'habitat']) {
+        'nearby', 'scratch', 'nearbyPlants', 'plantScratch', 'nextPlants', 'nextInhibitor', 'nextU', 'nextV', 'habitat']) {
         biology[name] = new Float32Array(49);
     }
     biology.active.fill(1);
     biology.sand.fill(1);
     biology.microbeU.fill(1);
-    biology.flow.fill(0.004);
+    biology.plants.fill(0.2);
     const center = 3 * biology.size + 3;
-    biology.plants[center] = 0.1;
+    biology.plants[center] = 0.3;
     biology.microbeV[center] = 0.1;
     biology.updateColonies(0.2);
-    assert.ok(biology.plants[center + 1] > 0);
-    assert.ok(biology.microbeV[center + 1] > 2 * biology.plants[center + 1]);
+    assert.ok(biology.plants[center + 1] > 0.2);
+    assert.ok(biology.microbeV[center + 1] > biology.plants[center + 1] - 0.2);
 });
 
 test('microorganism colors appear on sand without hiding plants or high-flow ground', () => {
@@ -114,9 +170,10 @@ test('microorganism colors appear on sand without hiding plants or high-flow gro
     grid.microbeV[0] = 0.15;
     renderer.volcanicColor(grid, 0, normals, color);
     const diffuseRed = color.r;
+    assert.ok(diffuseRed > 0.1);
     grid.microbeV[0] = 0.3;
     renderer.volcanicColor(grid, 0, normals, color);
-    assert.ok(color.r > diffuseRed * 2);
+    assert.ok(color.r > diffuseRed);
     assert.ok(color.r > 0.3 && color.b > 0.2);
     grid.plants[0] = 0.6;
     renderer.volcanicColor(grid, 0, normals, color);
@@ -199,14 +256,19 @@ test('sink at the bottom of the square recycles sediment; other edges reflect', 
     const physics = new PhysicsEngine(grid);
     physics.g = 0;
     physics.friction = 0;
-    const particle = { x: 0.1, z: grid.halfSize - 0.01, vx: 0, vz: 1, sediment: 1 };
+    physics.simulationTime = 10;
+    const particle = {
+        x: 0.1, z: grid.halfSize - 0.01, vx: 0, vz: 1, sediment: 1, travelTime: 5
+    };
     physics.moveParticle(particle, 0.04);
     assert.ok(Math.hypot(particle.x, particle.z) > grid.radius - 1);
     assert.ok(particle.sediment > 0.9);
-    const cargo = particle.sediment;
-    physics.reinject(particle, 0.5);
-    assert.equal(particle.sediment, cargo);
-    assert.ok(Math.hypot(particle.x, particle.z) > grid.radius - 1);
+    assert.equal(particle.travelTime, 0);
+    assert.ok(Math.abs(physics.getMeanTransitTime() - 5.04) < 1e-12);
+    assert.ok(Math.abs(physics.getSandThroughput() - particle.sediment / 10) < 1e-12);
+    physics.simulationTime = 71;
+    assert.equal(physics.getSandThroughput(), 0);
+
     const blocked = { x: 5, z: grid.halfSize - 0.01, vx: 0, vz: 1, sediment: 0 };
     physics.moveParticle(blocked, 0.04);
     assert.ok(blocked.z < grid.halfSize && blocked.vz < 0 && blocked.x < 6);
@@ -215,6 +277,11 @@ test('sink at the bottom of the square recycles sediment; other edges reflect', 
     physics.moveParticle(crossing, 0.04);
     assert.ok(Math.hypot(crossing.x, crossing.z) > grid.radius - 1);
     assert.ok(crossing.sediment > 0);
+
+    const cargo = particle.sediment;
+    physics.reinject(particle, 0.5);
+    assert.equal(particle.sediment, cargo);
+    assert.ok(Math.hypot(particle.x, particle.z) > grid.radius - 1);
 });
 
 test('collisions exchange momentum and push overlapping water parcels apart', () => {

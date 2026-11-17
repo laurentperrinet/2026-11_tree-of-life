@@ -94,6 +94,41 @@ test('authentication status is hidden until a user signs in', () => {
     assert.equal(elements['reset-container'].style.display, 'none');
 });
 
+test('status metrics update at most once per second', () => {
+    const elements = {
+        'contrib-count': { textContent: '' },
+        'last-sync': { textContent: '' },
+        'mean-transit-time': { textContent: '' },
+        'sand-throughput': { textContent: '' },
+        'auth-status': { hidden: true, textContent: '', className: '' },
+        'auth-button': { textContent: '' },
+        'reset-container': { style: {} }
+    };
+    const auth = { isAuthenticated: false, isConfigured: () => true };
+    const context = vm.createContext({ document: { getElementById: id => elements[id] } });
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js/ui.js'), 'utf8'), context);
+    const UIManager = vm.runInContext('UIManager', context);
+    const ui = new UIManager(auth, { canReset: () => false });
+    let transitReads = 0;
+    let fluxReads = 0;
+    const collaboration = { activeCollaborators: 6, getSecondsSinceSync: () => 12 };
+    const physics = {
+        getMeanTransitTime: () => { transitReads++; return 12.36; },
+        getSandThroughput: () => { fluxReads++; return 0.125; }
+    };
+
+    ui.updateStatus(collaboration, physics, 0);
+    ui.updateStatus(collaboration, physics, 500);
+    assert.equal(transitReads, 1);
+    assert.equal(fluxReads, 1);
+    assert.equal(elements['mean-transit-time'].textContent, '12.4');
+    assert.equal(elements['sand-throughput'].textContent, '0.125');
+
+    ui.updateStatus(collaboration, physics, 1000);
+    assert.equal(transitReads, 2);
+    assert.equal(fluxReads, 2);
+});
+
 test('admin panel and keyboard shortcuts require the admin URL and GitHub authentication', () => {
     const panel = { hidden: true };
     const controlsPanel = { hidden: true };

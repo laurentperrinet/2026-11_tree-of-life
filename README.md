@@ -139,9 +139,9 @@ In the elevation view, vegetation grows rapidly on sandy ground near sustained
 water flow but away from its strongest paths. Its reaction–diffusion model
 suppresses crowded centers while colony edges continue to grow.
 Ochre-to-purple microorganisms form a separate Gray–Scott reaction–diffusion
-pattern on sandy, low-flow ground between plants and spread farther than the
-vegetation. New colonies start as diffuse,
-faint patches that concentrate as the reaction develops. Both use a 256×256
+pattern on sandy, low-flow ground near and between plants and spread farther
+than the vegetation. A diffuse, localized source lets colonies regrow after
+extinction without resetting the plants or terrain. Both use a 256×256
 biological grid finer than the terrain mesh. Each visitor's biology is saved
 locally between visits and is never synchronized with shared terrain; resetting
 the terrain also resets that visitor's biology.
