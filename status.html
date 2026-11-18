@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sharing status</title>
+    <meta name="description" content="How the shared sand map of Tree of Life is doing: visitors, blends and their history.">
+    <style>
+        :root {
+            color-scheme: light;
+            --surface-0: #f4f4f1;
+            --surface-1: #fcfcfb;
+            --border: #e2e1dc;
+            --text-primary: #0b0b0b;
+            --text-secondary: #52514e;
+            --text-muted: #6d6c67;
+            --grid: #e2e1dc;
+            --series-1: #2a78d6;
+            --link: #1f62b3;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root:not([data-theme="light"]) {
+                color-scheme: dark;
+                --surface-0: #0f0f0e;
+                --surface-1: #1a1a19;
+                --border: #33332f;
+                --text-primary: #f0efec;
+                --text-secondary: #c3c2b7;
+                --text-muted: #9a9990;
+                --grid: #33332f;
+                --series-1: #3987e5;
+                --link: #8ab8f0;
+            }
+        }
+        :root[data-theme="dark"] {
+            color-scheme: dark;
+            --surface-0: #0f0f0e;
+            --surface-1: #1a1a19;
+            --border: #33332f;
+            --text-primary: #f0efec;
+            --text-secondary: #c3c2b7;
+            --text-muted: #9a9990;
+            --grid: #33332f;
+            --series-1: #3987e5;
+            --link: #8ab8f0;
+        }
+
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            background: var(--surface-0);
+            color: var(--text-primary);
+            font: 15px/1.55 system-ui, -apple-system, 'Segoe UI', sans-serif;
+        }
+        main { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
+        h1 { font-size: 24px; margin: 0 0 8px; }
+        h2 { font-size: 17px; margin: 32px 0 4px; }
+        p { margin: 0 0 10px; color: var(--text-secondary); max-width: 68ch; }
+        a { color: var(--link); }
+        .lead { color: var(--text-primary); }
+        .note { font-size: 13px; color: var(--text-muted); }
+
+        .tiles {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+            gap: 12px;
+            margin-top: 20px;
+        }
+        .tile {
+            background: var(--surface-1);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 14px 16px;
+        }
+        .tile-label { font-size: 13px; color: var(--text-secondary); }
+        .tile-value {
+            font-size: 28px; font-weight: 600; line-height: 1.2; margin: 4px 0 2px;
+            font-variant-numeric: tabular-nums;
+        }
+        .tile-detail { font-size: 13px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+        .panel {
+            background: var(--surface-1);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px;
+            margin-top: 12px;
+            position: relative;
+        }
+        #chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+        #chart .axis-label { font-size: 12px; fill: var(--text-muted); }
+        #chart .grid-line { stroke: var(--grid); stroke-width: 1; }
+        /* The bar is drawn over its hit area; letting events through keeps the hover. */
+        #chart .bar { fill: var(--series-1); pointer-events: none; }
+        #chart .hit { fill: transparent; cursor: default; }
+        #chart .hit:hover + .bar, #chart .hit:focus + .bar { opacity: 0.75; }
+        .tooltip {
+            position: absolute;
+            pointer-events: none;
+            background: var(--surface-0);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 6px 8px;
+            font-size: 13px;
+            color: var(--text-primary);
+            white-space: nowrap;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        }
+        .empty { color: var(--text-muted); font-size: 14px; padding: 24px 0; text-align: center; }
+
+        .table-wrap { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+        th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+        th { font-size: 13px; color: var(--text-secondary); font-weight: 600; }
+        td.number, th.number { text-align: right; }
+
+        .error {
+            margin-top: 16px; padding: 10px 14px; border-radius: 8px;
+            border: 1px solid var(--border); background: var(--surface-1);
+        }
+    </style>
+</head>
+<body>
+<main>
+    <h1>Sharing status</h1>
+    <p class="lead">Every screen that opens <a href="./">the simulation</a> works on a sheet
+        of tracing paper laid over one shared map of sand. Every few minutes, like a postman
+        on a round, it posts what its water changed to a shared table. The table then blends
+        the tracings it has received, as a jury averages its marks, and publishes a new
+        edition of the map that everyone copies. This page shows how that is going.</p>
+    <p class="note" id="updated">Loading…</p>
+    <div class="error" id="error" role="alert" hidden></div>
+
+    <section class="tiles" aria-label="Summary">
+        <div class="tile">
+            <div class="tile-label">Edition of the shared map</div>
+            <div class="tile-value" id="edition">--</div>
+            <div class="tile-detail">a new edition after each blend or reset</div>
+        </div>
+        <div class="tile">
+            <div class="tile-label">Blends so far</div>
+            <div class="tile-value" id="blends">--</div>
+            <div class="tile-detail" id="blends-detail">&nbsp;</div>
+        </div>
+        <div class="tile">
+            <div class="tile-label">Last blend</div>
+            <div class="tile-value" id="last-blend">--</div>
+            <div class="tile-detail" id="last-blend-detail">&nbsp;</div>
+        </div>
+        <div class="tile">
+            <div class="tile-label">Next blend</div>
+            <div class="tile-value" id="next-blend">--</div>
+            <div class="tile-detail" id="next-blend-detail">&nbsp;</div>
+        </div>
+        <div class="tile">
+            <div class="tile-label">Visitors</div>
+            <div class="tile-value" id="visitors">--</div>
+            <div class="tile-detail" id="visitors-detail">&nbsp;</div>
+        </div>
+        <div class="tile">
+            <div class="tile-label">Postman’s round</div>
+            <div class="tile-value" id="round">--</div>
+            <div class="tile-detail">how often each screen posts and collects</div>
+        </div>
+    </section>
+
+    <h2>Screens in each recent blend</h2>
+    <p>One bar per blend, oldest on the left. A bar of 2 or more means the work of
+        several people was mixed into the map.</p>
+    <div class="panel" id="chart"><div class="empty">No blend yet.</div></div>
+
+    <h2>Recent blends</h2>
+    <div class="panel table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th scope="col">When</th>
+                    <th scope="col">How long ago</th>
+                    <th scope="col" class="number">Edition</th>
+                    <th scope="col" class="number">Screens mixed</th>
+                </tr>
+            </thead>
+            <tbody id="history"><tr><td colspan="4" class="empty">No blend yet.</td></tr></tbody>
+        </table>
+    </div>
+
+    <p class="note" style="margin-top: 20px">Only the shape of the sand is shared; water,
+        plants and microbes stay on each screen. The raw figures come from
+        <a id="raw-link" href="https://tree-of-life.laurent-perrinet.workers.dev/api/status">the
+        shared table’s status</a>. <a href="./">Back to the simulation</a>.</p>
+</main>
+
+<script>
+'use strict';
+
+const STATUS_URL = 'https://tree-of-life.laurent-perrinet.workers.dev/api/status';
+// One request per minute keeps a page left open well within the daily budget.
+const REFRESH_MS = 60_000;
+
+let status = null;
+let fetchedAt = 0;
+
+/** Compact wall-clock duration (s, min, h, d), e.g. "4 min 41 s". */
+function duration(ms) {
+    const seconds = Math.max(0, Math.round(ms / 1000));
+    if (seconds < 60) return `${seconds} s`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes} min ${seconds % 60} s`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 48) return `${hours} h ${minutes % 60} min`;
+    return `${Math.floor(hours / 24)} d`;
+}
+
+/** Local clock time of an event that happened agoMs before the last fetch. */
+function clockTime(agoMs) {
+    const date = new Date(fetchedAt - agoMs);
+    const sameDay = date.toDateString() === new Date().toDateString();
+    const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return sameDay ? time : `${date.toISOString().slice(0, 10)} ${time}`;
+}
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const setText = (id, text) => { document.getElementById(id).textContent = text; };
+
+function renderTiles() {
+    const elapsed = Date.now() - fetchedAt;
+    const { merges, lastMerge } = status;
+    setText('edition', `v${status.version}`);
+    setText('blends', `${merges.total}`);
+    setText('blends-detail',
+        `since ${merges.since.slice(0, 10)} · ${merges.shared} mixed 2+ screens`);
+    if (lastMerge) {
+        setText('last-blend', plural(lastMerge.contributors, 'screen'));
+        setText('last-blend-detail', `${duration(lastMerge.agoMs + elapsed)} ago (v${lastMerge.version})`);
+    } else {
+        setText('last-blend', '--');
+        setText('last-blend-detail', 'none since the last reset');
+    }
+    if (status.mergeInMs === null) {
+        setText('next-blend', '--');
+        setText('next-blend-detail', 'nothing is waiting');
+    } else {
+        const remaining = status.mergeInMs - elapsed;
+        setText('next-blend', remaining > 0 ? `in ${duration(remaining)}` : 'due');
+        setText('next-blend-detail', `${plural(status.acceptedContributions, 'screen')} waiting` +
+            (remaining > 0 ? '' : '; happens at the next post'));
+    }
+    const total = status.totalCollaborators ?? status.activeCollaborators;
+    setText('visitors', `${total}`);
+    setText('visitors-detail', `${status.onlineCollaborators ?? '?'} here now · ` +
+        `${status.activeCollaborators} in the last 24 h`);
+    setText('round', `${duration(Math.max(300_000, status.syncIntervalMs))}`.replace(' 0 s', ''));
+}
+
+function renderHistory() {
+    const body = document.getElementById('history');
+    body.replaceChildren();
+    const recent = status.merges.recent;
+    if (recent.length === 0) {
+        const row = body.insertRow();
+        const cell = row.insertCell();
+        cell.colSpan = 4;
+        cell.className = 'empty';
+        cell.textContent = 'No blend yet.';
+        return;
+    }
+    const elapsed = Date.now() - fetchedAt;
+    for (const merge of recent) {
+        const row = body.insertRow();
+        row.insertCell().textContent = clockTime(merge.agoMs);
+        row.insertCell().textContent = `${duration(merge.agoMs + elapsed)} ago`;
+        const edition = row.insertCell();
+        edition.className = 'number';
+        edition.textContent = `v${merge.version}`;
+        const screens = row.insertCell();
+        screens.className = 'number';
+        screens.textContent = `${merge.contributors}`;
+    }
+}
+
+const SVG = 'http://www.w3.org/2000/svg';
+function svg(name, attributes = {}) {
+    const element = document.createElementNS(SVG, name);
+    for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, value);
+    return element;
+}
+
+function renderChart() {
+    const panel = document.getElementById('chart');
+    panel.replaceChildren();
+    // Oldest first, so time reads left to right.
+    const merges = [...status.merges.recent].reverse();
+    if (merges.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = 'No blend yet.';
+        panel.append(empty);
+        return;
+    }
+    const width = 880, height = 220;
+    const margin = { top: 12, right: 8, bottom: 26, left: 32 };
+    const plotWidth = width - margin.left - margin.right;
+    const plotHeight = height - margin.top - margin.bottom;
+    const maximum = Math.max(2, ...merges.map(merge => merge.contributors));
+    const step = Math.max(1, Math.ceil(maximum / 5));
+    const top = Math.ceil(maximum / step) * step;
+    const y = value => margin.top + plotHeight * (1 - value / top);
+
+    const chart = svg('svg', {
+        viewBox: `0 0 ${width} ${height}`, role: 'img',
+        'aria-label': `Screens mixed in each of the last ${merges.length} blends`
+    });
+    for (let value = 0; value <= top; value += step) {
+        chart.append(svg('line', {
+            class: 'grid-line', x1: margin.left, x2: width - margin.right, y1: y(value), y2: y(value)
+        }));
+        const label = svg('text', {
+            class: 'axis-label', x: margin.left - 8, y: y(value) + 4, 'text-anchor': 'end'
+        });
+        label.textContent = value;
+        chart.append(label);
+    }
+    for (const [text, x, anchor] of [['older', margin.left, 'start'],
+        ['newer', width - margin.right, 'end']]) {
+        const label = svg('text', { class: 'axis-label', x, y: height - 6, 'text-anchor': anchor });
+        label.textContent = text;
+        chart.append(label);
+    }
+
+    const slot = plotWidth / Math.max(merges.length, 12);
+    const barWidth = Math.max(2, Math.min(28, slot - 2));
+    const radius = Math.min(4, barWidth / 2);
+    const tooltip = document.createElement('div');
+    tooltip.className = 'tooltip';
+    tooltip.hidden = true;
+    const elapsed = Date.now() - fetchedAt;
+
+    merges.forEach((merge, i) => {
+        const x = margin.left + slot * i + (slot - barWidth) / 2;
+        const barTop = y(merge.contributors);
+        const h = margin.top + plotHeight - barTop;
+        // Rounded top only: the bar stays anchored to the baseline.
+        const r = Math.min(radius, h);
+        const path = `M${x},${barTop + h} V${barTop + r} Q${x},${barTop} ${x + r},${barTop} ` +
+            `H${x + barWidth - r} Q${x + barWidth},${barTop} ${x + barWidth},${barTop + r} V${barTop + h} Z`;
+        const text = `v${merge.version} · ${plural(merge.contributors, 'screen')} · ` +
+            `${clockTime(merge.agoMs)} (${duration(merge.agoMs + elapsed)} ago)`;
+        // The hit area spans the whole slot height, larger than the bar itself.
+        const hit = svg('rect', {
+            class: 'hit', x: margin.left + slot * i, y: margin.top, width: slot, height: plotHeight,
+            tabindex: 0, 'aria-label': text
+        });
+        const show = () => {
+            tooltip.textContent = text;
+            tooltip.hidden = false;
+            const box = chart.getBoundingClientRect();
+            const scale = box.width / width;
+            const left = (x + barWidth / 2) * scale + 16;
+            tooltip.style.left = `${Math.min(left, panel.clientWidth - tooltip.offsetWidth - 8)}px`;
+            tooltip.style.top = `${Math.max(4, barTop * scale - 20)}px`;
+        };
+        hit.addEventListener('mouseenter', show);
+        hit.addEventListener('focus', show);
+        hit.addEventListener('mouseleave', () => { tooltip.hidden = true; });
+        hit.addEventListener('blur', () => { tooltip.hidden = true; });
+        chart.append(hit, svg('path', { class: 'bar', d: path }));
+    });
+    panel.append(chart, tooltip);
+}
+
+async function refresh() {
+    try {
+        const response = await fetch(STATUS_URL, { cache: 'no-store' });
+        if (!response.ok) throw new Error(`the shared table answered ${response.status}`);
+        const data = await response.json();
+        if (!data.merges) throw new Error('the shared table does not publish its history yet');
+        status = data;
+        fetchedAt = Date.now();
+        document.getElementById('error').hidden = true;
+        renderTiles();
+        renderChart();
+        renderHistory();
+        setText('updated', `Updated at ${new Date(fetchedAt).toLocaleTimeString()}, ` +
+            'then every minute while this page is visible.');
+    } catch (error) {
+        const box = document.getElementById('error');
+        box.textContent = `Could not reach the shared table: ${error.message}.`;
+        box.hidden = false;
+        if (!status) setText('updated', 'No data yet.');
+    }
+}
+
+refresh();
+setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && Date.now() - fetchedAt > REFRESH_MS) refresh();
+});
+// Durations tick every second between refreshes, without extra requests.
+setInterval(() => { if (status && !document.hidden) { renderTiles(); renderHistory(); } }, 1000);
+</script>
+</body>
+</html>
