@@ -64,7 +64,7 @@ class UIManager {
             pending > 0 ? ` (${pending})` : '';
         const lastMerge = collaboration.getLastMerge();
         document.getElementById('last-merge').textContent = lastMerge === null ? '--'
-            : `${lastMerge.contributors}${lastMerge.includesYou ? ' ✓' : ''} · ` +
+            : `v${lastMerge.version} · ${lastMerge.contributors}${lastMerge.includesYou ? ' ✓' : ''} · ` +
               formatElapsed(lastMerge.secondsAgo);
         try {
             document.getElementById('simulation-time').textContent = Math.floor(simulationTime.getTotal());
@@ -157,6 +157,7 @@ class UIManager {
      *
      * Recording is local to this computer and touches no shared state, so it is
      * available with `?admin` without signing in (e.g. on an exhibition machine).
+     * It needs the page to be served by tools/timelapse_server.py.
      *
      * Args:
      *   timelapse: TimelapseRecorder; its onChange and onError are set here.
@@ -165,17 +166,19 @@ class UIManager {
         const button = document.getElementById('timelapse-button');
         const status = document.getElementById('timelapse-status');
         if (!button || !status) return;
-        const supported = TimelapseRecorder.isSupported(window);
+        const local = TimelapseRecorder.isLocal(window.location);
         const refresh = () => {
             button.textContent = timelapse.active ? '⏹ Stop timelapse' : '📷 Start timelapse';
-            button.disabled = !supported;
+            button.disabled = !local;
             let text = '';
-            if (!supported) {
-                text = 'Timelapse needs Chrome or Edge (File System Access API).';
-            } else if (timelapse.directory && (timelapse.active || timelapse.lastFile)) {
+            if (!local) {
+                text = 'Timelapse: run python3 tools/timelapse_server.py, then open ' +
+                    'http://localhost:8765/?admin';
+            } else if (timelapse.folder && (timelapse.active || timelapse.lastFile)) {
                 const last = timelapse.lastFile ? `, last ${timelapse.lastFile}` : '';
                 text = `${timelapse.active ? 'Recording' : 'Stopped'}: ${timelapse.framesWritten} ` +
-                    `frames${last} in ${timelapse.directory.name}/ · commit ${timelapse.commit.slice(0, 7)}`;
+                    `frames${last} in ${timelapse.folder} · commit ${timelapse.commit.slice(0, 7)}` +
+                    (timelapse.commit.endsWith('-dirty') ? ' (modified)' : '');
             }
             status.textContent = text;
             status.hidden = text === '';
@@ -192,8 +195,7 @@ class UIManager {
                 await timelapse.start();
                 this.showToast('Timelapse recording', 'success');
             } catch (error) {
-                // Closing the folder picker is a choice, not an error.
-                if (error.name !== 'AbortError') this.showToast(error.message, 'error', 8000);
+                this.showToast(error.message, 'error', 8000);
             }
             refresh();
         });

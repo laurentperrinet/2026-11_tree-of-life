@@ -30,10 +30,6 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v4
       
-      # The page reads it to stamp timelapse frames with the deployed commit.
-      - name: Record deployed commit
-        run: printf '{"commit":"%s"}\n' "$GITHUB_SHA" > version.json
-
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:

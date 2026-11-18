@@ -422,6 +422,7 @@ reinjected at $r = 24.4$ u.
 | $T_\text{min}$ | literal | 300,000 ms (5 min) | Minimum sync interval |
 | — | `ACTIVE_CLIENT_MS` | 86,400,000 ms (24 h) | Activity window of a browser ID |
 | — | `ONLINE_SYNC_INTERVALS` | 2 | A browser seen within this many sync intervals ($2T$, about 10 min) counts as online |
+| — | `MERGE_HISTORY_LENGTH` | 50 | Recent merges listed by `GET /api/status` |
 | $\Delta_\max$ | `MAX_DELTA` | 10 u | Largest accepted change per vertex |
 | — | `MAX_COMPRESSED_BYTES` | 300,000 B | Upload limit; raised automatically only for meshes above ~74,000 vertices |
 | — | literal | 6 h | Maximum retry backoff |
@@ -466,7 +467,7 @@ The page opens looking straight down at the disk.
 | **S** | Sync now, if the adaptive interval has elapsed | Signed-in, `?admin` |
 | **R**, twice within 3 s | Reset the shared terrain | Owner only |
 | **?** | Toggle the control panel | Signed-in, `?admin` |
-| **📷 Start timelapse** | Save one PNG of the default view per second on this computer ([Timelapse](#timelapse)) | `?admin`, Chrome or Edge |
+| **📷 Start timelapse** | Save one PNG of the default view per second on this computer ([Timelapse](#timelapse)) | `?admin`, page served by `tools/timelapse_server.py` |
 
 Touch gestures and double-click are not handled. For debugging, `window.app`
 exposes the running `Application`, for example `app.physics.timeScale = 3` in the
@@ -510,7 +511,7 @@ blend is a merge; see [Collaboration protocol](#collaboration-protocol).)
 | 🔄 | Last post | Seconds since your screen last exchanged with the shared table |
 | ⌛ | Next post | Seconds until the postman's next round; `--` while a post is on its way. After a failed round (no network, for example) the postman waits twice as long before trying again, up to six hours |
 | 🔀 | Next blend | Seconds until the table blends the tracings it has collected; in brackets, how many screens are waiting. `--`: nothing is waiting. `0`: the blend is due, happens as soon as any screen gets in touch, and you see it at your next post |
-| 🤝 | Last blend | For example `3 ✓ · 12 min`: the last blend mixed the work of 3 screens, 12 minutes ago; ✓ means yours was one of them. Two screens or more means the sand was shaped together. `--` before the first blend or after a reset |
+| 🤝 | Last blend | For example `v31 · 3 ✓ · 12 min`: the last blend produced edition 31 of the shared map, mixing the work of 3 screens, 12 minutes ago; ✓ means yours was one of them. Like a newspaper, the map gets a new edition number after each blend (and after a reset). Two screens or more means the sand was shaped together. `--` before the first blend or after a reset |
 
 **Your own simulation.** The simulation runs on its own clock, like a time-lapse
 film: `sim s` are simulated seconds, not seconds on your watch.
@@ -520,6 +521,13 @@ film: `sim s` are simulated seconds, not seconds on your watch.
 | 🕰️ | Simulated time | How long the water has flowed on this computer, all its tabs together; kept on this computer only, not shared, not erased by a terrain reset |
 | ⏱️ | Journey time | How long a drop of water (a blue dot) takes, on average, to travel from the edge of the disk to the drain, over its last 100 journeys |
 | 💧 | Flow | How many drops reach the drain each simulated second, like cars counted at a toll booth, over the last 60 sim s. Drops that evaporate on the way (they turn white and leave their sand where they are) are not counted |
+
+**The whole story.** The [sharing status page](https://laurentperrinet.github.io/2026-11_tree-of-life/status.html)
+(`status.html`, also linked from **❔**) shows the edition of the shared map, how
+many blends there have been and how many mixed two screens or more, the next blend,
+the visitors, a bar chart of the screens mixed in each of the last 50 blends, and the
+same list as a table. It asks the shared table for news once a minute while it is
+visible.
 
 **Buttons.** **View** (or **D**) changes what the map shows; 🔒 shows the GitHub
 account you are signed in with; **GitHub** opens the source code. To spare the shared
@@ -543,26 +551,43 @@ The panel's **📷 Start timelapse** button saves one PNG of the default view pe
 wall-clock second, numbered `000001.png`, `000002.png`, … (the 342nd frame is
 `000342.png`). It needs `?admin` but no sign-in, since it touches no shared state.
 
-- **Where the frames go.** On the recording computer only. The button opens a
-  folder picker (File System Access API, Chrome or Edge; Safari and Firefox lack
-  it); the frames go into a `timelapse` subfolder, created if needed, or into the
-  chosen folder itself if it is already named `timelapse`. Nothing is sent to the
-  Worker or to GitHub: at about 1–3 MB per frame, a day of recording (86,400
-  frames) would exceed both services' limits. Restarting appends to the sequence
-  (it resumes after the highest number found) instead of overwriting it.
+```bash
+python3 tools/timelapse_server.py        # or: npm run timelapse
+# then open http://localhost:8765/?admin in Safari (or any browser)
+```
+
+- **Why a local server.** Frames stay on the recording computer: at about 1–3 MB
+  per frame, a day of recording (86,400 frames) would exceed the Worker's and
+  GitHub's limits. Safari blocks requests from the HTTPS page to
+  `http://localhost` as mixed content, so `tools/timelapse_server.py` (standard
+  library only, listening on 127.0.0.1) serves the page itself from this
+  repository, receives each frame from that same origin, and relays `/api/*` to
+  the Worker server to server, so the shared terrain keeps being synchronised.
+  The relayed requests carry no `Origin`, which the Worker accepts, and the
+  browser's `User-Agent`, since Cloudflare rejects urllib's (error 1010). On
+  GitHub Pages the button is disabled and shows the command above. Pages served
+  from `localhost` or `127.0.0.1` always sync through `/api/sync` on their own
+  origin.
+- **Where the frames go.** `timelapse/` in the repository (ignored by git), or
+  `--out <folder>`. The server numbers the frames: a restart, or a second tab,
+  continues after the highest number found instead of overwriting. Each frame is
+  written to a temporary file then renamed, so a crash never leaves a truncated
+  PNG under a frame name. Options: `--port` (8765), `--out`, `--worker`.
 - **What is captured.** The default view whatever the visitor does: the start-up
   zenith camera and the `elevation` mode, rendered off screen at 1920 × 1080 px
   (`TimelapseRecorder` options `width`, `height`), without the status bar or
   panels.
 - **Metadata.** Each PNG carries three `tEXt` chunks: `Creation Time` (ISO 8601,
-  UTC, e.g. `2026-11-17T18:42:03.123Z`), `Commit` (the deployed commit, read from
-  `version.json`; `unknown` when served locally) and `Software`. Read them with
-  `exiftool 000342.png` or, in Python, `PIL.Image.open('000342.png').text`.
+  UTC, e.g. `2026-11-17T18:42:03.123Z`), `Commit` (`git rev-parse HEAD` of the
+  served files, with `-dirty` if tracked files are modified; `unknown` outside a
+  git checkout) and `Software`. Read them with `exiftool 000342.png` or, in
+  Python, `PIL.Image.open('000342.png').text`.
 - **Limits.** Frames are taken by the animation loop, so a hidden tab or a
-  minimised window records nothing; keep the window visible. A frame is written
-  atomically (swap file renamed on completion); while one is being written, the
-  next waits rather than queueing. A write error (disk full, permission withdrawn)
-  stops the recording with a message.
+  minimised window records nothing; keep the window visible. While a frame is
+  being sent, the next waits rather than queueing. A server error (disk full,
+  server stopped) stops the recording with a message. The page served locally
+  has its own browser storage, hence its own collaborator ID, and GitHub sign-in
+  does not work there (the OAuth callback is the Pages URL).
 
 To make a video: `ffmpeg -framerate 30 -i timelapse/%06d.png -pix_fmt yuv420p timelapse.mp4`.
 
@@ -579,6 +604,7 @@ serialises updates.
 | Method and path | Purpose |
 | --- | --- |
 | `GET /api/state` | Current shared elevation and metadata (does not count as activity) |
+| `GET /api/status` | The same metadata without the terrain, plus `merges`: `total`, `shared` (merges of two browsers or more), `since` (ISO 8601, when counting began) and `recent` (the last `MERGE_HISTORY_LENGTH` merges, newest first, each with `agoMs`, `version`, `contributors`); read by `status.html` |
 | `POST /api/sync` | Heartbeat or contribution; returns the metadata, and the terrain if the version changed |
 | `POST /api/auth/exchange` | Exchange a GitHub OAuth code for a token (holds the client secret) |
 | `POST /api/admin/reset` | Reset the terrain; requires the owner's GitHub bearer token |
@@ -635,7 +661,7 @@ the mesh changes.
 | `localStorage` | `tree-of-life-collaborator-id` | Random browser ID | Until storage is cleared |
 | `localStorage` | `tree-of-life-simulation-time-v1:<uuid>` | Simulation time of one tab | Summed over all tabs |
 | `sessionStorage` | `github-oauth-token`, `tree-of-life-oauth-state` | GitHub token and OAuth `state` | Until the tab closes |
-| Local folder | `timelapse/000001.png`, … | Admin timelapse frames, one per second | On the recording computer, until deleted |
+| Local folder | `timelapse/000001.png`, … (or `--out`) | Admin timelapse frames, one per second, written by `tools/timelapse_server.py` | On the recording computer, until deleted |
 
 Terrain saves from formats `10.0` to `13.0` were made on the polar-ring meshes
 and are ignored. A save that still holds per-vertex vegetation and microbe arrays (the
@@ -701,6 +727,7 @@ quota of an origin.
 | File | Purpose |
 | --- | --- |
 | `index.html` | Canvas, status bar, status help dialogue, admin panel; loads Three.js r128 from cdnjs, then the scripts below in order |
+| `status.html` | Self-contained sharing status page (inline CSS and script, no library): reads `GET /api/status` once a minute |
 | `css/style.css` | Full-screen dark layout, status bar, dialogues, toasts, spinner |
 | `js/local-storage.js` | `LocalStorageManager`, `SimulationTimeTracker`, `SessionStorageManager` |
 | `js/terrain.js` | `TerrainGrid`: spiral mesh, Delaunay triangulation, jitter, bedrock, sand profile, point location, save format |
@@ -710,7 +737,7 @@ quota of an origin.
 | `js/collaboration.js` | `CollaborativeSync`: browser ID, gzip deltas, schedule, backoff, reset call |
 | `js/auth.js` | `AuthManager` (GitHub OAuth through the Worker), `ResetManager` |
 | `js/controls.js` | `InputControls`: keyboard and mouse |
-| `js/timelapse.js` | `TimelapseRecorder`: admin timelapse frames, PNG `tEXt` metadata |
+| `js/timelapse.js` | `TimelapseRecorder`: admin timelapse frames, PNG `tEXt` metadata, upload to the local server |
 | `js/ui.js` | `UIManager`: status bar, toasts, admin panel, reset confirmation, timelapse button |
 | `js/main.js` | `Application`: wiring, start-up order, animation loop, autosave |
 | `worker/index.mjs` | Cloudflare Worker (routing, CORS, OAuth, owner check) and the `Simulation` Durable Object |
@@ -718,8 +745,10 @@ quota of an origin.
 | `wrangler.toml` | Worker name, public variables, Durable Object binding `SIMULATION` and migration `v1` |
 | `tests/*.test.js` | Browser modules run in `node:vm` with DOM mocks |
 | `worker/index.test.mjs` | Worker protocol with a mocked Durable Object |
-| `package.json` | Scripts (`test`, `dev`, `dev:http`, `lint`, `format`) and dev dependencies |
-| `.github/workflows/deploy.yml` | Writes `version.json` (`{"commit": "<sha>"}`, not in git), then publishes the repository root to GitHub Pages |
+| `tools/timelapse_server.py` | Local server for the timelapse: serves the page, writes numbered frames, relays `/api/*` to the Worker |
+| `tools/test_timelapse_server.py` | Its tests (`unittest`, real server on a free port, fake Worker) |
+| `package.json` | Scripts (`test`, `timelapse`, `dev`, `dev:http`, `lint`, `format`) and dev dependencies |
+| `.github/workflows/deploy.yml` | Publishes the repository root to GitHub Pages |
 | `.nojekyll`, `.gitignore`, `LICENSE` | Pages setting, ignored paths (including `secrets/`), MIT licence |
 | `.DEPLOYMENT_STATUS.txt` | Deployment configuration recorded in the repository and checks to run |
 
@@ -864,6 +893,7 @@ vertices.
 | Mean of the deltas, new version, last-merge record | `Simulation.finalizeContributions()` |
 | Response body, including `mergeInMs`, counts and `lastMerge` | `Simulation.stateResponse()` |
 | Cumulative count of distinct browser IDs | `Simulation.loadCollaboratorTotal()`, `Simulation.registerCollaborator()` |
+| Merge statistics (stored apart from the terrain, kept across resets) and `GET /api/status` | `Simulation.loadMergeHistory()`, `Simulation.recordMerge()`, `Simulation.handle()` |
 | Mesh, bedrock and sand mirrored from the browser | `createInitialMesh()`, `meshJitter()`, `hashUint32()`, `channelSandFactor()` |
 | Sync interval | `getSyncIntervalMs()` |
 
@@ -896,6 +926,7 @@ a warning toast.
 npm test                                   # everything, about five minutes
 node --test tests/collaboration.test.js    # one file
 node --test --test-name-pattern="avalanche" tests/terrain-physics.test.js
+python3 -m unittest discover -s tools      # timelapse server only; opens local ports
 ```
 
 | File | Covers |
@@ -904,11 +935,13 @@ node --test --test-name-pattern="avalanche" tests/terrain-physics.test.js
 | `tests/collaboration.test.js` | Deltas once per version, mesh mismatch, intervals, countdowns, reset during sync |
 | `tests/auth.test.js` | OAuth `state`, callback, admin view, reset failure handling |
 | `tests/ui.test.js` | Camera, display modes, status bar, simulation time, URL resets |
-| `tests/timelapse.test.js` | PNG `tEXt` chunks and CRC, frame numbering, 1 s cadence, folder choice, deployed commit, off-screen default view |
+| `tests/timelapse.test.js` | PNG `tEXt` chunks and CRC, 1 s cadence, server check, frame upload and errors, off-screen default view |
+| `tools/test_timelapse_server.py` | Frame numbering and atomic writes, static files only (no `secrets/`, `.git/`), Host check, Worker relay (Python, `unittest`) |
 | `worker/index.test.mjs` | Browser and Worker build the same mesh, migrations, averaging, validation, owner reset, CORS |
 
 Browser scripts are evaluated in `node:vm` contexts with minimal DOM, storage and
-`fetch` mocks. No test runs Cloudflare or GitHub for real.
+`fetch` mocks. The timelapse server tests start real servers on 127.0.0.1 with a
+fake Worker. No test runs Cloudflare or GitHub for real.
 
 ### Conventions
 

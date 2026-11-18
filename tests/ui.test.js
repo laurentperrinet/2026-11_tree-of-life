@@ -159,7 +159,7 @@ test('status metrics update at most once per second', () => {
     let transitReads = 0;
     let fluxReads = 0;
     let secondsUntilMerge = 42;
-    let lastMerge = { contributors: 3, includesYou: true, secondsAgo: 720 };
+    let lastMerge = { version: 31, contributors: 3, includesYou: true, secondsAgo: 720 };
     const collaboration = {
         activeCollaborators: 6,
         totalCollaborators: 37,
@@ -186,7 +186,7 @@ test('status metrics update at most once per second', () => {
     assert.equal(elements['next-merge'].textContent, '42');
     assert.equal(elements['pending-contributions'].textContent, ' (1)');
     assert.equal(elements['contrib-count'].textContent, '37 (3)');
-    assert.equal(elements['last-merge'].textContent, '3 ✓ · 12 min');
+    assert.equal(elements['last-merge'].textContent, 'v31 · 3 ✓ · 12 min');
     assert.equal(elements['simulation-time'].textContent, 123);
 
     // An older Worker reports neither totals nor merges.
@@ -203,9 +203,9 @@ test('status metrics update at most once per second', () => {
     assert.equal(elements['contrib-count'].textContent, '6');
     assert.equal(elements['last-merge'].textContent, '--');
 
-    lastMerge = { contributors: 2, includesYou: false, secondsAgo: 7200 };
+    lastMerge = { version: 32, contributors: 2, includesYou: false, secondsAgo: 7200 };
     ui.updateStatus(collaboration, physics, 2000, simulationTime);
-    assert.equal(elements['last-merge'].textContent, '2 · 2 h');
+    assert.equal(elements['last-merge'].textContent, 'v32 · 2 · 2 h');
 });
 
 test('cumulative simulation time persists across sessions and sums concurrent tabs', () => {

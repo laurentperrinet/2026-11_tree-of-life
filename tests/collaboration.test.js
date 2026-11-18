@@ -209,7 +209,7 @@ test('collaborator totals and the last merge are read from the Worker', async ()
     assert.equal(h.sync.onlineCollaborators, 3);
     assert.equal(h.sync.pendingContributions, 1);
     assert.deepEqual({ ...h.sync.getLastMerge() },
-        { contributors: 3, includesYou: true, secondsAgo: 60 });
+        { version: 4, contributors: 3, includesYou: true, secondsAgo: 60 });
     h.clock.now += 30_000;
     assert.equal(h.sync.getLastMerge().secondsAgo, 90);
     h.setExtra({ lastMerge: { agoMs: 0, version: 4, contributors: 0, includesYou: false } });

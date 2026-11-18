@@ -12,6 +12,10 @@ const ONLINE_SYNC_INTERVALS = 2;
 // Kept outside the terrain state so that resets and mesh changes do not lose it.
 const COLLABORATOR_TOTAL_KEY = 'collaboratorTotal';
 const COLLABORATOR_KEY_PREFIX = 'collaborator:';
+// Merge statistics, also kept apart from the terrain so that resets keep them.
+const MERGE_HISTORY_KEY = 'mergeHistory';
+// Number of recent merges listed by /api/status.
+const MERGE_HISTORY_LENGTH = 50;
 const ORIGIN = 'https://laurentperrinet.github.io';
 const FRONTEND_URL = `${ORIGIN}/2026-11_tree-of-life/`;
 
@@ -191,7 +195,7 @@ export default {
             const path = new URL(request.url).pathname;
             if (path === '/api/auth/exchange' && request.method === 'POST') {
                 response = await exchangeCode(request, env);
-            } else if (['/api/state', '/api/sync', '/api/admin/reset'].includes(path)) {
+            } else if (['/api/state', '/api/status', '/api/sync', '/api/admin/reset'].includes(path)) {
                 if (path === '/api/admin/reset') await authenticateOwner(request, env);
                 const id = env.SIMULATION.idFromName('global');
                 response = await env.SIMULATION.get(id).fetch(request);
@@ -302,13 +306,82 @@ export class Simulation {
         }
     }
 
+    /**
+     * Load the merge statistics, seeding them on first use.
+     *
+     * The record holds the number of merges (`total`), those that averaged two
+     * browsers or more (`shared`), when counting began (`since`, ms since the Unix
+     * epoch) and the latest merges (`recent`, oldest first, each with `at`,
+     * `version` and `contributors`).
+     *
+     * Args:
+     *   state: Shared state whose last merge, if any, seeds a missing record.
+     *   now: Current time (ms since the Unix epoch).
+     */
+    async loadMergeHistory(state, now) {
+        if (this.mergeHistory !== undefined) return;
+        const stored = await this.ctx.storage.get(MERGE_HISTORY_KEY);
+        if (stored && Number.isSafeInteger(stored.total) && Number.isSafeInteger(stored.shared) &&
+            Number.isFinite(stored.since) && Array.isArray(stored.recent)) {
+            this.mergeHistory = stored;
+            return;
+        }
+        // Earlier merges were not recorded; the last one is still known.
+        const last = state.lastMerge;
+        const contributors = last ? last.contributorIds.length : 0;
+        this.mergeHistory = {
+            total: last ? 1 : 0,
+            shared: contributors >= 2 ? 1 : 0,
+            since: last ? last.at : now,
+            recent: last ? [{ at: last.at, version: last.version, contributors }] : []
+        };
+        await this.ctx.storage.put(MERGE_HISTORY_KEY, this.mergeHistory);
+    }
+
+    /**
+     * Add a merge to the statistics.
+     *
+     * Args:
+     *   merge: Merge just applied, with `at` (ms since the Unix epoch), `version`
+     *     and `contributorIds`.
+     */
+    async recordMerge(merge) {
+        const contributors = merge.contributorIds.length;
+        const history = this.mergeHistory;
+        history.total++;
+        if (contributors >= 2) history.shared++;
+        history.recent.push({ at: merge.at, version: merge.version, contributors });
+        if (history.recent.length > MERGE_HISTORY_LENGTH) {
+            history.recent.splice(0, history.recent.length - MERGE_HISTORY_LENGTH);
+        }
+        await this.ctx.storage.put(MERGE_HISTORY_KEY, history);
+    }
+
     async handle(request, delta) {
         const path = new URL(request.url).pathname;
         const state = await this.loadState();
-        await this.loadCollaboratorTotal(state, Date.now());
+        const now = Date.now();
+        await this.loadCollaboratorTotal(state, now);
+        await this.loadMergeHistory(state, now);
 
         if (path === '/api/state' && request.method === 'GET') {
             return this.stateResponse(state);
+        }
+        if (path === '/api/status' && request.method === 'GET') {
+            // Light enough to poll: no terrain, but the merge statistics.
+            const history = this.mergeHistory;
+            return this.stateResponse(state, {
+                merges: {
+                    total: history.total,
+                    shared: history.shared,
+                    since: new Date(history.since).toISOString(),
+                    recent: history.recent.map(merge => ({
+                        agoMs: Math.max(0, now - merge.at),
+                        version: merge.version,
+                        contributors: merge.contributors
+                    })).reverse()
+                }
+            }, false);
         }
         if (path === '/api/sync' && request.method === 'POST') {
             return this.sync(request, state, delta);
@@ -362,7 +435,7 @@ export class Simulation {
 
         let finalized = false;
         if (state.windowEndsAt !== null && now >= state.windowEndsAt) {
-            this.finalizeContributions(state, now);
+            if (this.finalizeContributions(state, now)) await this.recordMerge(state.lastMerge);
             finalized = true;
         }
 
@@ -426,6 +499,7 @@ export class Simulation {
         state.contributionIds = [];
         state.sumDelta = new Float64Array(state.elevation.length);
         state.windowEndsAt = null;
+        return count > 0;
     }
 
     stateResponse(state, extra = {}, includeTerrain = true, clientId = null) {

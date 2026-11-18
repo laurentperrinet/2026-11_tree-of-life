@@ -287,6 +287,71 @@ test('contributions from the same version are averaged once per browser', async 
     }
 });
 
+test('status lists merge statistics without the terrain and keeps them across resets', async () => {
+    const { request } = harness();
+    const start = 3_000_000_000;
+    const realNow = Date.now;
+    const originalFetch = globalThis.fetch;
+    try {
+        Date.now = () => start;
+        const length = (await request('/api/state')).body.terrain.elevation.length;
+        let status = (await request('/api/status')).body;
+        equal(status.terrain, undefined);
+        deepStrictEqual(status.merges, {
+            total: 0, shared: 0, since: new Date(start).toISOString(), recent: []
+        });
+
+        // Two browsers blended, then one alone.
+        for (const clientId of [clientA, clientB]) {
+            await request('/api/sync', {
+                method: 'POST', clientId, version: 0, encoding: 'gzip',
+                body: await compressedDelta(length, { 0: 0.1 })
+            });
+        }
+        Date.now = () => start + 300_000;
+        await request('/api/sync', { method: 'POST', clientId: clientC });
+        await request('/api/sync', {
+            method: 'POST', clientId: clientA, version: 1, encoding: 'gzip',
+            body: await compressedDelta(length, { 0: 0.1 })
+        });
+        Date.now = () => start + 600_000;
+        await request('/api/sync', { method: 'POST', clientId: clientC });
+        Date.now = () => start + 660_000;
+        status = (await request('/api/status')).body;
+        equal(status.version, 2);
+        equal(status.merges.total, 2);
+        equal(status.merges.shared, 1);
+        deepStrictEqual(status.merges.recent, [
+            { agoMs: 60_000, version: 2, contributors: 1 },
+            { agoMs: 360_000, version: 1, contributors: 2 }
+        ]);
+
+        globalThis.fetch = async () => Response.json({ id: 123 });
+        await request('/api/admin/reset', { method: 'POST', token: 'owner' });
+        status = (await request('/api/status')).body;
+        equal(status.lastMerge, null);
+        equal(status.merges.total, 2);
+    } finally {
+        Date.now = realNow;
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test('merge statistics start from the last merge already recorded', async () => {
+    const seed = harness();
+    await seed.request('/api/state');
+    const now = Date.now();
+    const { request } = harness({
+        ...seed.storedState(),
+        lastMerge: { at: now - 1000, version: 7, contributorIds: [clientA, clientB, clientC] }
+    });
+    const { merges } = (await request('/api/status')).body;
+    equal(merges.total, 1);
+    equal(merges.shared, 1);
+    equal(merges.recent[0].contributors, 3);
+    equal(merges.since, new Date(now - 1000).toISOString());
+});
+
 test('browser activity and the collaborator count survive a mesh change', async () => {
     const seed = harness();
     await seed.request('/api/state');

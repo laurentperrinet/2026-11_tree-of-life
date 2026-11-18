@@ -9,7 +9,7 @@ function loadTimelapse(globals = {}) {
     const context = vm.createContext({ TextEncoder, console, ...globals });
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', 'timelapse.js'), 'utf8'), context);
     return vm.runInContext(
-        '({ crc32, addPngText, timelapseFileName, nextTimelapseIndex, TimelapseRecorder })', context);
+        '({ crc32, addPngText, TimelapseRecorder })', context);
 }
 
 // Minimal valid 2 × 1 RGBA PNG, built independently of the code under test.
@@ -67,15 +67,6 @@ test('PNG metadata is inserted after IHDR with valid checksums', () => {
     assert.throws(() => addPngText(new Uint8Array(40), []), /Not a PNG/);
 });
 
-test('frames are numbered with six digits and continue an existing sequence', () => {
-    const { timelapseFileName, nextTimelapseIndex } = loadTimelapse();
-    assert.equal(timelapseFileName(342), '000342.png');
-    assert.equal(timelapseFileName(1), '000001.png');
-    assert.throws(() => timelapseFileName(0), /out of range/);
-    assert.equal(nextTimelapseIndex([]), 1);
-    assert.equal(nextTimelapseIndex(['000001.png', '000342.png', '12.png', 'x.png', '000400.png.crswap']), 343);
-});
-
 test('recorder captures once per second, waits while writing and restarts after a stall', async () => {
     const { TimelapseRecorder } = loadTimelapse();
     const captures = [];
@@ -83,8 +74,9 @@ test('recorder captures once per second, waits while writing and restarts after 
     const recorder = new TimelapseRecorder(renderer, { width: 64, height: 40 });
     const written = [];
     let finishWrite;
-    recorder.writeFrame = (index, pixels, createdAt) => {
-        written.push(index);
+    let index = 341;
+    recorder.writeFrame = (pixels, createdAt) => {
+        written.push(++index);
         assert.equal(pixels, 'pixels');
         assert.match(createdAt.toISOString(), /^\d{4}-\d{2}-\d{2}T/);
         return new Promise(resolve => { finishWrite = () => resolve(`${index}`); });
@@ -93,7 +85,6 @@ test('recorder captures once per second, waits while writing and restarts after 
     assert.equal(captures.length, 0, 'inactive recorder captures nothing');
 
     recorder.active = true;
-    recorder.nextIndex = 342;
     recorder.update(0);
     assert.deepEqual(written, [342]);
     assert.deepEqual(captures[0], [64, 40]);
@@ -138,42 +129,56 @@ test('a failed write stops recording and reports the error', async () => {
     assert.equal(reported, 'disk full');
 });
 
-test('start appends to the timelapse folder and reads the deployed commit', async () => {
-    const files = ['000001.png', '000007.png', 'notes.txt'];
-    const timelapseDir = {
-        name: 'timelapse',
-        async *keys() { yield* files; }
+test('start checks the local server, and frames are posted with their metadata', async () => {
+    const requests = [];
+    let serverUp = true;
+    let png;
+    const fetch = async (url, options = {}) => {
+        requests.push([url, options.method || 'GET']);
+        if (!serverUp) throw new TypeError('Load failed');
+        if (url === 'api/timelapse/status') {
+            return { ok: true, json: async () => ({ next: '000008.png', folder: '/Users/me/timelapse' }) };
+        }
+        if (url === 'version.json') return { ok: true, json: async () => ({ commit: 'abcdef1234567-dirty' }) };
+        if (url === 'api/timelapse/frame') {
+            png = new Uint8Array(await options.body.arrayBuffer());
+            assert.equal(options.headers['Content-Type'], 'image/png');
+            return { ok: true, json: async () => ({ name: '000008.png' }) };
+        }
+        throw new Error(`unexpected ${url}`);
     };
-    let created;
-    const parent = {
-        name: 'Pictures',
-        getDirectoryHandle: async (name, options) => { created = [name, options.create]; return timelapseDir; }
-    };
-    const window = { showDirectoryPicker: async () => parent };
-    const fetch = async url => ({
-        ok: true, json: async () => ({ commit: url === 'version.json' ? 'abcdef1234567' : '' })
-    });
-    const { TimelapseRecorder } = loadTimelapse({ window, fetch, showDirectoryPicker: window.showDirectoryPicker });
+    const { TimelapseRecorder } = loadTimelapse({ fetch, Blob });
     const recorder = new TimelapseRecorder({});
     await recorder.start();
-    assert.deepEqual(created, ['timelapse', true]);
-    assert.equal(recorder.nextIndex, 8);
-    assert.equal(recorder.commit, 'abcdef1234567');
     assert.equal(recorder.active, true);
+    assert.equal(recorder.folder, '/Users/me/timelapse');
+    assert.equal(recorder.commit, 'abcdef1234567-dirty');
 
-    // Picking the timelapse folder itself does not nest a second one.
-    window.showDirectoryPicker = async () => timelapseDir;
-    recorder.active = false;
-    await recorder.start();
-    assert.equal(recorder.directory, timelapseDir);
+    recorder.encodePng = async (pixels, metadata) => {
+        assert.deepEqual(Array.from(metadata, ([key]) => key), ['Creation Time', 'Commit', 'Software']);
+        assert.equal(metadata[0][1], '2026-11-17T18:42:03.123Z');
+        assert.equal(metadata[1][1], 'abcdef1234567-dirty');
+        return new Blob([tinyPng()], { type: 'image/png' });
+    };
+    const name = await recorder.writeFrame('pixels', new Date('2026-11-17T18:42:03.123Z'));
+    assert.equal(name, '000008.png');
+    assert.deepEqual(png, tinyPng());
+    assert.deepEqual(requests.at(-1), ['api/timelapse/frame', 'POST']);
 
-    const offline = loadTimelapse({
-        window, showDirectoryPicker: window.showDirectoryPicker,
-        fetch: async () => ({ ok: false, status: 404 }), console: { warn() {} }
-    });
-    const local = new offline.TimelapseRecorder({});
-    await local.start();
-    assert.equal(local.commit, 'unknown');
+    serverUp = false;
+    const offline = new TimelapseRecorder({});
+    await assert.rejects(offline.start(), /timelapse_server\.py/);
+    assert.equal(offline.active, false);
+    assert.equal(TimelapseRecorder.isLocal({ hostname: 'localhost' }), true);
+    assert.equal(TimelapseRecorder.isLocal({ hostname: 'laurentperrinet.github.io' }), false);
+});
+
+test('a server error stops recording with its message', async () => {
+    const fetch = async () => ({ ok: false, status: 500, json: async () => ({ error: 'cannot write frame: No space left on device' }) });
+    const { TimelapseRecorder } = loadTimelapse({ fetch, Blob });
+    const recorder = new TimelapseRecorder({});
+    recorder.encodePng = async () => new Blob([tinyPng()]);
+    await assert.rejects(recorder.writeFrame('pixels', new Date()), /No space left/);
 });
 
 test('default view is rendered off screen in elevation mode, then the mode is restored', () => {

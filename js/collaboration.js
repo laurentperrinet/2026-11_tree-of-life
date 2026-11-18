@@ -242,12 +242,14 @@ class CollaborativeSync {
     /**
      * Summary of the Worker's last terrain merge, or null before the first one.
      *
-     * Returns contributors (browsers averaged), includesYou (whether this browser's
-     * contribution was among them) and secondsAgo (wall-clock s).
+     * Returns version (shared terrain version it produced), contributors (browsers
+     * averaged), includesYou (whether this browser's contribution was among them)
+     * and secondsAgo (wall-clock s).
      */
     getLastMerge() {
         if (this.lastMerge === null) return null;
         return {
+            version: this.lastMerge.version,
             contributors: this.lastMerge.contributors,
             includesYou: this.lastMerge.includesYou,
             secondsAgo: Math.max(0, Math.floor((Date.now() - this.lastMerge.at) / 1000))

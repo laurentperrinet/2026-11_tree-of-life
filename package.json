@@ -10,7 +10,8 @@
     "format": "prettier --write '**/*.{js,css,html,json,md}'",
     "build": "echo 'No build step needed - static files only'",
     "deploy": "git push origin main",
-    "test": "node --test tests/*.test.js worker/*.test.mjs"
+    "test": "node --test tests/*.test.js worker/*.test.mjs && python3 -m unittest discover -s tools",
+    "timelapse": "python3 tools/timelapse_server.py"
   },
   "keywords": [
     "simulation",

@@ -1,17 +1,15 @@
 /**
- * Admin timelapse: one PNG of the default view per wall-clock second, numbered
- * 000001.png, 000002.png, ... in a local `timelapse` folder.
+ * Admin timelapse: one PNG of the default view per wall-clock second, saved as
+ * 000001.png, 000002.png, ... in a `timelapse` folder on the recording computer.
  *
- * The page is static (GitHub Pages) and the Worker's quotas cannot absorb a PNG per
- * second, so frames stay on the recording computer. They are written through the
- * File System Access API (Chrome, Edge): the folder is chosen once, then every
- * frame is written without a dialogue. Each PNG carries tEXt chunks with its
- * creation time (ISO 8601, UTC) and the deployed commit (from `version.json`,
- * written by the deployment workflow).
+ * The Worker's quotas cannot absorb a PNG per second, and Safari blocks requests
+ * from the HTTPS page to http://localhost (mixed content). The page is therefore
+ * served by tools/timelapse_server.py at http://localhost:8765/?admin, and posts
+ * each frame to that same origin; the server numbers and writes the files. Each
+ * PNG carries tEXt chunks with its creation time (ISO 8601, UTC) and the commit
+ * of the served code (from the server's `version.json`).
  */
 
-const TIMELAPSE_FOLDER = 'timelapse';
-const TIMELAPSE_NAME_PATTERN = /^(\d{6})\.png$/;
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 // CRC-32 of ISO 3309, which PNG uses for each chunk (over its type and data).
@@ -88,36 +86,8 @@ function addPngText(png, entries) {
 }
 
 /**
- * Six-digit frame file name: 342 gives `000342.png`.
- *
- * Args:
- *   index: Frame number, from 1.
- */
-function timelapseFileName(index) {
-    if (!Number.isInteger(index) || index < 1 || index > 999999) {
-        throw new Error(`Timelapse frame number out of range: ${index}`);
-    }
-    return `${String(index).padStart(6, '0')}.png`;
-}
-
-/**
- * Frame number following the highest one already in the folder, so that a new
- * recording appends to the sequence instead of overwriting it.
- *
- * Args:
- *   names: File names present in the folder.
- */
-function nextTimelapseIndex(names) {
-    let max = 0;
-    for (const name of names) {
-        const match = TIMELAPSE_NAME_PATTERN.exec(name);
-        if (match) max = Math.max(max, Number(match[1]));
-    }
-    return max + 1;
-}
-
-/**
- * Records the default view once per interval while the animation loop runs.
+ * Records the default view once per interval while the animation loop runs, and
+ * posts each frame to the local timelapse server.
  */
 class TimelapseRecorder {
     /**
@@ -126,18 +96,22 @@ class TimelapseRecorder {
      *   options.width: Frame width (px).
      *   options.height: Frame height (px).
      *   options.intervalMs: Wall-clock interval between frames (ms).
-     *   options.versionUrl: JSON file `{"commit": "<sha>"}` written at deployment.
+     *   options.serverUrl: Timelapse endpoints of tools/timelapse_server.py.
+     *   options.versionUrl: JSON `{"commit": "<sha>[-dirty]"}` from the same server.
      */
-    constructor(renderer, { width = 1920, height = 1080, intervalMs = 1000, versionUrl = 'version.json' } = {}) {
+    constructor(renderer, {
+        width = 1920, height = 1080, intervalMs = 1000,
+        serverUrl = 'api/timelapse/', versionUrl = 'version.json'
+    } = {}) {
         this.renderer = renderer;
         this.width = width;
         this.height = height;
         this.intervalMs = intervalMs;
+        this.serverUrl = serverUrl;
         this.versionUrl = versionUrl;
         this.active = false;
         this.busy = false;
-        this.directory = null;
-        this.nextIndex = 1;
+        this.folder = null;
         this.nextCaptureTime = -Infinity;
         this.framesWritten = 0;
         this.lastFile = null;
@@ -147,28 +121,32 @@ class TimelapseRecorder {
         this.onError = null;
     }
 
-    static isSupported(scope = globalThis) {
-        return typeof scope.showDirectoryPicker === 'function';
+    /**
+     * Whether the page is served from this computer, as by the timelapse server.
+     *
+     * Args:
+     *   location: window.location or a URL.
+     */
+    static isLocal(location) {
+        return ['localhost', '127.0.0.1'].includes(location.hostname);
     }
 
     /**
-     * Ask for the folder, then record from the next animation frame on. Must be
-     * called from a user gesture (the directory picker requires one).
+     * Check that the timelapse server answers, then record from the next animation
+     * frame on.
      */
     async start() {
         if (this.active) return;
-        if (!TimelapseRecorder.isSupported()) {
-            throw new Error('Timelapse needs Chrome or Edge (File System Access API)');
+        let status;
+        try {
+            const response = await fetch(`${this.serverUrl}status`, { cache: 'no-store' });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            status = await response.json();
+        } catch (error) {
+            throw new Error('No timelapse server: run python3 tools/timelapse_server.py, ' +
+                'then open http://localhost:8765/?admin');
         }
-        const parent = await window.showDirectoryPicker({
-            id: 'tree-of-life-timelapse', mode: 'readwrite', startIn: 'pictures'
-        });
-        // Choosing the timelapse folder itself must not nest timelapse/timelapse.
-        this.directory = parent.name === TIMELAPSE_FOLDER
-            ? parent : await parent.getDirectoryHandle(TIMELAPSE_FOLDER, { create: true });
-        const names = [];
-        for await (const name of this.directory.keys()) names.push(name);
-        this.nextIndex = nextTimelapseIndex(names);
+        this.folder = status.folder;
         this.commit = await this.fetchCommit();
         this.framesWritten = 0;
         this.lastFile = null;
@@ -187,13 +165,13 @@ class TimelapseRecorder {
             const response = await fetch(this.versionUrl, { cache: 'no-store' });
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const { commit } = await response.json();
-            if (typeof commit !== 'string' || !/^[0-9a-f]{7,64}$/.test(commit)) {
+            if (typeof commit !== 'string' || !/^[0-9a-f]{7,64}(-dirty)?$/.test(commit)) {
                 throw new Error('no commit hash');
             }
             return commit;
         } catch (error) {
-            // Served locally there is no version.json: frames are still useful.
-            console.warn(`Timelapse: deployed commit unknown (${this.versionUrl}: ${error.message})`);
+            // Outside a git checkout the frames are still useful, just unstamped.
+            console.warn(`Timelapse: commit unknown (${this.versionUrl}: ${error.message})`);
             return 'unknown';
         }
     }
@@ -201,7 +179,7 @@ class TimelapseRecorder {
     /**
      * Called once per animation frame; captures when the interval has elapsed.
      *
-     * Frames are not queued: while the previous one is still being written, the
+     * Frames are not queued: while the previous one is still being sent, the
      * capture waits, so a slow disk delays a frame (the 1 s grid is kept) instead of
      * accumulating images in memory.
      *
@@ -216,7 +194,6 @@ class TimelapseRecorder {
         // than firing a burst of catch-up frames.
         this.nextCaptureTime = now - this.nextCaptureTime > this.intervalMs
             ? now + this.intervalMs : this.nextCaptureTime + this.intervalMs;
-        const index = this.nextIndex;
         const createdAt = new Date();
         let pixels;
         try {
@@ -225,9 +202,8 @@ class TimelapseRecorder {
             this.fail(error);
             return;
         }
-        this.nextIndex++;
         this.busy = true;
-        this.writeFrame(index, pixels, createdAt).then(name => {
+        this.writeFrame(pixels, createdAt).then(name => {
             this.framesWritten++;
             this.lastFile = name;
             this.onChange?.();
@@ -236,25 +212,25 @@ class TimelapseRecorder {
         });
     }
 
-    async writeFrame(index, pixels, createdAt) {
-        const name = timelapseFileName(index);
+    /**
+     * Encode a frame and post it; the server picks the next number, so that
+     * several tabs or restarts never overwrite each other.
+     *
+     * Returns:
+     *   The saved file name, e.g. `000342.png`.
+     */
+    async writeFrame(pixels, createdAt) {
         const blob = await this.encodePng(pixels, [
             ['Creation Time', createdAt.toISOString()],
             ['Commit', this.commit],
             ['Software', 'Tree of Life, https://github.com/laurentperrinet/2026-11_tree-of-life']
         ]);
-        const file = await this.directory.getFileHandle(name, { create: true });
-        // createWritable() writes to a swap file and renames it on close(): a frame
-        // interrupted by a crash never appears half-written under its final name.
-        const writable = await file.createWritable();
-        try {
-            await writable.write(blob);
-            await writable.close();
-        } catch (error) {
-            await writable.abort().catch(() => {});
-            throw error;
-        }
-        return name;
+        const response = await fetch(`${this.serverUrl}frame`, {
+            method: 'POST', headers: { 'Content-Type': 'image/png' }, body: blob
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || `frame upload failed (HTTP ${response.status})`);
+        return result.name;
     }
 
     async encodePng(pixels, metadata) {
