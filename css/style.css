@@ -39,6 +39,7 @@ canvas {
     backdrop-filter: blur(4px);
     font-family: 'Courier New', monospace;
     z-index: 100;
+    cursor: pointer;
 }
 
 .status-metrics {

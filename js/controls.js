@@ -32,11 +32,16 @@ class InputControls {
         if (!app) return;
         if (event.target?.closest?.('#status-help-dialog[open]')) return;
 
-        if (event.key.toUpperCase() === 'D' && !event.ctrlKey && !event.metaKey &&
-            !event.altKey && !event.target?.isContentEditable &&
-            !['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target?.tagName)) {
+        if (this.isPlainKey(event, 'D')) {
             event.preventDefault();
             this.cycleDisplayMode();
+            return;
+        }
+
+        // Ignored on key repeat, so that holding F does not flicker full screen on and off
+        if (this.isPlainKey(event, 'F') && !event.repeat) {
+            event.preventDefault();
+            this.toggleFullscreen();
             return;
         }
 
@@ -87,9 +92,45 @@ class InputControls {
         }
     }
 
+    /**
+     * True when a single letter key was pressed on its own, outside any text field.
+     *
+     * Args:
+     *   event: KeyboardEvent.
+     *   letter: Upper-case letter to match, for example 'D'.
+     */
+    isPlainKey(event, letter) {
+        return event.key.toUpperCase() === letter && !event.ctrlKey && !event.metaKey &&
+            !event.altKey && !event.target?.isContentEditable &&
+            !['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target?.tagName);
+    }
+
     cycleDisplayMode() {
         this.renderer.cycleDisplayMode();
         window.app.ui.showDisplayMode(this.renderer.displayMode);
+    }
+
+    /**
+     * Enter or leave full-screen mode for the whole page.
+     *
+     * Browsers only accept the request inside a user gesture, which both the F key
+     * and a click on the status bar provide. Safari still needs the webkit-prefixed
+     * methods. Pressing Escape leaves full screen natively, without this code.
+     */
+    toggleFullscreen() {
+        const ui = window.app?.ui;
+        const leaving = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+        const method = leaving
+            ? (document.exitFullscreen || document.webkitExitFullscreen)
+            : (document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen);
+        if (!method) {
+            ui?.showToast('Full screen is not supported by this browser', 'error');
+            return;
+        }
+        const target = leaving ? document : document.documentElement;
+        // The Promise wrapper also turns a synchronous throw into a rejection
+        new Promise(resolve => resolve(method.call(target))).catch(() =>
+            ui?.showToast('Full screen was refused by the browser', 'error'));
     }
     
     /**

@@ -463,6 +463,7 @@ The page opens looking straight down at the disk.
 | Drag | Orbit the camera around the centre | Everyone |
 | Scroll | Zoom (camera distance 10–100 u) | Everyone |
 | **D** or **View** | Cycle the display mode | Everyone |
+| **F** or a click on the bottom bar (outside its buttons) | Toggle full screen; **Esc** leaves it | Everyone |
 | **↑** / **↓** | Multiply or divide $\tau$ by 1.5 (0.1–5) | Signed-in, `?admin` |
 | **S** | Sync now, if the adaptive interval has elapsed | Signed-in, `?admin` |
 | **R**, twice within 3 s | Reset the shared terrain | Owner only |
@@ -891,7 +892,7 @@ vertices.
 - `UIManager.updateStatus()` updates the seven indicators at most once per second.
   `updateAdminPanel()` shows the panel with `?admin`, and the controls once signed
   in. `confirmReset()` needs a second **R** within 3 s.
-- `InputControls.onKeyDown()`: **D** for everyone; the other keys need sign-in
+- `InputControls.onKeyDown()`: **D** and **F** (full screen, also a click on the bottom bar via `UIManager.setupEventListeners()`) for everyone; the other keys need sign-in
   and `?admin`. Mouse drag orbits, the wheel zooms, the camera looks at the origin.
 - `LocalStorageManager(key, maxAgeHours)`: JSON wrapper with a format version and
   an age limit (terrain 24 h, biology none). `SimulationTimeTracker`: one key per

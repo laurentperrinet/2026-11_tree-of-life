@@ -474,3 +474,58 @@ test('URL resets are scheduled only after application initialization finishes', 
     await initializing;
     assert.equal(scheduled, true);
 });
+
+test('full screen toggles with the F key and with clicks on the bottom bar', async () => {
+    const calls = [];
+    const toasts = [];
+    let badgeClick;
+    const badge = { addEventListener(event, handler) { if (event === 'click') badgeClick = handler; } };
+    const documentElement = {
+        requestFullscreen() {
+            calls.push('request');
+            doc.fullscreenElement = documentElement;
+            return Promise.resolve();
+        }
+    };
+    const doc = {
+        fullscreenElement: null,
+        documentElement,
+        exitFullscreen() {
+            calls.push('exit');
+            doc.fullscreenElement = null;
+            return Promise.resolve();
+        },
+        addEventListener() {},
+        getElementById: id => id === 'status-badge' ? badge : null
+    };
+    const windowObject = {};
+    const context = vm.createContext({ window: windowObject, document: doc });
+    for (const file of ['controls.js', 'ui.js']) {
+        vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', file), 'utf8'), context);
+    }
+    const { InputControls, UIManager } = vm.runInContext('({ InputControls, UIManager })', context);
+    const controls = new InputControls({ camera: { position: { x: 0, y: 64, z: 0 } } });
+    windowObject.app = { controls, ui: { showToast: message => toasts.push(message) } };
+    new UIManager({}, {}).setupEventListeners({}, {});
+
+    let prevented = 0;
+    const press = (event) => controls.onKeyDown({ key: 'f', target: {}, preventDefault() { prevented++; }, ...event });
+    press({});
+    assert.deepEqual(calls, ['request']);
+    assert.equal(prevented, 1);
+
+    press({ repeat: true });
+    press({ target: { tagName: 'INPUT' } });
+    press({ ctrlKey: true });
+    assert.deepEqual(calls, ['request']);
+
+    badgeClick({ target: { closest: () => ({}) } });
+    assert.deepEqual(calls, ['request']);
+    badgeClick({ target: { closest: () => null } });
+    assert.deepEqual(calls, ['request', 'exit']);
+
+    doc.documentElement.requestFullscreen = () => Promise.reject(new Error('refused'));
+    press({});
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(toasts, ['Full screen was refused by the browser']);
+});

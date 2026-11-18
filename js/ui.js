@@ -295,6 +295,15 @@ class UIManager {
             displayModeButton.addEventListener('click', () => window.app?.controls?.cycleDisplayMode());
         }
 
+        // Clicking the bar itself toggles full screen; its buttons and links keep their own action
+        const statusBadge = document.getElementById('status-badge');
+        if (statusBadge) {
+            statusBadge.addEventListener('click', (event) => {
+                if (event.target.closest('button, a')) return;
+                window.app?.controls?.toggleFullscreen();
+            });
+        }
+
         // Auth button
         const authButton = document.getElementById('auth-button');
         if (authButton) {
