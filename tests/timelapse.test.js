@@ -226,3 +226,47 @@ test('default view is rendered off screen in elevation mode, then the mode is re
     renderer.captureDefaultView({}, {}, 2, 2);
     assert.deepEqual(modes, [], 'no recolouring when the default mode is already shown');
 });
+
+test('stopping waits for the last frame, then follows the video encoding', async () => {
+    const calls = [];
+    let polls = 0;
+    const fetch = async (url, options = {}) => {
+        calls.push(`${options.method || 'GET'} ${url}`);
+        if (url === 'api/timelapse/stop') {
+            return { ok: true, json: async () => ({ video: { state: 'encoding', path: '/r/timelapse.mp4' } }) };
+        }
+        if (url === 'api/timelapse/status') {
+            polls++;
+            const video = polls < 2 ? { state: 'encoding', path: '/r/timelapse.mp4' }
+                : { state: 'done', path: '/r/timelapse.mp4', frames: 342, seconds: 11.4 };
+            return { ok: true, json: async () => ({ video }) };
+        }
+        throw new Error(`unexpected ${url}`);
+    };
+    const { TimelapseRecorder } = loadTimelapse({ fetch, setTimeout: fn => setImmediate(fn) });
+    const recorder = new TimelapseRecorder({});
+    recorder.active = true;
+    let release;
+    recorder.pending = new Promise(resolve => { release = () => { calls.push('frame written'); resolve(); }; });
+    const states = [];
+    recorder.onChange = () => states.push(recorder.video?.state ?? 'stopped');
+    const finishing = recorder.finish();
+    await new Promise(setImmediate);
+    assert.equal(recorder.active, false);
+    assert.deepEqual(calls, [], 'no video request before the last frame is written');
+    release();
+    const video = await finishing;
+    assert.deepEqual(calls, ['frame written', 'POST api/timelapse/stop',
+        'GET api/timelapse/status', 'GET api/timelapse/status']);
+    assert.equal(video.frames, 342);
+    assert.deepEqual(states, ['stopped', 'encoding', 'encoding', 'done']);
+});
+
+test('a failed encoding is reported with the server message', async () => {
+    const fetch = async () => ({
+        ok: true, json: async () => ({ video: { state: 'error', message: 'ffmpeg not found (brew install ffmpeg)' } })
+    });
+    const { TimelapseRecorder } = loadTimelapse({ fetch });
+    const recorder = new TimelapseRecorder({});
+    await assert.rejects(recorder.finish(), /brew install ffmpeg/);
+});

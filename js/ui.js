@@ -179,6 +179,11 @@ class UIManager {
                 text = `${timelapse.active ? 'Recording' : 'Stopped'}: ${timelapse.framesWritten} ` +
                     `frames${last} in ${timelapse.folder} · commit ${timelapse.commit.slice(0, 7)}` +
                     (timelapse.commit.endsWith('-dirty') ? ' (modified)' : '');
+                const video = timelapse.video;
+                if (!timelapse.active && video?.state === 'encoding') text += ' · encoding video…';
+                if (!timelapse.active && video?.state === 'done') {
+                    text += ` · video ${video.path} (${video.frames} frames, ${video.seconds.toFixed(1)} s)`;
+                }
             }
             status.textContent = text;
             status.hidden = text === '';
@@ -187,8 +192,16 @@ class UIManager {
         timelapse.onError = error => this.showToast(`Timelapse stopped: ${error.message}`, 'error', 8000);
         button.addEventListener('click', async () => {
             if (timelapse.active) {
-                timelapse.stop();
-                this.showToast('Timelapse stopped', 'info');
+                // A new recording may start while the video encodes: the server
+                // encodes again afterwards, so the video covers every frame.
+                this.showToast('Timelapse stopped, encoding video…', 'info');
+                try {
+                    const video = await timelapse.finish();
+                    this.showToast(`✓ Video saved: ${video.path}`, 'success', 8000);
+                } catch (error) {
+                    this.showToast(`Video not made: ${error.message}`, 'error', 8000);
+                }
+                refresh();
                 return;
             }
             try {

@@ -556,6 +556,15 @@ python3 tools/timelapse_server.py        # or: npm run timelapse
 # then open http://localhost:8765/?admin in Safari (or any browser)
 ```
 
+**⏹ Stop timelapse** then makes the video: the server runs, in the background,
+
+```bash
+ffmpeg -framerate 30 -i timelapse/%06d.png -pix_fmt yuv420p timelapse.mp4
+```
+
+and the panel shows the video's path, frame count and duration when it is ready
+(one recorded second per video frame, so a day lasts 48 min at 30 frames/s).
+
 - **Why a local server.** Frames stay on the recording computer: at about 1–3 MB
   per frame, a day of recording (86,400 frames) would exceed the Worker's and
   GitHub's limits. Safari blocks requests from the HTTPS page to
@@ -572,7 +581,17 @@ python3 tools/timelapse_server.py        # or: npm run timelapse
   `--out <folder>`. The server numbers the frames: a restart, or a second tab,
   continues after the highest number found instead of overwriting. Each frame is
   written to a temporary file then renamed, so a crash never leaves a truncated
-  PNG under a frame name. Options: `--port` (8765), `--out`, `--worker`.
+  PNG under a frame name. Options: `--port` (8765), `--out`, `--worker`, `--fps`
+  (30).
+- **The video.** `<folder>.mp4` next to the frame folder (`timelapse.mp4` in the
+  repository, ignored by git), replaced at each stop and covering all frames so
+  far. ffmpeg runs with `-y` (overwrite without asking), `-nostdin`,
+  `-start_number` set to the first frame (ffmpeg alone only looks for 0–4) and
+  writes a temporary file renamed at the end. It stops at the first missing
+  number, so deleting a frame in the middle shortens the video. A stop during an
+  encoding queues one more encoding. Without ffmpeg (`brew install ffmpeg`) the
+  frames are kept and the panel reports the error. Closing the page does not
+  encode.
 - **What is captured.** The default view whatever the visitor does: the start-up
   zenith camera and the `elevation` mode, rendered off screen at 1920 × 1080 px
   (`TimelapseRecorder` options `width`, `height`), without the status bar or
@@ -588,8 +607,6 @@ python3 tools/timelapse_server.py        # or: npm run timelapse
   server stopped) stops the recording with a message. The page served locally
   has its own browser storage, hence its own collaborator ID, and GitHub sign-in
   does not work there (the OAuth callback is the Pages URL).
-
-To make a video: `ffmpeg -framerate 30 -i timelapse/%06d.png -pix_fmt yuv420p timelapse.mp4`.
 
 [↑ Contents](#contents)
 
@@ -661,7 +678,7 @@ the mesh changes.
 | `localStorage` | `tree-of-life-collaborator-id` | Random browser ID | Until storage is cleared |
 | `localStorage` | `tree-of-life-simulation-time-v1:<uuid>` | Simulation time of one tab | Summed over all tabs |
 | `sessionStorage` | `github-oauth-token`, `tree-of-life-oauth-state` | GitHub token and OAuth `state` | Until the tab closes |
-| Local folder | `timelapse/000001.png`, … (or `--out`) | Admin timelapse frames, one per second, written by `tools/timelapse_server.py` | On the recording computer, until deleted |
+| Local folder | `timelapse/000001.png`, … (or `--out`) and `timelapse.mp4` | Admin timelapse frames, one per second, and their video, written by `tools/timelapse_server.py` | On the recording computer, until deleted |
 
 Terrain saves from formats `10.0` to `13.0` were made on the polar-ring meshes
 and are ignored. A save that still holds per-vertex vegetation and microbe arrays (the
@@ -745,7 +762,7 @@ quota of an origin.
 | `wrangler.toml` | Worker name, public variables, Durable Object binding `SIMULATION` and migration `v1` |
 | `tests/*.test.js` | Browser modules run in `node:vm` with DOM mocks |
 | `worker/index.test.mjs` | Worker protocol with a mocked Durable Object |
-| `tools/timelapse_server.py` | Local server for the timelapse: serves the page, writes numbered frames, relays `/api/*` to the Worker |
+| `tools/timelapse_server.py` | Local server for the timelapse: serves the page, writes numbered frames, encodes the video with ffmpeg on stop, relays `/api/*` to the Worker |
 | `tools/test_timelapse_server.py` | Its tests (`unittest`, real server on a free port, fake Worker) |
 | `package.json` | Scripts (`test`, `timelapse`, `dev`, `dev:http`, `lint`, `format`) and dev dependencies |
 | `.github/workflows/deploy.yml` | Publishes the repository root to GitHub Pages |
@@ -935,8 +952,8 @@ python3 -m unittest discover -s tools      # timelapse server only; opens local 
 | `tests/collaboration.test.js` | Deltas once per version, mesh mismatch, intervals, countdowns, reset during sync |
 | `tests/auth.test.js` | OAuth `state`, callback, admin view, reset failure handling |
 | `tests/ui.test.js` | Camera, display modes, status bar, simulation time, URL resets |
-| `tests/timelapse.test.js` | PNG `tEXt` chunks and CRC, 1 s cadence, server check, frame upload and errors, off-screen default view |
-| `tools/test_timelapse_server.py` | Frame numbering and atomic writes, static files only (no `secrets/`, `.git/`), Host check, Worker relay (Python, `unittest`) |
+| `tests/timelapse.test.js` | PNG `tEXt` chunks and CRC, 1 s cadence, server check, frame upload and errors, stop then video, off-screen default view |
+| `tools/test_timelapse_server.py` | Frame numbering and atomic writes, ffmpeg command and a real encoding (skipped without ffmpeg), static files only (no `secrets/`, `.git/`), Host check, Worker relay (Python, `unittest`) |
 | `worker/index.test.mjs` | Browser and Worker build the same mesh, migrations, averaging, validation, owner reset, CORS |
 
 Browser scripts are evaluated in `node:vm` contexts with minimal DOM, storage and

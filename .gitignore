@@ -10,3 +10,4 @@ build/
 /.wrangler/
 /secrets
 /timelapse/
+/timelapse.mp4

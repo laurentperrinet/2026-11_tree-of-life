@@ -119,6 +119,9 @@ class TimelapseRecorder {
         this.canvas = null;
         this.onChange = null;
         this.onError = null;
+        this.pending = Promise.resolve();
+        this.video = null;
+        this.pollMs = 2000;
     }
 
     /**
@@ -155,9 +158,38 @@ class TimelapseRecorder {
         this.onChange?.();
     }
 
+    /** Stop capturing (no video); also used when the page closes. */
     stop() {
         this.active = false;
         this.onChange?.();
+    }
+
+    /**
+     * Stop capturing, then have the server encode the frames into a video with
+     * ffmpeg, and follow the encoding until it ends.
+     *
+     * The frame being sent is awaited first, so that it is part of the video.
+     *
+     * Returns:
+     *   The server's final video status: {state: 'done', path, frames, seconds}.
+     */
+    async finish() {
+        this.stop();
+        await this.pending;
+        const response = await fetch(`${this.serverUrl}stop`, { method: 'POST' });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || `video request failed (HTTP ${response.status})`);
+        this.video = result.video;
+        this.onChange?.();
+        while (this.video.state === 'encoding') {
+            await new Promise(resolve => setTimeout(resolve, this.pollMs));
+            const status = await fetch(`${this.serverUrl}status`, { cache: 'no-store' });
+            if (!status.ok) throw new Error(`timelapse server: HTTP ${status.status}`);
+            this.video = (await status.json()).video;
+            this.onChange?.();
+        }
+        if (this.video.state === 'error') throw new Error(this.video.message);
+        return this.video;
     }
 
     async fetchCommit() {
@@ -203,7 +235,7 @@ class TimelapseRecorder {
             return;
         }
         this.busy = true;
-        this.writeFrame(pixels, createdAt).then(name => {
+        this.pending = this.writeFrame(pixels, createdAt).then(name => {
             this.framesWritten++;
             this.lastFile = name;
             this.onChange?.();
