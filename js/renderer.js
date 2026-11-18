@@ -91,7 +91,7 @@ class TerrainRenderer {
         positions.needsUpdate = true;
         this.terrainMesh.geometry.computeVertexNormals();
         this.updateTerrainColors(grid);
-        this.biologyMesh.visible = this.displayMode === 'elevation';
+        this.biologyMesh.visible = this.displayMode === 'elevation' || this.displayMode === 'Tree of life';
         if (this.biologyMesh.visible) this.updateBiologyMesh(biology);
     }
 
@@ -108,7 +108,11 @@ class TerrainRenderer {
         const color = new THREE.Color();
         for (let i = 0; i < biology.active.length; i++) {
             if (!biology.active[i]) continue;
-            this.volcanicColor(biology, i, normals, color);
+            if (this.displayMode === 'Tree of life') {
+                this.lifeMapColor(biology, i, color);
+            } else {
+                this.volcanicColor(biology, i, normals, color);
+            }
             colors.setXYZ(i, color.r, color.g, color.b);
         }
         colors.needsUpdate = true;
@@ -138,7 +142,7 @@ class TerrainRenderer {
                 color.setRGB(0.55, 0.65, 0.7);
             } else if (i >= grid.erodibleCount) {
                 color.setRGB(0, 0, 0);
-            } else if (this.displayMode === 'elevation') {
+            } else if (this.displayMode === 'elevation' || this.displayMode === 'Tree of life') {
                 color.setRGB(0.053, 0.053, 0.055);
             } else if (this.displayMode === 'sand depth') {
                 const depth = (grid.elevation[i] - grid.bedrock[i]) / grid.initialSandDepth;
@@ -154,6 +158,51 @@ class TerrainRenderer {
             colors.setXYZ(i, color.r, color.g, color.b);
         }
         colors.needsUpdate = true;
+    }
+
+    lifeMapColor(biology, i, color) {
+        color.setRGB(0.02, 0.02, 0.025);
+
+        // Plants: green-bronze, intensified near streams (high flow)
+        if (biology.sand[i] && biology.plants[i] > 0) {
+            const plantBase = biology.plants[i];
+            const flowBoost = Math.min(1, biology.flow[i] / 0.02);
+            const plantIntensity = plantBase * (0.5 + 0.5 * flowBoost);
+            const hue = 0.14 + 0.03 * (1 - flowBoost);
+            color.setHSL(hue, Math.min(1, 0.9 * plantIntensity), 0.15 + 0.4 * plantIntensity);
+        }
+
+        // Microbes: red-purple at colony edges (gradient-based edge detection)
+        if (biology.microbeV[i] > 0.02) {
+            const size = biology.size;
+            const x = i % size;
+            const z = Math.floor(i / size);
+            let edgeStrength = 0;
+
+            if (x > 0 && x < size - 1 && z > 0 && z < size - 1) {
+                const v = biology.microbeV[i];
+                const gradients = [
+                    Math.abs(biology.microbeV[i - 1] - v),
+                    Math.abs(biology.microbeV[i + 1] - v),
+                    Math.abs(biology.microbeV[i - size] - v),
+                    Math.abs(biology.microbeV[i + size] - v)
+                ];
+                edgeStrength = Math.max(...gradients);
+            }
+
+            const microbeDensity = Math.min(1, biology.microbeV[i] / 0.3);
+            const edgeDetected = Math.min(1, edgeStrength / 0.08);
+            const microbeIntensity = microbeDensity * (0.3 + 0.7 * edgeDetected);
+
+            const purple = Math.min(1, biology.microbeV[i] / 0.35);
+            const targetR = 0.6 - 0.1 * purple;
+            const targetG = 0.1 - 0.08 * purple;
+            const targetB = 0.15 + 0.3 * purple;
+
+            color.r = color.r + (targetR - color.r) * microbeIntensity;
+            color.g = color.g + (targetG - color.g) * microbeIntensity;
+            color.b = color.b + (targetB - color.b) * microbeIntensity;
+        }
     }
 
     volcanicColor(biology, i, normals, color) {
@@ -233,7 +282,7 @@ class TerrainRenderer {
     }
 
     cycleDisplayMode() {
-        const modes = ['elevation', 'mesh', 'sand depth', 'flux', 'sediment'];
+        const modes = ['elevation', 'Tree of life', 'mesh', 'sand depth', 'flux', 'sediment'];
         this.displayMode = modes[(modes.indexOf(this.displayMode) + 1) % modes.length];
     }
 
