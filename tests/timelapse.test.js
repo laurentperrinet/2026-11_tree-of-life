@@ -181,7 +181,7 @@ test('a server error stops recording with its message', async () => {
     await assert.rejects(recorder.writeFrame('pixels', new Date()), /No space left/);
 });
 
-test('default view is rendered off screen in elevation mode, then the mode is restored', () => {
+test('default view is rendered off screen in habitat mode, then the mode is restored', () => {
     class Vector { set(x, y, z) { Object.assign(this, { x, y, z }); } }
     class Camera {
         constructor(fov, aspect) { this.fov = fov; this.aspect = aspect; this.position = new Vector(); this.up = new Vector(); }
@@ -204,7 +204,7 @@ test('default view is rendered off screen in elevation mode, then the mode is re
         setRenderTarget: target => calls.push(target ? 'target' : 'screen'),
         render: (scene, camera) => {
             calls.push('render');
-            assert.equal(renderer.displayMode, 'elevation');
+            assert.equal(renderer.displayMode, 'habitat');
             assert.deepEqual([camera.position.x, camera.position.y, camera.position.z], [0, 65, 0]);
             assert.deepEqual(camera.target, [0, 0, 0]);
             assert.equal(camera.aspect, 1);
@@ -216,13 +216,13 @@ test('default view is rendered off screen in elevation mode, then the mode is re
     };
     const pixels = renderer.captureDefaultView({}, {}, 2, 2);
     assert.deepEqual(calls, ['target', 'render', 'screen']);
-    assert.deepEqual(modes, ['elevation', 'flux']);
+    assert.deepEqual(modes, ['habitat', 'flux']);
     assert.equal(renderer.displayMode, 'flux');
     assert.deepEqual([renderer.camera.position.x, renderer.camera.position.y], [3, 4], 'visitor camera untouched');
     assert.deepEqual(Array.from(pixels), [0, 0, 255, 255, 0, 0, 255, 255, 255, 0, 0, 255, 255, 0, 0, 255]);
 
     modes.length = 0;
-    renderer.displayMode = 'elevation';
+    renderer.displayMode = 'habitat';
     renderer.captureDefaultView({}, {}, 2, 2);
     assert.deepEqual(modes, [], 'no recolouring when the default mode is already shown');
 });

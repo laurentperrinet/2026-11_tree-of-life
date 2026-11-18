@@ -91,7 +91,7 @@ class TerrainRenderer {
         positions.needsUpdate = true;
         this.terrainMesh.geometry.computeVertexNormals();
         this.updateTerrainColors(grid);
-        this.biologyMesh.visible = this.displayMode === 'elevation' || this.displayMode === 'Tree of life' || this.displayMode === 'streams';
+        this.biologyMesh.visible = this.displayMode === 'habitat' || this.displayMode === 'Tree of life' || this.displayMode === 'streams';
         if (this.biologyMesh.visible) this.updateBiologyMesh(biology);
     }
 
@@ -144,7 +144,7 @@ class TerrainRenderer {
                 color.setRGB(0.55, 0.65, 0.7);
             } else if (i >= grid.erodibleCount) {
                 color.setRGB(0, 0, 0);
-            } else if (this.displayMode === 'elevation' || this.displayMode === 'Tree of life' || this.displayMode === 'streams') {
+            } else if (this.displayMode === 'habitat' || this.displayMode === 'Tree of life' || this.displayMode === 'streams') {
                 color.setRGB(0.053, 0.053, 0.055);
             } else if (this.displayMode === 'sand depth') {
                 const depth = (grid.elevation[i] - grid.bedrock[i]) / grid.initialSandDepth;
@@ -339,7 +339,7 @@ class TerrainRenderer {
     }
 
     cycleDisplayMode() {
-        const modes = ['elevation', 'Tree of life', 'streams', 'mesh', 'sand depth', 'flux', 'sediment'];
+        const modes = ['habitat', 'Tree of life', 'streams', 'mesh', 'sand depth', 'flux', 'sediment'];
         this.displayMode = modes[(modes.indexOf(this.displayMode) + 1) % modes.length];
     }
 
@@ -348,7 +348,7 @@ class TerrainRenderer {
     }
 
     /**
-     * Render the default view (zenith camera, `elevation` mode) off screen, whatever
+     * Render the default view (zenith camera, `habitat` mode) off screen, whatever
      * the visitor's camera and display mode, and return its pixels.
      *
      * The image size is fixed rather than the window's, so that timelapse frames
@@ -416,7 +416,7 @@ class TerrainRenderer {
     }
 }
 
-TerrainRenderer.DEFAULT_DISPLAY_MODE = 'elevation';
+TerrainRenderer.DEFAULT_DISPLAY_MODE = 'habitat';
 
 // Camera of the page at start-up and of timelapse frames: straight down at the disk.
 TerrainRenderer.placeDefaultCamera = camera => {

@@ -62,7 +62,7 @@ leave the browser**. Only the elevation field is shared.
 
 1. Open <https://laurentperrinet.github.io/2026-11_tree-of-life/>.
 2. Drag to orbit, scroll to zoom.
-3. Press **D** or click **View** to cycle through `elevation`, `mesh`,
+3. Press **D** or click **View** to cycle through `habitat`, `mesh`,
    `sand depth`, `flux` and `sediment`.
 4. Click **❔** in the status bar: it explains, in plain words, each indicator
    and how your screen shares the sand with other visitors.
@@ -478,7 +478,7 @@ console.
 
 | Mode | What is shown |
 | --- | --- |
-| `elevation` (default) | Dark bed with the biology overlay: yellow-green vegetation and ochre-to-purple microbes |
+| `habitat` (default) | Dark bed with the biology overlay: yellow-green vegetation and ochre-to-purple microbes |
 | `mesh` | Wireframe of the triangular mesh with the parcels, without biology |
 | `sand depth` | Sand thickness in a reversed cmocean *deep* map: dark for bare rock, mid-palette for the initial layer $D_0$, lightest at $2D_0$ or more (`SAND_DEPTH_DISPLAY_MAX`); dimmed lighting |
 | `flux` | Water flux $\Phi_i$, square-root scaled by its current maximum |
@@ -594,7 +594,7 @@ and the panel shows the video's path, frame count and duration when it is ready
   frames are kept and the panel reports the error. Closing the page does not
   encode.
 - **What is captured.** The default view whatever the visitor does: the start-up
-  zenith camera and the `elevation` mode, rendered off screen at 1920 × 1080 px
+  zenith camera and the `habitat` mode, rendered off screen at 1920 × 1080 px
   (`TimelapseRecorder` options `width`, `height`), without the status bar or
   panels.
 - **Metadata.** Each PNG carries three `tEXt` chunks: `Creation Time` (ISO 8601,
@@ -857,7 +857,7 @@ vertices.
 | --- | --- |
 | Scene, top-down camera, lights | `constructor(canvas)`, `onWindowResize()` (keeps the disk in view on portrait screens) |
 | Terrain geometry and colours per display mode | `createTerrainMesh()`, `updateTerrainMesh()`, `updateTerrainColors()` |
-| Biology overlay (`elevation` mode only) | `createBiologyMesh()`, `updateBiologyMesh()`, `volcanicColor()` |
+| Biology overlay (`habitat`, `Tree of life`, and `streams` modes) | `createBiologyMesh()`, `updateBiologyMesh()`, `volcanicColor()`, `lifeMapColor()`, `streamsColor()` |
 | Sand-depth colour map | `deepColor(t)`, `TerrainRenderer.DEEP`, `SAND_DEPTH_DISPLAY_MAX` |
 | Instanced parcels with a burst shader patch | `updateParticles(physics)` |
 | Mode order | `cycleDisplayMode()` |
@@ -1120,7 +1120,7 @@ jittered mesh, nominal step of 0.04 sim s, averages over 40 calls:
 
 At this step, physics and biology take about **75 ms per frame**. Rendering adds the upload and
 `computeVertexNormals()` of the 50,069-vertex terrain, of the 65,536-vertex biology
-overlay in `elevation` mode, and 1,500 `sample()` calls to place the parcels.
+overlay in `habitat`, `Tree of life`, and `streams` modes, and 1,500 `sample()` calls to place the parcels.
 
 Where the time goes:
 
@@ -1171,7 +1171,7 @@ logs a message there.
 | "GitHub sign-in failed: invalid OAuth state" | The callback opened in another tab, or session storage was cleared; sign in again from the same tab |
 | "GitHub token exchange failed (503)" | The Worker lacks `GITHUB_CLIENT_ID` or the secret `GITHUB_CLIENT_SECRET` |
 | "✗ Reset failed" | 401: expired token, sign in again; 403: not `OWNER_GITHUB_ID`; 503: `OWNER_GITHUB_ID` not configured. Local state is left unchanged |
-| Low frame rate | See [Performance](#performance); every mode other than `elevation` skips the biology overlay |
+| Low frame rate | See [Performance](#performance); `mesh`, `sand depth`, `flux` and `sediment` modes skip the biology overlay |
 | Simulation time (🕰️) grows more slowly than 0.5 s per second | The device renders fewer than 10 frames per second and hits the per-frame cap, or the tab was in the background |
 | `npm run lint`: "No ESLint configuration found" | No configuration is committed yet; add `eslint.config.js` first |
 | VS Code starts a Python interpreter | JavaScript-only project: disable the Python extensions for this workspace (`.vscode/` is not tracked) |

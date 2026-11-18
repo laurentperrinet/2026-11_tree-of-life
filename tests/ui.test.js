@@ -74,9 +74,9 @@ test('mesh view shows the wireframe and particles without biology', () => {
         elevation: [0.3], bedrock: [0], initialSandDepth: 0.3, erodibleCount: 1,
         waterDepth: [0], velocityX: [0], velocityY: [0], sediment: [0]
     };
-    renderer.displayMode = 'elevation';
+    renderer.displayMode = 'habitat';
     renderer.cycleDisplayMode();
-    assert.equal(renderer.displayMode, 'mesh');
+    assert.equal(renderer.displayMode, 'Tree of life');
     renderer.updateTerrainMesh(grid, {});
     assert.equal(material.wireframe, true);
     assert.equal(renderer.biologyMesh.visible, false);
