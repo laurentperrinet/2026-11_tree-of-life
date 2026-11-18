@@ -57,7 +57,7 @@ class PhysicsEngine {
 
     reinject(particle, fraction = Math.random()) {
         const angle = 2 * Math.PI * fraction;
-        // Three mesh spacings inside the edge: well within the erodible spiral.
+        // Three mesh spacings inside the edge: well within the erodible points.
         const radius = this.arcBoundary(angle).radius - 3 * this.grid.spacing;
         particle.x = radius * Math.cos(angle);
         particle.z = -radius * Math.sin(angle);

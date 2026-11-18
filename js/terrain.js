@@ -1,29 +1,5 @@
 const LEGACY_TERRAIN_MESH_SIGNATURE = JSON.stringify(['disk-square-polar-v2', 25, 30, 125, 0.2]);
 const CHANNEL_SAND_FREE_PROFILE = 'channel-sand-free-v1';
-// Same expression as in `worker/mesh.mjs`, so that both round identically.
-const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
-
-/**
- * Integer avalanche hash (lowbias32), mirrored from `worker/mesh.mjs`.
- *
- * Only 32-bit integer operations are used, so the browser and the Worker
- * obtain bit-identical vertex positions on every JavaScript engine.
- *
- * Args:
- *   x: integer key (any 32-bit value).
- *
- * Returns:
- *   An unsigned 32-bit integer.
- */
-function hashUint32(x) {
-    x ^= x >>> 16;
-    x = Math.imul(x, 0x7feb352d);
-    x ^= x >>> 15;
-    x = Math.imul(x, 0x846ca68b);
-    x ^= x >>> 16;
-    return x >>> 0;
-}
-
 /**
  * Delaunay triangulation of a planar point set (incremental, Lawson flips).
  *
@@ -150,18 +126,19 @@ function delaunayTriangles(xs, zs) {
 }
 
 /**
- * Circular erodible bed meshed by a jittered Vogel (sunflower) spiral, with a
- * fixed square surround.
+ * Circular erodible bed meshed by a Delaunay triangulation of a Poisson-disk
+ * (blue-noise) point set, with a fixed square surround.
+ *
+ * The points come from `js/mesh-points.js` (`globalThis.MESH_POINTS`), generated
+ * once by `tools/generate-mesh-points.mjs` and also read by the Worker.
  */
 class TerrainGrid {
     constructor() {
         this.radius = 25;
         this.halfSize = 30;
+        // Spacing of the boundary polygon (m); the Poisson points have about
+        // the same mean spacing (one point per spacing^2).
         this.spacing = 0.2;
-        // Gap between the last spiral point and the disk edge, as a fraction
-        // of the spacing: it keeps every boundary edge a Gabriel edge, hence in
-        // the Delaunay triangulation, with a minimum triangle angle of 29 degrees.
-        this.spiralMargin = 0.75;
         this.sinkRadius = 0.8;
         // Radial slope of the funnel cone that drains the bed towards the channel.
         this.slope = 0.11;
@@ -173,19 +150,16 @@ class TerrainGrid {
         this.peripheralWidth = 4;
         this.initialSandDepth = 0.3;
         this.channelFlare = 0.12;
-        // Vertex jitter radius as a fraction of the spacing: it blurs the
-        // spiral parastichies so that no direction is singled out locally.
-        this.jitter = 0.1;
-        this.jitterSeed = 2026;
         this.vertices = [];
 
-        // Interior: the Vogel spiral, mirrored from `worker/mesh.mjs`.
-        const maxRadius = this.radius - this.spiralMargin * this.spacing;
-        this.erodibleCount = Math.floor(Math.PI * (maxRadius / this.spacing) ** 2) + 1;
-        for (let n = 0; n < this.erodibleCount; n++) {
-            const point = this.spiralPoint(n);
-            const { dx, dz } = this.jitterOffset(n);
-            this.vertices.push({ x: point.x + dx, z: point.z + dz });
+        // Interior: the Poisson-disk points, in the order shared with the Worker.
+        this.meshPoints = globalThis.MESH_POINTS;
+        if (!this.meshPoints || this.meshPoints.params.radius !== this.radius) {
+            throw new Error('js/mesh-points.js is missing or was generated for another radius');
+        }
+        this.erodibleCount = this.meshPoints.count;
+        for (let i = 0; i < this.erodibleCount; i++) {
+            this.vertices.push({ x: this.meshPoints.x[i], z: this.meshPoints.z[i] });
         }
         // Boundary polygon on the circle; a multiple of 8 puts vertices on the
         // axes and diagonals, so the square corners are projections of them.
@@ -265,52 +239,6 @@ class TerrainGrid {
         });
         this.particles = [];
         this.initialize();
-    }
-
-    /**
-     * Unjittered position of point n of the Vogel (sunflower) spiral.
-     *
-     * Point n lies at radius c sqrt(n) and angle n times the golden angle, with
-     * c = spacing / sqrt(pi) so that each point owns an area spacing^2. The
-     * golden angle is the most irrational rotation: no two points share a
-     * direction, so the packing has no preferred axis, unlike polar rings.
-     *
-     * Args:
-     *   n: spiral index (vertex index of the disk interior).
-     *
-     * Returns:
-     *   The position `{ x, z }` (m).
-     */
-    spiralPoint(n) {
-        const radius = this.spacing / Math.sqrt(Math.PI) * Math.sqrt(n);
-        const angle = (n * GOLDEN_ANGLE) % (2 * Math.PI);
-        return { x: radius * Math.cos(angle), z: -radius * Math.sin(angle) };
-    }
-
-    /**
-     * Deterministic isotropic displacement of one spiral vertex.
-     *
-     * Uniform in a disk, drawn by rejection from a square: unlike a square
-     * jitter it has no preferred cardinal direction, and it avoids
-     * trigonometry, whose last bit may differ between engines.
-     *
-     * Args:
-     *   index: vertex index; the same index always yields the same offset.
-     *
-     * Returns:
-     *   The offset `{ dx, dz }` (m), of length at most jitter * spacing.
-     */
-    jitterOffset(index) {
-        const amplitude = this.jitter * this.spacing;
-        let state = hashUint32(Math.imul(index, 0x9e3779b9) ^ this.jitterSeed);
-        for (let attempt = 0; amplitude > 0 && attempt < 64; attempt++) {
-            state = hashUint32(state);
-            const u = 2 * state / 4294967296 - 1;
-            state = hashUint32(state);
-            const v = 2 * state / 4294967296 - 1;
-            if (u * u + v * v <= 1) return { dx: amplitude * u, dz: amplitude * v };
-        }
-        return { dx: 0, dz: 0 };
     }
 
     bedrockHeight(x, z) {
@@ -410,16 +338,18 @@ class TerrainGrid {
 
     meshSignature() {
         return JSON.stringify([
-            'disk-square-vogel-v1', this.radius, this.halfSize, this.spacing, this.spiralMargin,
-            CHANNEL_SAND_FREE_PROFILE, 'jitter-v1', this.jitter, this.jitterSeed,
+            'disk-square-poisson-v1', this.radius, this.halfSize, this.spacing,
+            this.meshPoints.params.minDistance, this.meshPoints.params.edgeMargin,
+            this.meshPoints.params.seed, this.meshPoints.count, this.meshPoints.checksum,
+            CHANNEL_SAND_FREE_PROFILE,
             'slopes-v1', this.slope, this.channelSlope
         ]);
     }
 
     toJSON() {
         return {
-            version: '14.0',
-            topology: 'disk-square-vogel-v1',
+            version: '15.0',
+            topology: 'disk-square-poisson-v1',
             meshSignature: this.meshSignature(),
             timestamp: new Date().toISOString(),
             elevation: Array.from(this.elevation),
@@ -440,10 +370,11 @@ class TerrainGrid {
                 (p.burstProgress === undefined ||
                     (Number.isFinite(p.burstProgress) && p.burstProgress >= 0 && p.burstProgress < 1)) &&
                 this.locate(p.x, p.z));
-        // Saves made on the polar-ring meshes (versions 10.0 to 13.0) are not
-        // migrated: their vertices do not correspond to those of the spiral.
-        if (json.version !== '14.0' ||
-            json.topology !== 'disk-square-vogel-v1' ||
+        // Saves made on earlier meshes (polar rings, versions 10.0 to 13.0; Vogel
+        // spiral, 14.0) are not migrated: their vertices differ from the
+        // Poisson-disk points.
+        if (json.version !== '15.0' ||
+            json.topology !== 'disk-square-poisson-v1' ||
             json.meshSignature !== this.meshSignature() ||
             !validParticles ||
             arrays.some(a => !Array.isArray(a) || a.length !== this.elevation.length || !a.every(Number.isFinite))) {

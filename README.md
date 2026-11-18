@@ -115,28 +115,31 @@ The sink lies at $z = +L$, which appears at the bottom of the screen.
 
 #### Terrain
 
-The bed is a triangular mesh built on a Vogel (sunflower) spiral, as in
-phyllotaxis. The interior of the disk of radius $R$ holds the points
+The bed is a Delaunay triangulation of a Poisson-disk (blue-noise) point set. The
+interior of the disk of radius $R$ holds $N$ points $\mathbf{p}_n$ drawn by
+Bridson's algorithm under the two constraints
 
-$$r_n = c\sqrt{n}, \qquad \theta_n = n\,\gamma, \qquad
-c = \frac{\Delta s}{\sqrt{\pi}}, \qquad \gamma = \pi\,(3 - \sqrt{5}) \approx 137.5^\circ,$$
+$$\lVert \mathbf{p}_n - \mathbf{p}_{n'} \rVert \ge d_\text{min} \quad (n \ne n'), \qquad
+\lVert \mathbf{p}_n \rVert \le R - e,$$
 
-for $n = 0, \dots, N - 1$, with $N = \lfloor \pi\,((R - m\,\Delta s)/\Delta s)^2 \rfloor + 1$.
-Here $\Delta s$ is the mean vertex spacing (each point owns an area $\Delta s^2$),
-$\gamma$ the golden angle and $m$ the margin, in spacings, between the last point
-and the disk edge. The golden angle is the most irrational rotation: no two points
-share a direction, so the packing has no preferred axis. Polar rings, used before,
-aligned their vertices along the cardinal axes and the diagonals, and the flow
-followed these rays. Every spiral point is then displaced by a deterministic
-offset drawn uniformly in a disk of radius $j\,\Delta s$, which blurs the
-spiral's own parastichies. The offset comes from an integer hash of the vertex
-index and the seed, so the browser and the Worker build bit-identical meshes. The
+where $d_\text{min}$ is the minimum distance between points and $e$ the margin kept
+free inside the disk edge. Starting from the centre, $k$ candidates are drawn
+uniformly in the annulus $[d_\text{min}, 2d_\text{min}]$ around an active point
+until one fits; the sample is then close to maximal, with about one point per
+$\Delta s^2$, where $\Delta s$ is the mean vertex spacing. Such a sample is
+random but evenly spread: it has no preferred direction and no long-range order.
+Earlier meshes had both. Polar rings aligned their vertices along the axes and the
+diagonals. A Vogel (sunflower) spiral removed these directions, but its lattice
+defects lined up on concentric circles where its parastichies switch from one
+Fibonacci family to the next. The points are generated once, with a fixed seed, by
+`tools/generate-mesh-points.mjs` and stored in `js/mesh-points.js` as integer
+micrometres, so that the browser and the Worker read bit-identical positions. The
 edge of the disk is a polygon of $N_e = 8\,\mathrm{round}(2\pi R / 8\Delta s) = 784$
-vertices on the circle, not jittered. The browser triangulates the spiral and the
-polygon by Delaunay (incremental insertion with Lawson flips). The margin $m$ keeps
-every polygon edge a Gabriel edge, hence in the triangulation, and gives a minimum
-angle of 29°. The polygon is projected radially onto a square of half-side $L$ to
-form a fixed surround. Each vertex $i$ carries an elevation
+vertices on the circle. The margin $e$ keeps every polygon edge a Gabriel edge,
+hence in the triangulation (incremental insertion with Lawson flips, in the
+browser); the smallest triangle angle is 25.6°. The polygon is projected radially
+onto a square of half-side $L$ to form a fixed surround. Each vertex $i$ carries an
+elevation
 
 $$\eta_i = \beta_i + s_i, \qquad s_i \ge 0,$$
 
@@ -170,7 +173,7 @@ where $D_0$ is the initial sand depth and $\phi_i \in [0, 1]$ the sand factor. T
 channel bed ($\phi = 0$) starts as bare bedrock. Afterwards it behaves like the
 rest of the bed: water deposits and re-erodes sand there, avalanches from the
 banks reach it, and evaporating parcels drop their load on it. Only the
-48,501 spiral vertices strictly inside the polygon edge are erodible. The polygon and
+46,795 Poisson-disk vertices strictly inside the polygon edge are erodible. The polygon and
 the square surround can receive sediment from evaporating parcels, but they can
 never be eroded.
 
@@ -344,12 +347,13 @@ Values are the defaults in the code. The terrain parameters are duplicated in
 | --- | --- | --- | --- |
 | $R$ | `radius` | 25 u | Radius of the erodible disk |
 | $L$ | `halfSize` | 30 u | Half-side of the square surround |
-| $\Delta s$ | `spacing` (`MESH_SPACING`) | 0.2 u | Mean vertex spacing; each spiral point owns $\Delta s^2$ |
-| $\gamma$ | `GOLDEN_ANGLE` | $\pi(3 - \sqrt5)$ ≈ 2.400 rad (137.5°) | Rotation between consecutive spiral points |
-| $m$ | `spiralMargin` (`MESH_SPIRAL_MARGIN`) | 0.75 | Gap between the spiral and the edge, in units of $\Delta s$ (0.15 u) |
+| $\Delta s$ | `spacing` (`MESH_SPACING`) | 0.2 u | Spacing of the edge polygon; about one interior point per $\Delta s^2$ |
+| $d_\text{min}$ | `MIN_DISTANCE` (`params.minDistance`) | 0.16 u | Minimum distance between interior points |
+| $e$ | `EDGE_MARGIN` (`params.edgeMargin`) | 0.15 u | Margin kept free inside the disk edge |
+| $k$ | `CANDIDATES` (`params.candidates`) | 30 | Candidates tried around an active point |
+| — | `SEED` (`params.seed`) | 2026 | Seed of the point sample |
+| $N$ | `erodibleCount` (`MESH_POINTS.count`) | 46,795 | Interior (erodible) points |
 | $N_e$ | `sectors` | 784 | Vertices of the edge polygon |
-| $j$ | `jitter` (`MESH_JITTER`) | 0.1 | Jitter radius as a fraction of $\Delta s$ (0.02 u) |
-| — | `jitterSeed` (`MESH_JITTER_SEED`) | 2026 | Seed of the deterministic jitter field |
 | $S$ | `slope` (`MESH_SLOPE`) | 0.11 | Radial slope of the funnel cone |
 | $S_c$ | `channelSlope` (`MESH_CHANNEL_SLOPE`) | 0.09 | Descent of the outlet channel axis |
 | $S_\text{out}$ | `surroundSlope` | 0.3 | Slope of the surround beyond $R$ |
@@ -361,12 +365,15 @@ Values are the defaults in the code. The terrain parameters are duplicated in
 | $\beta_i$ | `bedrock` | from $c$ and $\beta$ above | Non-erodible floor |
 | $\eta_i$ | `elevation` | $\beta_i + D_0\phi_i$ | Bed elevation (the shared field) |
 | $\phi_i$ | `sandDepthFactor()` | 0–1 | Initial sand factor; 0 on the channel bed |
-| $A_i$ | `vertexArea` | ≈ 0.040 u² (0.020–0.069) | Lumped vertex area |
+| $A_i$ | `vertexArea` | ≈ 0.042 u² (0.017–0.083) | Lumped vertex area |
 | — | `binSize` | 1 u | Spatial hash cell for point location |
 
-The mesh has 50,069 vertices (48,501 erodible), 99,352 triangles and 149,420
-edges, with 784 vertices on the edge polygon. Building it takes about 0.45 s in
-Node.js on an Apple M3 Ultra, 0.06 s of which for the triangulation.
+The constants $d_\text{min}$, $e$, $k$ and the seed live in
+`tools/generate-mesh-points.mjs` and are copied into `MESH_POINTS.params`. The mesh
+has 48,363 vertices (46,795 erodible), 95,940 triangles and 144,302 edges, with 784
+vertices on the edge polygon. Building it takes about 0.3 s in Node.js on an Apple
+M3 Ultra (no sampling at run time); the share of vertices without six neighbours
+is 49–55 % at every radius.
 
 **Water and sediment:** `PhysicsEngine` in `js/physics.js`.
 
@@ -658,10 +665,11 @@ outside it. It is **not** a hard quota: configure Cloudflare-side rate limiting
 before relying on a ceiling.
 
 **Mesh versioning.** Terrain saves and Worker state carry a mesh signature:
-`disk-square-vogel-v1`, $R$, $L$, $\Delta s$, $m$, `channel-sand-free-v1`,
-`jitter-v1`, $j$, the seed, `slopes-v1`, $S$ and $S_c$. States and saves from the earlier polar-ring meshes
-(`disk-square-polar-v2`) are not migrated, because their vertices do not
-correspond to those of the spiral: any mismatch resets the shared terrain and
+`disk-square-poisson-v1`, $R$, $L$, $\Delta s$, $d_\text{min}$, $e$, the seed, $N$, a
+checksum of `js/mesh-points.js`, `channel-sand-free-v1`, `slopes-v1`, $S$ and $S_c$.
+States and saves from the earlier meshes (`disk-square-polar-v2`,
+`disk-square-vogel-v1`) are not migrated, because their vertices do not
+correspond to the Poisson-disk points: any mismatch resets the shared terrain and
 discards pending contributions. Deploy the Worker and the site together whenever
 the mesh changes.
 
@@ -674,7 +682,7 @@ the mesh changes.
 | Store | Key | Content | Lifetime |
 | --- | --- | --- | --- |
 | Durable Object | `state` | Shared elevation, bedrock, version, active IDs, pending sum of deltas | Permanent |
-| `localStorage` | `tree-of-life-terrain-disk-v12` | Elevation, water, sediment and particles (format `14.0`); saved when a new shared version arrives and after a reset | Ignored after 24 h |
+| `localStorage` | `tree-of-life-terrain-disk-v12` | Elevation, water, sediment and particles (format `15.0`); saved when a new shared version arrives and after a reset | Ignored after 24 h |
 | `localStorage` | `tree-of-life-local-biology-v2` | Plants, inhibitor, $U$, $V$, quantised to 16 bits | Saved every 5 s and on exit |
 | `localStorage` | `tree-of-life-collaborator-id` | Random browser ID | Until storage is cleared |
 | `localStorage` | `tree-of-life-simulation-time-v1:<uuid>` | Simulation time of one tab | Summed over all tabs |
@@ -713,11 +721,14 @@ quota of an origin.
 - **Particles rather than a grid solver.** Parcels on a triangulated bed are
   robust, conserve sand exactly, and show the flow directly. The price is
   realism: there is no water depth equation, and pressure is a soft repulsion.
-- **Spiral mesh.** Polar rings, even with a half-sector shift and a jitter, kept
-  vertices aligned along the axes and diagonals, and the flow followed these rays.
-  The Vogel spiral, with its golden-angle rotation, has no preferred direction
-  (2.2 % of edges within 1° of an axis, as for an isotropic mesh, against 6 % for
-  the rings), at the cost of a Delaunay triangulation in the browser.
+- **Poisson-disk mesh.** Polar rings, even with a half-sector shift and a jitter,
+  kept vertices aligned along the axes and diagonals (6 % of edges within 1° of an
+  axis), and the flow followed these rays. A Vogel spiral removed the directions
+  (2.2 %, as for an isotropic mesh) but concentrated its lattice defects on
+  concentric circles (0 to 56 % of vertices without six neighbours depending on the
+  radius). Poisson-disk points have neither (2.2 %, 49–55 % at every radius). They
+  are precomputed, because sampling them takes about 0.3 s; the browser computes
+  only the Delaunay triangulation.
 - **Share elevation only.** Elevation is the slow, meaningful variable. Averaging
   it is simple and bounded. Water and biology are fast, local and decorative.
 - **Request budget.** The interval grows with the number of active browsers, to
@@ -735,6 +746,7 @@ quota of an origin.
 | 2026-11-17 | Energy convergence replaced by transit time and particle flow; bottom status bar; public display modes |
 | 2026-11-17 | Sand-free outlet channel, jittered mesh, next-merge indicator; legacy grid and GitHub-sync code removed; documentation merged into this README |
 | 2026-11-17 | Vogel-spiral mesh with golden-angle rotation and Delaunay triangulation replaces the polar rings; shared terrain and local saves restart |
+| 2026-11-18 | Precomputed Poisson-disk points replace the Vogel spiral, whose defects formed concentric rings; shared terrain and local saves restart |
 
 [↑ Contents](#contents)
 
@@ -748,7 +760,8 @@ quota of an origin.
 | `status.html` | Self-contained sharing status page (inline CSS and script, no library): reads `GET /api/status` once a minute |
 | `css/style.css` | Full-screen dark layout, status bar, dialogues, toasts, spinner |
 | `js/local-storage.js` | `LocalStorageManager`, `SimulationTimeTracker`, `SessionStorageManager` |
-| `js/terrain.js` | `TerrainGrid`: spiral mesh, Delaunay triangulation, jitter, bedrock, sand profile, point location, save format |
+| `js/mesh-points.js` | Generated Poisson-disk points (`globalThis.MESH_POINTS`), shared with the Worker; do not edit |
+| `js/terrain.js` | `TerrainGrid`: Poisson-disk mesh, Delaunay triangulation, bedrock, sand profile, point location, save format |
 | `js/physics.js` | `PhysicsEngine`: parcels, collisions, sediment exchange, avalanches, recycling |
 | `js/biology.js` | `BiologyGrid`: flow memory, vegetation, Gray–Scott microbes, compact save |
 | `js/renderer.js` | `TerrainRenderer`: Three.js meshes, display modes, instanced parcels |
@@ -763,6 +776,7 @@ quota of an origin.
 | `wrangler.toml` | Worker name, public variables, Durable Object binding `SIMULATION` and migration `v1` |
 | `tests/*.test.js` | Browser modules run in `node:vm` with DOM mocks |
 | `worker/index.test.mjs` | Worker protocol with a mocked Durable Object |
+| `tools/generate-mesh-points.mjs` | Generates `js/mesh-points.js` (Bridson sampling, fixed seed) |
 | `tools/timelapse_server.py` | Local server for the timelapse: serves the page, writes numbered frames, encodes the video with ffmpeg on stop, relays `/api/*` to the Worker |
 | `tools/test_timelapse_server.py` | Its tests (`unittest`, real server on a free port, fake Worker) |
 | `package.json` | Scripts (`test`, `timelapse`, `dev`, `dev:http`, `lint`, `format`) and dev dependencies |
@@ -805,9 +819,7 @@ numbers are omitted on purpose because they drift; search for the method name.
 
 | Task | Method or field |
 | --- | --- |
-| Build spiral, edge polygon, triangles, square surround | `constructor()` |
-| Spiral point $n$ before the jitter ($c$, $\gamma$) | `spiralPoint(n)` |
-| Jitter the spiral vertices ($j$, seed) | `jitterOffset(index)` with the module function `hashUint32` |
+| Read the points, build edge polygon, triangles, square surround | `constructor()`, `meshPoints` |
 | Delaunay triangulation (Lawson flips, convexity guard) | module function `delaunayTriangles(xs, zs)` |
 | Bedrock $\beta$: cone, peripheral band, channel | `bedrockHeight(x, z)` |
 | Sand factor $\phi$ | `sandDepthFactor(x, z)`, `sandDepthFactorAt(i)` |
@@ -818,7 +830,7 @@ numbers are omitted on purpose because they drift; search for the method name.
 | Mesh signature, save and load | `meshSignature()`, `toJSON()`, `fromJSON(json)` |
 | Former per-vertex microbes (read by `importLegacy()`) | `seedMicrobes()` |
 
-`erodibleCount` is the number of spiral points and the index of the first
+`erodibleCount` is the number of Poisson-disk points and the index of the first
 edge-polygon vertex; vertices below it are erodible. `outerRing` lists the polygon
 vertices.
 
@@ -949,7 +961,7 @@ python3 -m unittest discover -s tools      # timelapse server only; opens local 
 
 | File | Covers |
 | --- | --- |
-| `tests/terrain-physics.test.js` | Mesh geometry and jitter, bedrock and channel, sand conservation, avalanches, recycling, save migrations, biology, colours (slow) |
+| `tests/terrain-physics.test.js` | Mesh geometry, minimum distance and evenly spread defects, bedrock and channel, sand conservation, avalanches, recycling, save migrations, biology, colours (slow) |
 | `tests/collaboration.test.js` | Deltas once per version, mesh mismatch, intervals, countdowns, reset during sync |
 | `tests/auth.test.js` | OAuth `state`, callback, admin view, reset failure handling |
 | `tests/ui.test.js` | Camera, display modes, status bar, simulation time, URL resets |
@@ -986,23 +998,26 @@ initialize the same higher-resolution terrain* checks it.
 
 1. Change the constant in **both** files (`this.radius` ↔ `MESH_RADIUS`, etc.).
 2. Change the **mesh signature** in both files (`meshSignature()` and
-   `MESH_SIGNATURE`). Add a tag (such as `'jitter-v1'`) when the geometry or
-   profile changes without a dimension change.
+   `MESH_SIGNATURE`). Add a tag (such as `'slopes-v1'`) when the geometry or
+   profile changes without a dimension change. The point set needs no tag: its
+   parameters and checksum are part of the signature.
 3. Decide whether existing terrains are **migrated** or **reset**:
-   - Browser: `TerrainGrid.fromJSON()` accepts only format `14.0` with the
+   - Browser: `TerrainGrid.fromJSON()` accepts only format `15.0` with the
      current signature. Bump `toJSON().version` and add a conversion if old saves
      must survive.
    - Worker: `Simulation.loadState()` resets on any signature or schema mismatch.
      Bump `STATE_SCHEMA_VERSION` and add a migration if sand must survive.
-4. Keep randomness deterministic and integer-based (`hashUint32`): trigonometry
-   or `Math.random()` would make the browser and the Worker disagree.
+4. To change the interior points (radius, $d_\text{min}$, $e$, $k$, seed), edit the
+   constants of `tools/generate-mesh-points.mjs` and run
+   `node tools/generate-mesh-points.mjs`; it rewrites `js/mesh-points.js`
+   atomically, and two runs give identical files. Never edit the generated file.
 5. Deploy the Worker and the site together (see [Deployment](#deployment)).
 
 ### Save formats
 
 | Data | Writer | Format | Compatibility |
 | --- | --- | --- | --- |
-| Local terrain | `TerrainGrid.toJSON()` | `version: '14.0'`, `topology`, `meshSignature`, arrays, particles | Reads `14.0` only; 500 or 1,000 saved parcels are topped up to 1,500 |
+| Local terrain | `TerrainGrid.toJSON()` | `version: '15.0'`, `topology`, `meshSignature`, arrays, particles | Reads `15.0` only; 500 or 1,000 saved parcels are topped up to 1,500 |
 | Local biology | `BiologyGrid.toJSON()` | `version: 1`, `size: 256`, base64 of four 16-bit fields | Exact match only |
 | Store wrapper | `LocalStorageManager.save()` | `{ version: '1.0', savedAt, data }` | Version must match; terrain expires after 24 h |
 | Shared state | `createState()` in the Worker | `schemaVersion: 4`, `meshSignature`, float64 arrays, contributions | Resets any other schema or signature |
@@ -1012,8 +1027,8 @@ the bedrock, erodes the surround, adds sand to the channel, or holds non-finite
 values or invalid particles.
 
 **Randomness.** Parcel creation, reinjection angles and burst times use
-`Math.random()` without a seed, so two runs never match. The mesh jitter and the
-microbe seed patches are deterministic hashes. Tests therefore check invariants
+`Math.random()` without a seed, so two runs never match. The mesh points (seed
+2026) and the microbe seed patches are deterministic. Tests therefore check invariants
 and statistics, not exact trajectories.
 
 [↑ Contents](#contents)
@@ -1119,7 +1134,7 @@ jittered mesh, nominal step of 0.04 sim s, averages over 40 calls:
 | `new BiologyGrid()` | 90 ms | once |
 
 At this step, physics and biology take about **75 ms per frame**. Rendering adds the upload and
-`computeVertexNormals()` of the 50,069-vertex terrain, of the 65,536-vertex biology
+`computeVertexNormals()` of the 48,363-vertex terrain, of the 65,536-vertex biology
 overlay in `habitat`, `Tree of life`, and `streams` modes, and 1,500 `sample()` calls to place the parcels.
 
 Where the time goes:
@@ -1214,7 +1229,7 @@ Status on 2026-11-17.
 
 **Done**
 
-- [x] Vogel-spiral Delaunay mesh with square surround and deterministic jitter;
+- [x] Poisson-disk Delaunay mesh with square surround, precomputed points;
   browser and Worker build identical meshes
 - [x] Inverted-cone bedrock, peripheral drainage band, flared outlet channel bare at start
 - [x] Lagrangian parcels with gravity, friction, soft pressure and wall reflection

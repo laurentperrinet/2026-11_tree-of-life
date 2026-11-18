@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const path = require('node:path');
 
 const context = vm.createContext({ console, Math, Float64Array, Date, btoa, atob });
-for (const name of ['terrain', 'physics', 'biology']) {
+for (const name of ['mesh-points', 'terrain', 'physics', 'biology']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', `${name}.js`), 'utf8'), context);
 }
 const { TerrainGrid, PhysicsEngine, BiologyGrid } = vm.runInContext('({ TerrainGrid, PhysicsEngine, BiologyGrid })', context);
@@ -24,14 +24,15 @@ test('saved terrain is rejected when mesh dimensions change, even at the same ve
     assert.equal(grid.fromJSON(saved), false);
 });
 
-test('saves from the polar-ring meshes are not loaded on the spiral mesh', () => {
+test('saves from earlier meshes are not loaded on the Poisson-disk mesh', () => {
     const grid = new TerrainGrid();
     new PhysicsEngine(grid);
     const saved = grid.toJSON();
-    assert.equal(saved.version, '14.0');
-    assert.equal(saved.topology, 'disk-square-vogel-v1');
-    for (const version of ['10.0', '11.0', '12.0', '13.0']) {
-        const legacy = { ...saved, version, topology: 'disk-square-polar-v2' };
+    assert.equal(saved.version, '15.0');
+    assert.equal(saved.topology, 'disk-square-poisson-v1');
+    for (const version of ['10.0', '11.0', '12.0', '13.0', '14.0']) {
+        const topology = version === '14.0' ? 'disk-square-vogel-v1' : 'disk-square-polar-v2';
+        const legacy = { ...saved, version, topology };
         delete legacy.meshSignature;
         assert.equal(grid.fromJSON(legacy), false);
         assert.equal(grid.fromJSON({ ...legacy, meshSignature: saved.meshSignature }), false);
@@ -216,7 +217,7 @@ test('microorganism colors appear on sand without hiding plants or high-flow gro
     assert.ok(color.r < 0.1 && color.b < 0.1);
 });
 
-test('spiral mesh covers a full disk and its square surround', () => {
+test('Poisson-disk mesh covers a full disk and its square surround', () => {
     const grid = new TerrainGrid();
     assert.ok(grid.vertices.length > 4096);
     assert.ok(grid.triangles.length > 8192);
@@ -268,29 +269,54 @@ test('spiral mesh covers a full disk and its square surround', () => {
     }
 });
 
-test('spiral vertices are jittered isotropically by at most a tenth of the spacing', () => {
+test('mesh points keep their minimum distance inside the disk margin', () => {
     const grid = new TerrainGrid();
-    const amplitude = grid.jitter * grid.spacing;
-    const offsets = grid.vertices.map((point, i) => {
-        // Polygon and square vertices are not jittered.
-        const regular = i < grid.erodibleCount ? grid.spiralPoint(i) : point;
-        return { dx: point.x - regular.x, dz: point.z - regular.z };
-    });
-    const disk = offsets.slice(0, grid.erodibleCount);
-    const lengths = disk.map(({ dx, dz }) => Math.hypot(dx, dz));
-    assert.ok(lengths.every(length => length <= amplitude + 1e-15));
-    // A uniform disk has a mean radius of 2/3 of its radius.
-    const meanLength = lengths.reduce((sum, length) => sum + length, 0) / lengths.length;
-    assert.ok(Math.abs(meanLength / amplitude - 2 / 3) < 0.01);
-    const meanDx = disk.reduce((sum, { dx }) => sum + dx, 0) / disk.length;
-    const meanDz = disk.reduce((sum, { dz }) => sum + dz, 0) / disk.length;
-    const varianceDx = disk.reduce((sum, { dx }) => sum + dx * dx, 0) / disk.length;
-    const varianceDz = disk.reduce((sum, { dz }) => sum + dz * dz, 0) / disk.length;
-    assert.ok(Math.abs(meanDx) < 0.01 * amplitude && Math.abs(meanDz) < 0.01 * amplitude);
-    assert.ok(Math.abs(varianceDx / varianceDz - 1) < 0.05);
-    const again = new TerrainGrid();
-    assert.ok(again.vertices.every((point, i) =>
-        point.x === grid.vertices[i].x && point.z === grid.vertices[i].z));
+    const { params, count, checksum } = grid.meshPoints;
+    assert.equal(grid.erodibleCount, count);
+    assert.match(checksum, /^[0-9a-f]{8}$/);
+    // Quantisation to whole micrometres may shift each coordinate by 0.5 µm.
+    const tolerance = 2 / params.unitsPerMetre;
+    const cells = new Map();
+    const cellSize = params.minDistance;
+    for (let i = 0; i < count; i++) {
+        const { x, z } = grid.vertices[i];
+        assert.ok(Math.hypot(x, z) <= params.radius - params.edgeMargin + tolerance);
+        const cx = Math.floor(x / cellSize), cz = Math.floor(z / cellSize);
+        for (let dz = -1; dz <= 1; dz++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                for (const j of cells.get(`${cx + dx},${cz + dz}`) ?? []) {
+                    const other = grid.vertices[j];
+                    assert.ok(Math.hypot(x - other.x, z - other.z) >= params.minDistance - tolerance);
+                }
+            }
+        }
+        const key = `${cx},${cz}`;
+        if (!cells.has(key)) cells.set(key, []);
+        cells.get(key).push(i);
+    }
+});
+
+test('mesh defects are spread evenly over the radius, without concentric rings', () => {
+    const grid = new TerrainGrid();
+    const degree = new Int32Array(grid.vertices.length);
+    for (const { a, b } of grid.edges) {
+        degree[a]++;
+        degree[b]++;
+    }
+    // Share of vertices without six neighbours per 1 m annulus: the Vogel spiral
+    // concentrated them on circles (coefficient of variation 1.1).
+    const defects = new Float64Array(24), counts = new Float64Array(24);
+    for (let i = 0; i < grid.erodibleCount; i++) {
+        const radius = Math.hypot(grid.vertices[i].x, grid.vertices[i].z);
+        if (radius < 1 || radius > 24) continue;
+        const bin = Math.floor(radius);
+        counts[bin]++;
+        if (degree[i] !== 6) defects[bin]++;
+    }
+    const shares = Array.from(defects, (value, bin) => value / counts[bin]).slice(1);
+    const mean = shares.reduce((sum, value) => sum + value, 0) / shares.length;
+    const deviation = Math.sqrt(shares.reduce((sum, value) => sum + (value - mean) ** 2, 0) / shares.length);
+    assert.ok(deviation / mean < 0.1, `coefficient of variation ${(deviation / mean).toFixed(2)}`);
 });
 
 test('disk edges have no preferred direction', () => {
@@ -397,7 +423,7 @@ test('evaporation deposits sediment locally before reinjection and survives a sa
     const seededMath = Object.create(Math);
     seededMath.random = () => random;
     const seededContext = vm.createContext({ console, Math: seededMath, Float64Array, Date });
-    for (const name of ['terrain', 'physics']) {
+    for (const name of ['mesh-points', 'terrain', 'physics']) {
         vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', `${name}.js`), 'utf8'), seededContext);
     }
     const { grid, physics } = vm.runInContext(
@@ -592,7 +618,7 @@ test('saves from the previous planar bed are rejected, current ones round-trip',
     const legacy = { ...saved, vegetation: Array.from(grid.vegetation),
         flowHistory: Array.from(grid.flowHistory), microbeU: Array.from(grid.microbeU),
         microbeV: Array.from(grid.microbeV) };
-    assert.equal(saved.version, '14.0');
+    assert.equal(saved.version, '15.0');
     for (const version of ['5.0', '6.0', '7.0', '9.0']) assert.equal(grid.fromJSON({ ...saved, version }), false);
     assert.equal(grid.fromJSON(saved), true);
     grid.initialize();
@@ -750,7 +776,7 @@ test('particle flow produces localized erosion on the initially uniform slope', 
         return seed / 4294967296;
     };
     const seededContext = vm.createContext({ console, Math: seededMath, Float64Array, Date });
-    for (const name of ['terrain', 'physics']) {
+    for (const name of ['mesh-points', 'terrain', 'physics']) {
         vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', `${name}.js`), 'utf8'), seededContext);
     }
     const { grid, physics } = vm.runInContext(

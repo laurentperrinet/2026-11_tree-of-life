@@ -75,7 +75,9 @@ test('mesh initialization follows the circular site topology and request budget'
 
 test('browser and Worker initialize the same higher-resolution terrain', () => {
     const context = vm.createContext({ console });
-    vm.runInContext(readFileSync(new URL('../js/terrain.js', import.meta.url), 'utf8'), context);
+    for (const name of ['mesh-points', 'terrain']) {
+        vm.runInContext(readFileSync(new URL(`../js/${name}.js`, import.meta.url), 'utf8'), context);
+    }
     const grid = vm.runInContext('new TerrainGrid()', context);
     const mesh = createInitialMesh();
     ok(grid.triangles.length > 64_100);
@@ -105,20 +107,25 @@ test('a changed mesh signature resets shared terrain and pending contributions o
     equal((await request('/api/state')).body.version, 13);
 });
 
-test('shared states from the polar-ring meshes restart on the spiral mesh', async () => {
+test('shared states from earlier meshes restart on the Poisson-disk mesh', async () => {
     const polarJitter = JSON.stringify([
         'disk-square-polar-v2', 25, 30, 125, 0.2, 'channel-sand-free-v1', 'jitter-v1', 0.1, 2026
     ]);
-    for (const [schemaVersion, meshSignature] of [
-        [2, undefined], [3, LEGACY_MESH_SIGNATURE], [4, polarJitter]
+    const vogel = JSON.stringify([
+        'disk-square-vogel-v1', 25, 30, 0.2, 0.75, 'channel-sand-free-v1', 'jitter-v1', 0.1, 2026,
+        'slopes-v1', 0.11, 0.09
+    ]);
+    // The polar meshes had 50,264 vertices (48,696 erodible), the spiral 50,069 (48,501).
+    for (const [schemaVersion, meshSignature, vertexCount, erodibleCount] of [
+        [2, undefined, 50_264, 48_696], [3, LEGACY_MESH_SIGNATURE, 50_264, 48_696],
+        [4, polarJitter, 50_264, 48_696], [4, vogel, 50_069, 48_501]
     ]) {
-        // The polar meshes had 50,264 vertices, 48,696 of them erodible.
         const old = {
             schemaVersion, meshSignature, version: 12,
-            elevation: new Float64Array(50_264).fill(1),
-            bedrock: new Float64Array(50_264),
-            erodibleCount: 48_696,
-            sumDelta: new Float64Array(50_264),
+            elevation: new Float64Array(vertexCount).fill(1),
+            bedrock: new Float64Array(vertexCount),
+            erodibleCount,
+            sumDelta: new Float64Array(vertexCount),
             activeClients: {},
             contributions: { [clientA]: true },
             contributionIds: [clientA],
