@@ -91,7 +91,7 @@ class TerrainRenderer {
         positions.needsUpdate = true;
         this.terrainMesh.geometry.computeVertexNormals();
         this.updateTerrainColors(grid);
-        this.biologyMesh.visible = this.displayMode === 'elevation' || this.displayMode === 'Tree of life';
+        this.biologyMesh.visible = this.displayMode === 'elevation' || this.displayMode === 'Tree of life' || this.displayMode === 'streams';
         if (this.biologyMesh.visible) this.updateBiologyMesh(biology);
     }
 
@@ -110,6 +110,8 @@ class TerrainRenderer {
             if (!biology.active[i]) continue;
             if (this.displayMode === 'Tree of life') {
                 this.lifeMapColor(biology, i, color);
+            } else if (this.displayMode === 'streams') {
+                this.streamsColor(biology, i, color);
             } else {
                 this.volcanicColor(biology, i, normals, color);
             }
@@ -142,7 +144,7 @@ class TerrainRenderer {
                 color.setRGB(0.55, 0.65, 0.7);
             } else if (i >= grid.erodibleCount) {
                 color.setRGB(0, 0, 0);
-            } else if (this.displayMode === 'elevation' || this.displayMode === 'Tree of life') {
+            } else if (this.displayMode === 'elevation' || this.displayMode === 'Tree of life' || this.displayMode === 'streams') {
                 color.setRGB(0.053, 0.053, 0.055);
             } else if (this.displayMode === 'sand depth') {
                 const depth = (grid.elevation[i] - grid.bedrock[i]) / grid.initialSandDepth;
@@ -161,19 +163,19 @@ class TerrainRenderer {
     }
 
     lifeMapColor(biology, i, color) {
-        color.setRGB(0.02, 0.02, 0.025);
+        color.setRGB(0.015, 0.015, 0.02);
 
-        // Plants: green-bronze, intensified near streams (high flow)
-        if (biology.sand[i] && biology.plants[i] > 0) {
+        // Plants: vivid green, intensified near streams (high flow)
+        if (biology.sand[i] && biology.plants[i] > 0.05) {
             const plantBase = biology.plants[i];
-            const flowBoost = Math.min(1, biology.flow[i] / 0.02);
-            const plantIntensity = plantBase * (0.5 + 0.5 * flowBoost);
-            const hue = 0.14 + 0.03 * (1 - flowBoost);
-            color.setHSL(hue, Math.min(1, 0.9 * plantIntensity), 0.15 + 0.4 * plantIntensity);
+            const flowBoost = Math.min(1, biology.flow[i] / 0.012);
+            const plantIntensity = plantBase * (0.4 + 0.6 * flowBoost);
+            const hue = 0.25 + 0.05 * (1 - flowBoost);
+            color.setHSL(hue, Math.min(1, 1.0 * plantIntensity), 0.2 + 0.5 * plantIntensity);
         }
 
-        // Microbes: red-purple at colony edges (gradient-based edge detection)
-        if (biology.microbeV[i] > 0.02) {
+        // Microbes: vivid red-purple at colony edges (gradient-based edge detection)
+        if (biology.microbeV[i] > 0.015) {
             const size = biology.size;
             const x = i % size;
             const z = Math.floor(i / size);
@@ -190,18 +192,73 @@ class TerrainRenderer {
                 edgeStrength = Math.max(...gradients);
             }
 
-            const microbeDensity = Math.min(1, biology.microbeV[i] / 0.3);
-            const edgeDetected = Math.min(1, edgeStrength / 0.08);
-            const microbeIntensity = microbeDensity * (0.3 + 0.7 * edgeDetected);
+            const microbeDensity = Math.min(1, biology.microbeV[i] / 0.25);
+            const edgeDetected = Math.min(1, edgeStrength / 0.06);
+            const microbeIntensity = microbeDensity * (0.2 + 0.8 * edgeDetected);
 
-            const purple = Math.min(1, biology.microbeV[i] / 0.35);
-            const targetR = 0.6 - 0.1 * purple;
-            const targetG = 0.1 - 0.08 * purple;
-            const targetB = 0.15 + 0.3 * purple;
+            const purple = Math.min(1, biology.microbeV[i] / 0.3);
+            const targetR = 0.85 - 0.2 * purple;
+            const targetG = 0.05 - 0.03 * purple;
+            const targetB = 0.2 + 0.5 * purple;
 
             color.r = color.r + (targetR - color.r) * microbeIntensity;
             color.g = color.g + (targetG - color.g) * microbeIntensity;
             color.b = color.b + (targetB - color.b) * microbeIntensity;
+        }
+    }
+
+    streamsColor(biology, i, color) {
+        color.setRGB(0.01, 0.01, 0.015);
+
+        // Water streams: luminous blue, proportional to flow
+        const flow = biology.flow[i];
+        if (flow > 0.0005) {
+            const flowStrength = Math.min(1, flow / 0.03);
+            const hue = 0.6;
+            const saturation = 0.9;
+            const lightness = 0.3 + 0.5 * flowStrength;
+            color.setHSL(hue, saturation, lightness);
+        }
+
+        // Plants: green along streams
+        if (biology.sand[i] && biology.plants[i] > 0.03) {
+            const plantBase = biology.plants[i];
+            const flowPresence = Math.min(1, biology.flow[i] / 0.01);
+            const plantIntensity = plantBase * (0.3 + 0.7 * flowPresence);
+            const hue = 0.28;
+            color.setHSL(hue, 0.95, Math.max(color.b, 0.25 + 0.4 * plantIntensity));
+        }
+
+        // Microbes: distinct colonies in red-magenta
+        if (biology.microbeV[i] > 0.03) {
+            const size = biology.size;
+            const x = i % size;
+            const z = Math.floor(i / size);
+            let edgeStrength = 0;
+
+            if (x > 0 && x < size - 1 && z > 0 && z < size - 1) {
+                const v = biology.microbeV[i];
+                const gradients = [
+                    Math.abs(biology.microbeV[i - 1] - v),
+                    Math.abs(biology.microbeV[i + 1] - v),
+                    Math.abs(biology.microbeV[i - size] - v),
+                    Math.abs(biology.microbeV[i + size] - v)
+                ];
+                edgeStrength = Math.max(...gradients);
+            }
+
+            const density = Math.min(1, biology.microbeV[i] / 0.2);
+            const edgeDetected = Math.min(1, edgeStrength / 0.05);
+            const colonyStrength = density * (0.25 + 0.75 * edgeDetected);
+
+            const purple = Math.min(1, biology.microbeV[i] / 0.25);
+            const targetR = Math.max(color.r, 0.8 - 0.15 * purple);
+            const targetG = 0.02;
+            const targetB = Math.max(color.b, 0.15 + 0.6 * purple);
+
+            color.r = color.r + (targetR - color.r) * colonyStrength;
+            color.g = color.g + (targetG - color.g) * colonyStrength;
+            color.b = color.b + (targetB - color.b) * colonyStrength;
         }
     }
 
@@ -282,7 +339,7 @@ class TerrainRenderer {
     }
 
     cycleDisplayMode() {
-        const modes = ['elevation', 'Tree of life', 'mesh', 'sand depth', 'flux', 'sediment'];
+        const modes = ['elevation', 'Tree of life', 'streams', 'mesh', 'sand depth', 'flux', 'sediment'];
         this.displayMode = modes[(modes.indexOf(this.displayMode) + 1) % modes.length];
     }
 
