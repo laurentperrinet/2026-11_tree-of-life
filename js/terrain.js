@@ -3,8 +3,12 @@ const CHANNEL_SAND_FREE_PROFILE = 'channel-sand-free-v1';
 /**
  * Delaunay triangulation of a planar point set (incremental, Lawson flips).
  *
- * Points are inserted in a serpentine row order, so that each point is found by
- * a short walk from the triangle created for the previous one. After each
+ * The points listed in `first` are inserted first, in that order; the others
+ * follow in a serpentine row order, so that each point is found by a short walk
+ * from the triangle created for the previous one. Inserting each straight
+ * border side in sequence, then its corners, guarantees that no point falls on
+ * an existing edge between collinear border points, which would create a
+ * zero-area triangle. After each
  * insertion, the edges opposite the new point are flipped while the opposite
  * vertex lies inside their circumcircle. A flip is only made when the
  * quadrilateral is strictly convex: rounding errors on nearly cocircular points
@@ -16,12 +20,13 @@ const CHANNEL_SAND_FREE_PROFILE = 'channel-sand-free-v1';
  * Args:
  *   xs: x coordinates (m).
  *   zs: z coordinates (m).
+ *   first: indices of the points to insert first, in order.
  *
  * Returns:
  *   Triangles as vertex-index triples, oriented like the rest of the mesh
  *   (positive signed area in the (x, z) convention of the tests).
  */
-function delaunayTriangles(xs, zs) {
+function delaunayTriangles(xs, zs, first = []) {
     const n = xs.length;
     const X = new Float64Array(n + 3);
     const Y = new Float64Array(n + 3);
@@ -83,11 +88,14 @@ function delaunayTriangles(xs, zs) {
     };
     setTriangle(0, n, n + 1, n + 2, -1, -1, -1);
     let count = 1;
-    const order = Array.from({ length: n }, (_, i) => i).sort((i, j) => {
+    const isFirst = new Uint8Array(n);
+    for (const i of first) isFirst[i] = 1;
+    const rest = Array.from({ length: n }, (_, i) => i).filter(i => !isFirst[i]).sort((i, j) => {
         const rowI = Math.floor(zs[i]), rowJ = Math.floor(zs[j]);
         if (rowI !== rowJ) return rowI - rowJ;
         return rowI % 2 ? xs[j] - xs[i] : xs[i] - xs[j];
     });
+    const order = [...first, ...rest];
     let t = 0;
     for (const p of order) {
         // Visibility walk; rotating the first edge tested avoids cycles.
@@ -126,18 +134,20 @@ function delaunayTriangles(xs, zs) {
 }
 
 /**
- * Circular erodible bed meshed by a Delaunay triangulation of a Poisson-disk
- * (blue-noise) point set, with a fixed square surround.
+ * Square domain meshed by a Delaunay triangulation of a Cartesian Poisson-disk
+ * (blue-noise) point set; the vertices inside the central disk are erodible,
+ * the others form a fixed surround.
  *
  * The points come from `js/mesh-points.js` (`globalThis.MESH_POINTS`), generated
- * once by `tools/generate-mesh-points.mjs` and also read by the Worker.
+ * once by `tools/generate-mesh-points.mjs` and also read by the Worker. They
+ * are ordered: disk points (erodible), other interior points, then the border.
  */
 class TerrainGrid {
     constructor() {
         this.radius = 25;
         this.halfSize = 30;
-        // Spacing of the boundary polygon (m); the Poisson points have about
-        // the same mean spacing (one point per spacing^2).
+        // Spacing of the points along the square sides (m); the Poisson points
+        // have about the same mean spacing (one point per spacing^2).
         this.spacing = 0.2;
         this.sinkRadius = 0.8;
         // Radial slope of the funnel cone that drains the bed towards the channel.
@@ -152,41 +162,24 @@ class TerrainGrid {
         this.channelFlare = 0.12;
         this.vertices = [];
 
-        // Interior: the Poisson-disk points, in the order shared with the Worker.
+        // All vertices are the Poisson-disk points, in the order shared with the Worker.
         this.meshPoints = globalThis.MESH_POINTS;
-        if (!this.meshPoints || this.meshPoints.params.radius !== this.radius) {
-            throw new Error('js/mesh-points.js is missing or was generated for another radius');
+        const params = this.meshPoints?.params;
+        if (!params || params.radius !== this.radius || params.halfSize !== this.halfSize ||
+            params.borderSpacing !== this.spacing) {
+            throw new Error('js/mesh-points.js is missing or was generated for other dimensions');
         }
-        this.erodibleCount = this.meshPoints.count;
-        for (let i = 0; i < this.erodibleCount; i++) {
+        this.erodibleCount = params.erodibleCount;
+        for (let i = 0; i < this.meshPoints.count; i++) {
             this.vertices.push({ x: this.meshPoints.x[i], z: this.meshPoints.z[i] });
         }
-        // Boundary polygon on the circle; a multiple of 8 puts vertices on the
-        // axes and diagonals, so the square corners are projections of them.
-        this.sectors = 8 * Math.round(2 * Math.PI * this.radius / this.spacing / 8);
-        this.outerRing = [];
-        for (let s = 0; s < this.sectors; s++) {
-            const angle = 2 * Math.PI * s / this.sectors;
-            this.outerRing.push(this.vertices.length);
-            this.vertices.push({ x: this.radius * Math.cos(angle), z: -this.radius * Math.sin(angle) });
-        }
+        // The border points come last, sides first then corners: inserted first,
+        // in that order, they never fall on an edge between collinear points.
+        const border = Array.from({ length: this.meshPoints.count - params.borderStart },
+            (_, k) => params.borderStart + k);
         this.triangles = delaunayTriangles(
-            this.vertices.map(point => point.x), this.vertices.map(point => point.z)
+            this.meshPoints.x, this.meshPoints.z, border
         );
-
-        const outer = this.outerRing;
-        const square = [];
-        for (const index of outer) {
-            const point = this.vertices[index];
-            const factor = this.halfSize / Math.max(Math.abs(point.x), Math.abs(point.z));
-            square.push(this.vertices.length);
-            this.vertices.push({ x: point.x * factor, z: point.z * factor });
-        }
-        for (let s = 0; s < this.sectors; s++) {
-            const next = (s + 1) % this.sectors;
-            this.triangles.push([outer[s], square[s], outer[next]]);
-            this.triangles.push([outer[next], square[s], square[next]]);
-        }
 
         const count = this.vertices.length;
         this.bedrock = new Float64Array(count);
@@ -338,9 +331,9 @@ class TerrainGrid {
 
     meshSignature() {
         return JSON.stringify([
-            'disk-square-poisson-v1', this.radius, this.halfSize, this.spacing,
-            this.meshPoints.params.minDistance, this.meshPoints.params.edgeMargin,
-            this.meshPoints.params.seed, this.meshPoints.count, this.meshPoints.checksum,
+            'square-poisson-v1', this.radius, this.halfSize, this.spacing,
+            this.meshPoints.params.minDistance, this.meshPoints.params.seed,
+            this.meshPoints.count, this.meshPoints.checksum,
             CHANNEL_SAND_FREE_PROFILE,
             'slopes-v1', this.slope, this.channelSlope
         ]);
@@ -348,8 +341,8 @@ class TerrainGrid {
 
     toJSON() {
         return {
-            version: '15.0',
-            topology: 'disk-square-poisson-v1',
+            version: '16.0',
+            topology: 'square-poisson-v1',
             meshSignature: this.meshSignature(),
             timestamp: new Date().toISOString(),
             elevation: Array.from(this.elevation),
@@ -371,10 +364,10 @@ class TerrainGrid {
                     (Number.isFinite(p.burstProgress) && p.burstProgress >= 0 && p.burstProgress < 1)) &&
                 this.locate(p.x, p.z));
         // Saves made on earlier meshes (polar rings, versions 10.0 to 13.0; Vogel
-        // spiral, 14.0) are not migrated: their vertices differ from the
-        // Poisson-disk points.
-        if (json.version !== '15.0' ||
-            json.topology !== 'disk-square-poisson-v1' ||
+        // spiral, 14.0; Poisson disk with a polar surround, 15.0) are not
+        // migrated: their vertices differ from the Cartesian Poisson points.
+        if (json.version !== '16.0' ||
+            json.topology !== 'square-poisson-v1' ||
             json.meshSignature !== this.meshSignature() ||
             !validParticles ||
             arrays.some(a => !Array.isArray(a) || a.length !== this.elevation.length || !a.every(Number.isFinite))) {

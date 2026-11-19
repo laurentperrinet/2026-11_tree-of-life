@@ -5,8 +5,8 @@ const MESH_POINTS = globalThis.MESH_POINTS;
 
 export const MESH_RADIUS = 25;
 export const MESH_HALF_SIZE = 30;
-// Spacing of the boundary polygon (m); the Poisson points have about the same
-// mean spacing.
+// Spacing of the points along the square sides (m); the Poisson points have
+// about the same mean spacing.
 export const MESH_SPACING = 0.2;
 export const MESH_SINK_RADIUS = 0.8;
 // Radial slope of the funnel cone that drains the bed towards the channel.
@@ -22,9 +22,9 @@ export const LEGACY_MESH_SIGNATURE = JSON.stringify(['disk-square-polar-v2', 25,
 export const CHANNEL_SAND_FREE_PROFILE = 'channel-sand-free-v1';
 export const MAX_REQUESTS_PER_SYNC = 2;
 export const MESH_SIGNATURE = JSON.stringify([
-    'disk-square-poisson-v1', MESH_RADIUS, MESH_HALF_SIZE, MESH_SPACING,
-    MESH_POINTS.params.minDistance, MESH_POINTS.params.edgeMargin,
-    MESH_POINTS.params.seed, MESH_POINTS.count, MESH_POINTS.checksum,
+    'square-poisson-v1', MESH_RADIUS, MESH_HALF_SIZE, MESH_SPACING,
+    MESH_POINTS.params.minDistance, MESH_POINTS.params.seed,
+    MESH_POINTS.count, MESH_POINTS.checksum,
     CHANNEL_SAND_FREE_PROFILE,
     'slopes-v1', MESH_SLOPE, MESH_CHANNEL_SLOPE
 ]);
@@ -42,39 +42,27 @@ export function channelSandFactor(x, z) {
 /**
  * Build the vertex positions and the initial bed of the shared terrain.
  *
- * Vertices are, in order: the Poisson-disk points of `js/mesh-points.js`
- * filling the disk (erodible), the boundary polygon on the circle of radius MESH_RADIUS, and its
- * radial projection on the square of half-side MESH_HALF_SIZE. The browser
- * (`js/terrain.js`) builds the same vertices in the same order and adds the
- * triangulation, which the Worker does not need.
+ * The vertices are the Cartesian Poisson-disk points of `js/mesh-points.js`,
+ * which cover the square of half-side MESH_HALF_SIZE: first those inside the
+ * disk of radius MESH_RADIUS (erodible), then the other interior points, then
+ * the border. The browser (`js/terrain.js`) uses the same vertices in the same
+ * order and adds the triangulation, which the Worker does not need.
  *
  * Returns:
  *   Vertices (m), elevation and bedrock (m), the erodible vertex count and
  *   the initial sand-depth factor of each vertex.
  */
 export function createInitialMesh() {
-    if (MESH_POINTS.params.radius !== MESH_RADIUS) {
-        throw new Error('js/mesh-points.js was generated for another radius');
+    const { params } = MESH_POINTS;
+    if (params.radius !== MESH_RADIUS || params.halfSize !== MESH_HALF_SIZE ||
+        params.borderSpacing !== MESH_SPACING) {
+        throw new Error('js/mesh-points.js was generated for other dimensions');
     }
     const vertices = [];
-    const erodibleCount = MESH_POINTS.count;
-    for (let i = 0; i < erodibleCount; i++) {
+    for (let i = 0; i < MESH_POINTS.count; i++) {
         vertices.push({ x: MESH_POINTS.x[i], z: MESH_POINTS.z[i] });
     }
-    // A multiple of 8 puts polygon vertices on the axes and diagonals, so the
-    // square corners are projections of polygon vertices.
-    const sectors = 8 * Math.round(2 * Math.PI * MESH_RADIUS / MESH_SPACING / 8);
-    const outer = [];
-    for (let s = 0; s < sectors; s++) {
-        const angle = 2 * Math.PI * s / sectors;
-        outer.push(vertices.length);
-        vertices.push({ x: MESH_RADIUS * Math.cos(angle), z: -MESH_RADIUS * Math.sin(angle) });
-    }
-    for (const index of outer) {
-        const point = vertices[index];
-        const factor = MESH_HALF_SIZE / Math.max(Math.abs(point.x), Math.abs(point.z));
-        vertices.push({ x: point.x * factor, z: point.z * factor });
-    }
+    const erodibleCount = params.erodibleCount;
 
     const bedrock = new Float64Array(vertices.length);
     for (let i = 0; i < vertices.length; i++) {

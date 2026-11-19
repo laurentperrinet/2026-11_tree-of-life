@@ -28,10 +28,13 @@ test('saves from earlier meshes are not loaded on the Poisson-disk mesh', () => 
     const grid = new TerrainGrid();
     new PhysicsEngine(grid);
     const saved = grid.toJSON();
-    assert.equal(saved.version, '15.0');
-    assert.equal(saved.topology, 'disk-square-poisson-v1');
-    for (const version of ['10.0', '11.0', '12.0', '13.0', '14.0']) {
-        const topology = version === '14.0' ? 'disk-square-vogel-v1' : 'disk-square-polar-v2';
+    assert.equal(saved.version, '16.0');
+    assert.equal(saved.topology, 'square-poisson-v1');
+    const formerTopology = {
+        '10.0': 'disk-square-polar-v2', '11.0': 'disk-square-polar-v2', '12.0': 'disk-square-polar-v2',
+        '13.0': 'disk-square-polar-v2', '14.0': 'disk-square-vogel-v1', '15.0': 'disk-square-poisson-v1'
+    };
+    for (const [version, topology] of Object.entries(formerTopology)) {
         const legacy = { ...saved, version, topology };
         delete legacy.meshSignature;
         assert.equal(grid.fromJSON(legacy), false);
@@ -217,9 +220,10 @@ test('microorganism colors appear on sand without hiding plants or high-flow gro
     assert.ok(color.r < 0.1 && color.b < 0.1);
 });
 
-test('Poisson-disk mesh covers a full disk and its square surround', () => {
+test('Cartesian Poisson mesh covers the square, with a closed border and disk vertices first', () => {
     const grid = new TerrainGrid();
-    assert.ok(grid.vertices.length > 4096);
+    const { params, count } = grid.meshPoints;
+    assert.equal(grid.vertices.length, count);
     assert.ok(grid.triangles.length > 8192);
     assert.ok(grid.vertexArea.every(area => area > 0));
     let area = 0;
@@ -236,25 +240,29 @@ test('Poisson-disk mesh covers a full disk and its square surround', () => {
         assert.ok(Math.abs(grid.elevation[i] - grid.bedrock[i] -
             grid.initialSandDepth * grid.sandDepthFactorAt(i)) < 1e-12);
     });
-    assert.equal(grid.outerRing.length, grid.sectors);
-    assert.equal(grid.outerRing[0], grid.erodibleCount);
-    for (let s = 0; s < grid.sectors; s++) {
-        const point = grid.vertices[grid.outerRing[s]];
-        assert.ok(Math.abs(Math.hypot(point.x, point.z) - grid.radius) < 1e-12);
-    }
+    // Erodible vertices are the points inside the disk, and they come first.
+    assert.equal(grid.erodibleCount, params.erodibleCount);
     for (let i = 0; i < grid.erodibleCount; i++) {
         const point = grid.vertices[i];
-        assert.ok(Math.hypot(point.x, point.z) < grid.radius - grid.spacing / 2);
+        assert.ok(Math.hypot(point.x, point.z) < grid.radius);
     }
-    // Every polygon edge belongs to one disk triangle (and one surround triangle).
-    const edgeKeys = new Set(grid.edges.map(({ a, b }) => `${a},${b}`));
-    for (let s = 0; s < grid.sectors; s++) {
-        const a = grid.outerRing[s], b = grid.outerRing[(s + 1) % grid.sectors];
-        assert.ok(edgeKeys.has(`${Math.min(a, b)},${Math.max(a, b)}`), `missing boundary edge ${s}`);
+    // The border points lie on the sides of the square and, sorted by angle
+    // around the centre, consecutive ones are joined by edges: the square is closed.
+    const border = Array.from({ length: count - params.borderStart }, (_, k) => params.borderStart + k);
+    const tolerance = 1e-9;
+    for (const i of border) {
+        const { x, z } = grid.vertices[i];
+        assert.ok(Math.abs(Math.max(Math.abs(x), Math.abs(z)) - grid.halfSize) < tolerance);
     }
-    // Delaunay quality: no sliver in the disk.
+    const angle = i => Math.atan2(grid.vertices[i].z, grid.vertices[i].x);
+    const perimeter = border.slice().sort((i, j) => angle(i) - angle(j));
+    const edgeKeys = new Set(grid.edges.map(({ a, b }) => `${Math.min(a, b)},${Math.max(a, b)}`));
+    for (let k = 0; k < perimeter.length; k++) {
+        const a = perimeter[k], b = perimeter[(k + 1) % perimeter.length];
+        assert.ok(edgeKeys.has(`${Math.min(a, b)},${Math.max(a, b)}`), `missing border edge ${k}`);
+    }
+    // Delaunay quality: no sliver anywhere in the mesh.
     for (const face of grid.triangles) {
-        if (face.some(i => i >= grid.erodibleCount + grid.sectors)) continue;
         const [a, b, c] = face.map(i => grid.vertices[i]);
         for (const [p, q, r] of [[a, b, c], [b, c, a], [c, a, b]]) {
             const cosine = ((q.x - p.x) * (r.x - p.x) + (q.z - p.z) * (r.z - p.z)) /
@@ -272,7 +280,7 @@ test('Poisson-disk mesh covers a full disk and its square surround', () => {
 test('mesh points keep their minimum distance inside the disk margin', () => {
     const grid = new TerrainGrid();
     const { params, count, checksum } = grid.meshPoints;
-    assert.equal(grid.erodibleCount, count);
+    assert.equal(grid.vertices.length, count);
     assert.match(checksum, /^[0-9a-f]{8}$/);
     // Quantisation to whole micrometres may shift each coordinate by 0.5 µm.
     const tolerance = 2 / params.unitsPerMetre;
@@ -280,7 +288,8 @@ test('mesh points keep their minimum distance inside the disk margin', () => {
     const cellSize = params.minDistance;
     for (let i = 0; i < count; i++) {
         const { x, z } = grid.vertices[i];
-        assert.ok(Math.hypot(x, z) <= params.radius - params.edgeMargin + tolerance);
+        assert.ok(Math.max(Math.abs(x), Math.abs(z)) <= params.halfSize + tolerance);
+        if (i < params.erodibleCount) assert.ok(Math.hypot(x, z) < params.radius + tolerance);
         const cx = Math.floor(x / cellSize), cz = Math.floor(z / cellSize);
         for (let dz = -1; dz <= 1; dz++) {
             for (let dx = -1; dx <= 1; dx++) {
@@ -347,7 +356,7 @@ test('the initial terrain leaves the output-channel bed and flanks sand-free', (
     assert.ok(grid.elevation[transition] > grid.bedrock[transition]);
 });
 
-test('water is reinjected inside the erodible disk around the entire boundary', () => {
+test('water is reinjected just inside the disk edge at every angle', () => {
     const grid = new TerrainGrid();
     const physics = new PhysicsEngine(grid);
     for (let n = 0; n < 128; n++) {
@@ -355,10 +364,14 @@ test('water is reinjected inside the erodible disk around the entire boundary', 
         const particle = { x: 0, z: 0, vx: 0, vz: 0, sediment: 0.1 };
         physics.reinject(particle, fraction);
         const angle = 2 * Math.PI * fraction;
-        const boundary = physics.arcBoundary(angle);
-        assert.ok(Math.abs(Math.hypot(particle.x, particle.z) -
-            (boundary.radius - 3 * grid.spacing)) < 1e-12);
-        assert.ok(grid.sample(particle.x, particle.z).face.every(i => i < grid.erodibleCount));
+        const radius = Math.hypot(particle.x, particle.z);
+        assert.ok(Math.abs(radius - (grid.radius - 3 * grid.spacing)) < 1e-12);
+        assert.ok(Math.abs(particle.x / radius - Math.cos(angle)) < 1e-12);
+        assert.ok(Math.abs(particle.z / radius + Math.sin(angle)) < 1e-12);
+        // The containing triangle is made of erodible vertices, except possibly
+        // a surround vertex just beyond the edge.
+        const erodible = grid.sample(particle.x, particle.z).face.filter(i => i < grid.erodibleCount);
+        assert.ok(erodible.length >= 2);
     }
     const particle = { x: 0, z: 0, vx: 0, vz: 0, sediment: 0 };
     physics.reinject(particle, 0.25);
@@ -601,7 +614,8 @@ test('sand avalanches at steep mesh edges without disturbing a stable slope', ()
     const peak = grid.elevation[1];
     for (let i = 0; i < 20; i++) physics.relaxSand(0.04);
     assert.ok(grid.elevation[1] < peak - 2);
-    assert.ok(grid.edges.every(edge =>
+    // Only edges between erodible vertices relax: the surround is fixed.
+    assert.ok(grid.edges.every(edge => edge.a >= grid.erodibleCount || edge.b >= grid.erodibleCount ||
         Math.abs(grid.elevation[edge.a] - grid.elevation[edge.b]) / edge.length <
             physics.sandReposeSlope + 0.01));
     assert.ok(grid.elevation.every((height, i) => height >= grid.bedrock[i]));
@@ -618,7 +632,7 @@ test('saves from the previous planar bed are rejected, current ones round-trip',
     const legacy = { ...saved, vegetation: Array.from(grid.vegetation),
         flowHistory: Array.from(grid.flowHistory), microbeU: Array.from(grid.microbeU),
         microbeV: Array.from(grid.microbeV) };
-    assert.equal(saved.version, '15.0');
+    assert.equal(saved.version, '16.0');
     for (const version of ['5.0', '6.0', '7.0', '9.0']) assert.equal(grid.fromJSON({ ...saved, version }), false);
     assert.equal(grid.fromJSON(saved), true);
     grid.initialize();
@@ -686,8 +700,14 @@ test('raised fixed surround returns water to the disk while leaving the outlet d
         for (let step = 0; step < 100; step++) physics.moveParticle(particle, 0.04);
         assert.ok(Math.hypot(particle.x, particle.z) < grid.radius, `stuck at angle ${angle}`);
     }
-    const outlet = grid.sample(0, 27);
-    assert.ok(outlet.dz < 0);
+    // Along the axis the bed descends by channelSlope; a single barycentric sample
+    // can deviate with the irregular mesh, so the mean over the channel is checked.
+    let outletSlope = 0, samples = 0;
+    for (let z = 20; z <= 28; z += 0.05) {
+        outletSlope += grid.sample(0, z).dz;
+        samples++;
+    }
+    assert.ok(outletSlope / samples < -0.5 * grid.channelSlope);
     const parcel = { x: 0, z: 27, vx: 0, vz: 0, sediment: 0.1 };
     for (let step = 0; step < 300; step++) {
         physics.moveParticle(parcel, 0.04);
@@ -704,7 +724,12 @@ test('erosion tapers at the disk edge without preventing deposition', () => {
     const disk = Array.from({ length: grid.erodibleCount }, (_, i) => i);
     const inside = disk.find(i => distanceToEdge(i) > physics.erosionBorderWidth + grid.spacing);
     const transition = disk.find(i => Math.abs(distanceToEdge(i) - physics.erosionBorderWidth / 2) < grid.spacing);
-    const edge = grid.outerRing[0];
+    // The surround vertex closest to the disk edge (surround indices start at erodibleCount).
+    const radiusOf = i => Math.hypot(grid.vertices[i].x, grid.vertices[i].z);
+    let edge = grid.erodibleCount;
+    for (let i = grid.erodibleCount; i < grid.meshPoints.params.borderStart; i++) {
+        if (radiusOf(i) < radiusOf(edge)) edge = i;
+    }
     assert.equal(physics.erosionFactor(inside), 1);
     assert.ok(physics.erosionFactor(transition) > 0 && physics.erosionFactor(transition) < 1);
     assert.ok(physics.erosionFactor(edge) < 1e-12);

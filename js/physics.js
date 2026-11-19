@@ -57,26 +57,15 @@ class PhysicsEngine {
 
     reinject(particle, fraction = Math.random()) {
         const angle = 2 * Math.PI * fraction;
-        // Three mesh spacings inside the edge: well within the erodible points.
-        const radius = this.arcBoundary(angle).radius - 3 * this.grid.spacing;
+        // Three mesh spacings inside the disk edge, which is the circle of
+        // radius R (the mesh itself has no circular boundary).
+        const radius = this.grid.radius - 3 * this.grid.spacing;
         particle.x = radius * Math.cos(angle);
         particle.z = -radius * Math.sin(angle);
         particle.vx = 0;
         particle.vz = 0;
         particle.travelTime = 0;
         delete particle.burstProgress;
-    }
-
-    arcBoundary(angle) {
-        const width = 2 * Math.PI / this.grid.sectors;
-        const normalized = ((angle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-        const sector = Math.min(this.grid.sectors - 1, Math.floor(normalized / width));
-        const normalAngle = (sector + 0.5) * width;
-        return {
-            radius: this.grid.radius * Math.cos(width / 2) / Math.cos(normalized - normalAngle),
-            nx: Math.cos(normalAngle),
-            nz: -Math.sin(normalAngle)
-        };
     }
 
     erosionFactor(index) {

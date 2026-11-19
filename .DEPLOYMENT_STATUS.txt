@@ -22,10 +22,10 @@ GITHUB OAUTH APPLICATION
   Callback   https://laurentperrinet.github.io/2026-11_tree-of-life/
 
 CURRENT FORMATS
-  Mesh       disk-square-poisson-v1, R 25, L 30, spacing 0.2, js/mesh-points.js
-             (46,795 points, d_min 0.16, margin 0.15, seed 2026), channel-sand-free-v1
+  Mesh       square-poisson-v1, L 30, R 25, spacing 0.2, js/mesh-points.js
+             (87,276 points, 47,323 erodible, d_min 0.16, seed 2026), channel-sand-free-v1
   Worker     state schema 4 (resets any other schema or mesh)
-  Browser    terrain save 15.0 (older saves ignored), biology save 1
+  Browser    terrain save 16.0 (older saves ignored), biology save 1
   Rule       a mesh change needs the Worker and the site deployed together
 
 CHECKS AFTER A DEPLOYMENT

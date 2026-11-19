@@ -115,30 +115,29 @@ The sink lies at $z = +L$, which appears at the bottom of the screen.
 
 #### Terrain
 
-The bed is a Delaunay triangulation of a Poisson-disk (blue-noise) point set. The
-interior of the disk of radius $R$ holds $N$ points $\mathbf{p}_n$ drawn by
-Bridson's algorithm under the two constraints
+The bed is a Delaunay triangulation of a Poisson-disk (blue-noise) point set on the
+square $[-L, L]^2$, sampled in Cartesian coordinates. Points lie on the four sides
+every $\Delta s$, and the interior is filled by Bridson's algorithm under the
+constraint
 
-$$\lVert \mathbf{p}_n - \mathbf{p}_{n'} \rVert \ge d_\text{min} \quad (n \ne n'), \qquad
-\lVert \mathbf{p}_n \rVert \le R - e,$$
+$$\lVert \mathbf{p}_n - \mathbf{p}_{n'} \rVert \ge d_\text{min} \quad (n \ne n'),$$
 
-where $d_\text{min}$ is the minimum distance between points and $e$ the margin kept
-free inside the disk edge. Starting from the centre, $k$ candidates are drawn
-uniformly in the annulus $[d_\text{min}, 2d_\text{min}]$ around an active point
+where $d_\text{min}$ is the minimum distance between points. From an active point,
+$k$ candidates are drawn uniformly in the annulus $[d_\text{min}, 2d_\text{min}]$
 until one fits; the sample is then close to maximal, with about one point per
-$\Delta s^2$, where $\Delta s$ is the mean vertex spacing. Such a sample is
-random but evenly spread: it has no preferred direction and no long-range order.
-Earlier meshes had both. Polar rings aligned their vertices along the axes and the
-diagonals. A Vogel (sunflower) spiral removed these directions, but its lattice
-defects lined up on concentric circles where its parastichies switch from one
-Fibonacci family to the next. The points are generated once, with a fixed seed, by
-`tools/generate-mesh-points.mjs` and stored in `js/mesh-points.js` as integer
-micrometres, so that the browser and the Worker read bit-identical positions. The
-edge of the disk is a polygon of $N_e = 8\,\mathrm{round}(2\pi R / 8\Delta s) = 784$
-vertices on the circle. The margin $e$ keeps every polygon edge a Gabriel edge,
-hence in the triangulation (incremental insertion with Lawson flips, in the
-browser); the smallest triangle angle is 25.6°. The polygon is projected radially
-onto a square of half-side $L$ to form a fixed surround. Each vertex $i$ carries an
+$\Delta s^2$. Such a sample is random but evenly spread: it has no preferred
+direction and no long-range order. Earlier meshes had both. Polar rings aligned
+their vertices along the axes and the diagonals; a Vogel (sunflower) spiral removed
+these directions, but its lattice defects lined up on concentric circles where its
+parastichies switch from one Fibonacci family to the next. The points are generated
+once, with a fixed seed, by `tools/generate-mesh-points.mjs` and stored in
+`js/mesh-points.js` as integer micrometres, so that the browser and the Worker read
+bit-identical positions. The erodible disk of radius $R$ is the set of points with
+$\lVert \mathbf{p}_i \rVert < R$; the other interior points and the border form a
+fixed surround. The sides are straight, and each side segment is a Gabriel edge,
+hence an edge of the triangulation. The browser triangulates the points by Delaunay
+(incremental insertion with Lawson flips, the border inserted first); the smallest
+triangle angle is 25.8°. Each vertex $i$ carries an
 elevation
 
 $$\eta_i = \beta_i + s_i, \qquad s_i \ge 0,$$
@@ -173,9 +172,10 @@ where $D_0$ is the initial sand depth and $\phi_i \in [0, 1]$ the sand factor. T
 channel bed ($\phi = 0$) starts as bare bedrock. Afterwards it behaves like the
 rest of the bed: water deposits and re-erodes sand there, avalanches from the
 banks reach it, and evaporating parcels drop their load on it. Only the
-46,795 Poisson-disk vertices strictly inside the polygon edge are erodible. The polygon and
-the square surround can receive sediment from evaporating parcels, but they can
-never be eroded.
+47,323 vertices inside the disk ($\lVert \mathbf{p}_i \rVert < R$) are erodible. The
+surround (the other interior points and the border) can receive sediment from
+evaporating parcels, but it is never eroded, and avalanches do not relax the edges
+that touch it.
 
 #### Water parcels
 
@@ -346,14 +346,14 @@ Values are the defaults in the code. The terrain parameters are duplicated in
 | Symbol | Name in code | Default | Role |
 | --- | --- | --- | --- |
 | $R$ | `radius` | 25 u | Radius of the erodible disk |
-| $L$ | `halfSize` | 30 u | Half-side of the square surround |
-| $\Delta s$ | `spacing` (`MESH_SPACING`) | 0.2 u | Spacing of the edge polygon; about one interior point per $\Delta s^2$ |
+| $L$ | `halfSize` | 30 u | Half-side of the square domain |
+| $\Delta s$ | `spacing` (`MESH_SPACING`) | 0.2 u | Spacing of the border points; about one interior point per $\Delta s^2$ |
 | $d_\text{min}$ | `MIN_DISTANCE` (`params.minDistance`) | 0.16 u | Minimum distance between interior points |
 | $e$ | `EDGE_MARGIN` (`params.edgeMargin`) | 0.15 u | Margin kept free inside the disk edge |
 | $k$ | `CANDIDATES` (`params.candidates`) | 30 | Candidates tried around an active point |
 | — | `SEED` (`params.seed`) | 2026 | Seed of the point sample |
-| $N$ | `erodibleCount` (`MESH_POINTS.count`) | 46,795 | Interior (erodible) points |
-| $N_e$ | `sectors` | 784 | Vertices of the edge polygon |
+| $N$ | `erodibleCount` (`MESH_POINTS.params.erodibleCount`) | 47,323 | Erodible points inside the disk, first in the vertex order |
+| $N_b$ | `MESH_POINTS.count` − `borderStart` | 1,200 | Border points, last in the vertex order |
 | $S$ | `slope` (`MESH_SLOPE`) | 0.11 | Radial slope of the funnel cone |
 | $S_c$ | `channelSlope` (`MESH_CHANNEL_SLOPE`) | 0.09 | Descent of the outlet channel axis |
 | $S_\text{out}$ | `surroundSlope` | 0.3 | Slope of the surround beyond $R$ |
@@ -365,15 +365,16 @@ Values are the defaults in the code. The terrain parameters are duplicated in
 | $\beta_i$ | `bedrock` | from $c$ and $\beta$ above | Non-erodible floor |
 | $\eta_i$ | `elevation` | $\beta_i + D_0\phi_i$ | Bed elevation (the shared field) |
 | $\phi_i$ | `sandDepthFactor()` | 0–1 | Initial sand factor; 0 on the channel bed |
-| $A_i$ | `vertexArea` | ≈ 0.042 u² (0.017–0.083) | Lumped vertex area |
+| $A_i$ | `vertexArea` | ≈ 0.042 u² (0.016–0.080) | Lumped vertex area |
 | — | `binSize` | 1 u | Spatial hash cell for point location |
 
-The constants $d_\text{min}$, $e$, $k$ and the seed live in
+The constants $d_\text{min}$, $k$, the seed and the side spacing live in
 `tools/generate-mesh-points.mjs` and are copied into `MESH_POINTS.params`. The mesh
-has 48,363 vertices (46,795 erodible), 95,940 triangles and 144,302 edges, with 784
-vertices on the edge polygon. Building it takes about 0.3 s in Node.js on an Apple
-M3 Ultra (no sampling at run time); the share of vertices without six neighbours
-is 49–55 % at every radius.
+has 87,276 vertices (47,323 erodible, 38,753 other interior points, 1,200 border),
+173,350 triangles and 260,625 edges. Building it takes about 0.6 s in Node.js on an
+Apple M3 Ultra; no sampling happens at run time. The test *mesh defects are spread
+evenly over the radius* checks that the share of vertices without six neighbours
+does not depend on the radius.
 
 **Water and sediment:** `PhysicsEngine` in `js/physics.js`.
 
@@ -665,12 +666,12 @@ outside it. It is **not** a hard quota: configure Cloudflare-side rate limiting
 before relying on a ceiling.
 
 **Mesh versioning.** Terrain saves and Worker state carry a mesh signature:
-`disk-square-poisson-v1`, $R$, $L$, $\Delta s$, $d_\text{min}$, $e$, the seed, $N$, a
+`square-poisson-v1`, $L$, $\Delta s$, $d_\text{min}$, the seed, the vertex count, a
 checksum of `js/mesh-points.js`, `channel-sand-free-v1`, `slopes-v1`, $S$ and $S_c$.
 States and saves from the earlier meshes (`disk-square-polar-v2`,
-`disk-square-vogel-v1`) are not migrated, because their vertices do not
-correspond to the Poisson-disk points: any mismatch resets the shared terrain and
-discards pending contributions. Deploy the Worker and the site together whenever
+`disk-square-vogel-v1`, `disk-square-poisson-v1`) are not migrated, because their
+vertices do not correspond to the square Poisson points: any mismatch resets the
+shared terrain and discards pending contributions. Deploy the Worker and the site together whenever
 the mesh changes.
 
 [↑ Contents](#contents)
@@ -682,7 +683,7 @@ the mesh changes.
 | Store | Key | Content | Lifetime |
 | --- | --- | --- | --- |
 | Durable Object | `state` | Shared elevation, bedrock, version, active IDs, pending sum of deltas | Permanent |
-| `localStorage` | `tree-of-life-terrain-disk-v12` | Elevation, water, sediment and particles (format `15.0`); saved when a new shared version arrives and after a reset | Ignored after 24 h |
+| `localStorage` | `tree-of-life-terrain-disk-v12` | Elevation, water, sediment and particles (format `16.0`); saved when a new shared version arrives and after a reset | Ignored after 24 h |
 | `localStorage` | `tree-of-life-local-biology-v2` | Plants, inhibitor, $U$, $V$, quantised to 16 bits | Saved every 5 s and on exit |
 | `localStorage` | `tree-of-life-collaborator-id` | Random browser ID | Until storage is cleared |
 | `localStorage` | `tree-of-life-simulation-time-v1:<uuid>` | Simulation time of one tab | Summed over all tabs |
@@ -724,11 +725,9 @@ quota of an origin.
 - **Poisson-disk mesh.** Polar rings, even with a half-sector shift and a jitter,
   kept vertices aligned along the axes and diagonals (6 % of edges within 1° of an
   axis), and the flow followed these rays. A Vogel spiral removed the directions
-  (2.2 %, as for an isotropic mesh) but concentrated its lattice defects on
-  concentric circles (0 to 56 % of vertices without six neighbours depending on the
-  radius). Poisson-disk points have neither (2.2 %, 49–55 % at every radius). They
-  are precomputed, because sampling them takes about 0.3 s; the browser computes
-  only the Delaunay triangulation.
+  but concentrated its lattice defects on concentric circles. Poisson-disk points
+  are isotropic and have no such circles. They are precomputed, because sampling
+  them takes about 0.4 s; the browser computes only the Delaunay triangulation.
 - **Share elevation only.** Elevation is the slow, meaningful variable. Averaging
   it is simple and bounded. Water and biology are fast, local and decorative.
 - **Request budget.** The interval grows with the number of active browsers, to
@@ -747,6 +746,7 @@ quota of an origin.
 | 2026-11-17 | Sand-free outlet channel, jittered mesh, next-merge indicator; legacy grid and GitHub-sync code removed; documentation merged into this README |
 | 2026-11-17 | Vogel-spiral mesh with golden-angle rotation and Delaunay triangulation replaces the polar rings; shared terrain and local saves restart |
 | 2026-11-18 | Precomputed Poisson-disk points replace the Vogel spiral, whose defects formed concentric rings; shared terrain and local saves restart |
+| 2026-11-19 | Poisson-disk points sampled over the whole square in Cartesian coordinates; the disk is only the erodible subset; shared terrain and local saves restart |
 
 [↑ Contents](#contents)
 
@@ -819,7 +819,7 @@ numbers are omitted on purpose because they drift; search for the method name.
 
 | Task | Method or field |
 | --- | --- |
-| Read the points, build edge polygon, triangles, square surround | `constructor()`, `meshPoints` |
+| Read the points, Delaunay triangulation with the border first | `constructor()`, `meshPoints` |
 | Delaunay triangulation (Lawson flips, convexity guard) | module function `delaunayTriangles(xs, zs)` |
 | Bedrock $\beta$: cone, peripheral band, channel | `bedrockHeight(x, z)` |
 | Sand factor $\phi$ | `sandDepthFactor(x, z)`, `sandDepthFactorAt(i)` |
@@ -830,9 +830,8 @@ numbers are omitted on purpose because they drift; search for the method name.
 | Mesh signature, save and load | `meshSignature()`, `toJSON()`, `fromJSON(json)` |
 | Former per-vertex microbes (read by `importLegacy()`) | `seedMicrobes()` |
 
-`erodibleCount` is the number of Poisson-disk points and the index of the first
-edge-polygon vertex; vertices below it are erodible. `outerRing` lists the polygon
-vertices.
+`erodibleCount` is the number of points inside the disk; vertices below it are
+erodible, and the border is the last `MESH_POINTS.count − borderStart` vertices.
 
 ### Water and sediment: `js/physics.js`
 
@@ -845,7 +844,7 @@ vertices.
 | Soft pressure between parcels (spatial hash of size $2a$) | `collideParticles(dt)` |
 | Angle-of-repose avalanches (4 sweeps) | `relaxSand(dt)` |
 | Erosion fade near the edge $e_j$ | `erosionFactor(index)` |
-| Reinjection inside the polygon edge | `reinject(particle)`, `arcBoundary(angle)` |
+| Reinjection three spacings inside the disk edge | `reinject(particle)` |
 | Initial parcels spread over the disk | `createParticles()` |
 | Transit time and particle flow | `recordSinkExit()`, `getMeanTransitTime()`, `getParticleThroughput()`; `getSandThroughput()` is tested but not displayed |
 | Reset parcels, statistics and terrain | `reset()` |
@@ -1002,7 +1001,7 @@ initialize the same higher-resolution terrain* checks it.
    profile changes without a dimension change. The point set needs no tag: its
    parameters and checksum are part of the signature.
 3. Decide whether existing terrains are **migrated** or **reset**:
-   - Browser: `TerrainGrid.fromJSON()` accepts only format `15.0` with the
+   - Browser: `TerrainGrid.fromJSON()` accepts only format `16.0` with the
      current signature. Bump `toJSON().version` and add a conversion if old saves
      must survive.
    - Worker: `Simulation.loadState()` resets on any signature or schema mismatch.
@@ -1017,7 +1016,7 @@ initialize the same higher-resolution terrain* checks it.
 
 | Data | Writer | Format | Compatibility |
 | --- | --- | --- | --- |
-| Local terrain | `TerrainGrid.toJSON()` | `version: '15.0'`, `topology`, `meshSignature`, arrays, particles | Reads `15.0` only; 500 or 1,000 saved parcels are topped up to 1,500 |
+| Local terrain | `TerrainGrid.toJSON()` | `version: '16.0'`, `topology`, `meshSignature`, arrays, particles | Reads `16.0` only; 500 or 1,000 saved parcels are topped up to 1,500 |
 | Local biology | `BiologyGrid.toJSON()` | `version: 1`, `size: 256`, base64 of four 16-bit fields | Exact match only |
 | Store wrapper | `LocalStorageManager.save()` | `{ version: '1.0', savedAt, data }` | Version must match; terrain expires after 24 h |
 | Shared state | `createState()` in the Worker | `schemaVersion: 4`, `meshSignature`, float64 arrays, contributions | Resets any other schema or signature |
@@ -1134,7 +1133,7 @@ jittered mesh, nominal step of 0.04 sim s, averages over 40 calls:
 | `new BiologyGrid()` | 90 ms | once |
 
 At this step, physics and biology take about **75 ms per frame**. Rendering adds the upload and
-`computeVertexNormals()` of the 48,363-vertex terrain, of the 65,536-vertex biology
+`computeVertexNormals()` of the 87,276-vertex terrain, of the 65,536-vertex biology
 overlay in `habitat`, `Tree of life`, and `streams` modes, and 1,500 `sample()` calls to place the parcels.
 
 Where the time goes:
@@ -1229,7 +1228,7 @@ Status on 2026-11-17.
 
 **Done**
 
-- [x] Poisson-disk Delaunay mesh with square surround, precomputed points;
+- [x] Cartesian Poisson-disk Delaunay mesh over the square, precomputed points;
   browser and Worker build identical meshes
 - [x] Inverted-cone bedrock, peripheral drainage band, flared outlet channel bare at start
 - [x] Lagrangian parcels with gravity, friction, soft pressure and wall reflection

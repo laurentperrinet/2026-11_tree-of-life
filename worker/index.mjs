@@ -251,8 +251,9 @@ export class Simulation {
             stored.activeClients && typeof stored.activeClients === 'object' &&
             stored.contributions && typeof stored.contributions === 'object' &&
             Array.isArray(stored.contributionIds)) return stored;
-        // States from earlier meshes (polar rings, Vogel spiral) are not
-        // migrated: their vertices do not correspond to the Poisson-disk points,
+        // States from earlier meshes (polar rings, Vogel spiral, disk Poisson
+        // points) are not migrated: their vertices do not correspond to the square
+        // Poisson-disk points,
         // so the terrain restarts from the initial bed with a higher version.
         const version = Number.isSafeInteger(stored?.version) ? stored.version + 1 : 0;
         const state = createState(version);

@@ -1,29 +1,41 @@
 #!/usr/bin/env node
 /**
- * Generate the Poisson-disk point set of the erodible disk (`js/mesh-points.js`).
+ * Generate the Poisson-disk point set of the whole square domain (`js/mesh-points.js`).
  *
  * The browser (`js/terrain.js`) and the Worker (`worker/mesh.mjs`) both load the
  * generated file, so they share bit-identical vertices without recomputing them.
- * The sample is drawn by Bridson's algorithm: every point lies at least
- * MIN_DISTANCE from every other one and the sample is close to maximal, which
- * gives a blue-noise point set with no preferred direction and no long-range
- * order (unlike polar rings or a Vogel spiral, whose lattice defects line up on
- * circles). Coordinates are stored as integer micrometres, so that every
+ *
+ * The domain is the square [-HALF_SIZE, HALF_SIZE]^2, sampled in Cartesian
+ * coordinates only: no circle, ring or radial line enters the construction.
+ * Its four sides carry evenly spaced points (BORDER_SPACING, corners included),
+ * which seed Bridson's algorithm; the interior is then filled with points at
+ * least MIN_DISTANCE apart, drawn around active points by rejection in the
+ * x-z square. The sample is close to maximal: a blue-noise point set with no
+ * preferred direction and no long-range order. The erodible disk is not meshed
+ * separately: its vertices are simply the points closer than RADIUS to the
+ * centre. Coordinates are stored as integer micrometres, so that every
  * JavaScript engine decodes the same doubles.
+ *
+ * Vertex order: disk points (erodible), other interior points, then the border
+ * (the points of each side in sequence, then the four corners). The browser
+ * inserts the border first in this order, so that no point ever falls on an
+ * existing edge of the collinear border (see `delaunayTriangles()`).
  *
  * Usage: node tools/generate-mesh-points.mjs
  */
 import { renameSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-// Radius of the erodible disk (m); must equal `radius` / MESH_RADIUS.
+// Half-side of the square domain (m); must equal `halfSize` / MESH_HALF_SIZE.
+const HALF_SIZE = 30;
+// Radius of the erodible disk (m); must equal `radius` / MESH_RADIUS. It only
+// sorts the points: disk points come first and are the erodible vertices.
 const RADIUS = 25;
-// Distance kept free inside the disk edge (m). The 784-vertex boundary polygon
-// has 0.2 m chords: keeping points beyond their diametral circles (0.1 m) makes
-// every chord a Gabriel edge, hence an edge of the Delaunay triangulation.
-const EDGE_MARGIN = 0.15;
-// Minimum distance between two points (m); it gives about one point per 0.04 m²,
-// the area per vertex of the previous meshes.
+// Spacing of the points along the square sides (m). With MIN_DISTANCE, every
+// side segment is a Gabriel edge (no point within 0.1 m of its midpoint), hence
+// an edge of the Delaunay triangulation, so the mesh covers the square exactly.
+const BORDER_SPACING = 0.2;
+// Minimum distance between two points (m); about one point per 0.04 m².
 const MIN_DISTANCE = 0.16;
 // Candidates tried around an active point before it is retired.
 const CANDIDATES = 30;
@@ -51,18 +63,54 @@ function hashUint32(x) {
 }
 
 /**
- * Bridson's Poisson-disk sampling of a disk centred on the origin.
+ * Evenly spaced points on the sides of the square, then its corners.
  *
  * Args:
- *   maxRadius: largest distance of a point from the centre (m).
+ *   halfSize: half-side of the square (m).
+ *   spacing: target spacing along a side (m).
+ *
+ * Returns:
+ *   `{ xs, zs }` (m): each side's inner points in sequence, then the corners.
+ */
+function borderPoints(halfSize, spacing) {
+    const segments = Math.round(2 * halfSize / spacing);
+    const step = 2 * halfSize / segments;
+    const xs = [], zs = [];
+    // Each side runs from one corner towards the next, anticlockwise in (x, z).
+    const sides = [
+        k => [-halfSize + k * step, -halfSize],
+        k => [halfSize, -halfSize + k * step],
+        k => [halfSize - k * step, halfSize],
+        k => [-halfSize, halfSize - k * step]
+    ];
+    for (const side of sides) {
+        for (let k = 1; k < segments; k++) {
+            const [x, z] = side(k);
+            xs.push(x);
+            zs.push(z);
+        }
+    }
+    for (const [x, z] of [[-halfSize, -halfSize], [halfSize, -halfSize], [halfSize, halfSize], [-halfSize, halfSize]]) {
+        xs.push(x);
+        zs.push(z);
+    }
+    return { xs, zs };
+}
+
+/**
+ * Bridson's Poisson-disk sampling of the open square, seeded by fixed points.
+ *
+ * Args:
+ *   halfSize: half-side of the square (m).
+ *   seeds: `{ xs, zs }`, fixed points (m), also used as the first active points.
  *   minDistance: minimum distance between two points (m).
  *   candidates: candidates tried around an active point before retiring it.
  *   seed: integer seed of the random sequence.
  *
  * Returns:
- *   `{ xs, zs }`, the point coordinates (m), the centre first.
+ *   `{ xs, zs }`, the new points (m), in generation order.
  */
-function poissonDisk(maxRadius, minDistance, candidates, seed) {
+function poissonDisk(halfSize, seeds, minDistance, candidates, seed) {
     let state = hashUint32(seed);
     const random = () => {
         state = hashUint32((state + 0x9e3779b9) | 0);
@@ -70,11 +118,10 @@ function poissonDisk(maxRadius, minDistance, candidates, seed) {
     };
     // A cell of side minDistance / sqrt(2) holds at most one point.
     const cell = minDistance / Math.SQRT2;
-    const size = Math.ceil(2 * maxRadius / cell) + 1;
+    const size = Math.ceil(2 * halfSize / cell) + 1;
     const grid = new Int32Array(size * size).fill(-1);
-    const xs = [];
-    const zs = [];
-    const cellOf = value => Math.floor((value + maxRadius) / cell);
+    const xs = [], zs = [];
+    const cellOf = value => Math.min(size - 1, Math.floor((value + halfSize) / cell));
     const add = (x, z) => {
         grid[cellOf(z) * size + cellOf(x)] = xs.length;
         xs.push(x);
@@ -82,7 +129,7 @@ function poissonDisk(maxRadius, minDistance, candidates, seed) {
         return xs.length - 1;
     };
     const fits = (x, z) => {
-        if (x * x + z * z > maxRadius * maxRadius) return false;
+        if (Math.abs(x) >= halfSize || Math.abs(z) >= halfSize) return false;
         const cx = cellOf(x), cz = cellOf(z);
         for (let j = Math.max(0, cz - 2); j <= Math.min(size - 1, cz + 2); j++) {
             for (let i = Math.max(0, cx - 2); i <= Math.min(size - 1, cx + 2); i++) {
@@ -92,14 +139,13 @@ function poissonDisk(maxRadius, minDistance, candidates, seed) {
         }
         return true;
     };
-    const active = [add(0, 0)];
+    const active = seeds.xs.map((x, i) => add(x, seeds.zs[i]));
     while (active.length > 0) {
         const slot = Math.floor(random() * active.length);
         const p = active[slot];
         let placed = false;
         for (let attempt = 0; attempt < candidates; attempt++) {
-            // Uniform in the annulus [d, 2d] by rejection from a square: no
-            // trigonometry, so the sequence does not depend on the engine.
+            // Uniform in the annulus [d, 2d] by rejection from the x-z square.
             let u, v;
             do {
                 u = 2 * random() - 1;
@@ -118,7 +164,7 @@ function poissonDisk(maxRadius, minDistance, candidates, seed) {
             active.pop();
         }
     }
-    return { xs, zs };
+    return { xs: xs.slice(seeds.xs.length), zs: zs.slice(seeds.zs.length) };
 }
 
 /**
@@ -126,23 +172,24 @@ function poissonDisk(maxRadius, minDistance, candidates, seed) {
  *
  * Args:
  *   path: output file path.
- *   params: generation parameters, copied into the module.
- *   xs: x coordinates (m).
- *   zs: z coordinates (m).
+ *   params: generation parameters and group boundaries, copied into the module.
+ *   points: `[x, z]` integer coordinates (µm), in vertex order.
  */
-function writeModule(path, params, xs, zs) {
-    const bytes = Buffer.alloc(8 * xs.length);
-    for (let i = 0; i < xs.length; i++) {
-        bytes.writeInt32LE(Math.round(xs[i] * params.unitsPerMetre), 8 * i);
-        bytes.writeInt32LE(Math.round(zs[i] * params.unitsPerMetre), 8 * i + 4);
-    }
+function writeModule(path, params, points) {
+    const bytes = Buffer.alloc(8 * points.length);
+    points.forEach(([x, z], i) => {
+        bytes.writeInt32LE(x, 8 * i);
+        bytes.writeInt32LE(z, 8 * i + 4);
+    });
     const date = new Date().toISOString().slice(0, 10);
     const source = `// Generated on ${date} by \`node tools/generate-mesh-points.mjs\`; do not edit.
-// Poisson-disk sample of the erodible disk (${xs.length} points): radius ${params.radius} m,
-// edge margin ${params.edgeMargin} m, minimum distance ${params.minDistance} m,
-// ${params.candidates} candidates, seed ${params.seed}. Coordinates are little-endian Int32
-// pairs (x, z) in micrometres, base64-encoded. A plain script (no export), so that it
-// runs as a browser <script>, a side-effect import in the Worker, and in vm contexts.
+// Poisson-disk sample of the square [-${params.halfSize}, ${params.halfSize}]² m in Cartesian coordinates
+// (${points.length} points): sides sampled every ${params.borderSpacing} m, minimum distance
+// ${params.minDistance} m, ${params.candidates} candidates, seed ${params.seed}. Order: ${params.erodibleCount} points
+// inside the ${params.radius} m disk (erodible), other interior points, then the border from index
+// ${params.borderStart} (sides, then corners). Coordinates are little-endian Int32 pairs (x, z) in
+// micrometres, base64-encoded. A plain script (no export), so that it runs as a browser
+// <script>, a side-effect import in the Worker, and in vm contexts.
 (function (root) {
     const params = ${JSON.stringify(params)};
     const data = '${bytes.toString('base64')}';
@@ -183,11 +230,25 @@ function writeModule(path, params, xs, zs) {
     renameSync(temporary, path);
 }
 
-const params = {
-    radius: RADIUS, edgeMargin: EDGE_MARGIN, minDistance: MIN_DISTANCE,
-    candidates: CANDIDATES, seed: SEED, unitsPerMetre: UNITS_PER_METRE
+const border = borderPoints(HALF_SIZE, BORDER_SPACING);
+const interior = poissonDisk(HALF_SIZE, border, MIN_DISTANCE, CANDIDATES, SEED);
+// Quantise before sorting, so that the disk test uses the coordinates that the
+// browser and the Worker will decode.
+const quantise = value => Math.round(value * UNITS_PER_METRE);
+const inner = interior.xs.map((x, i) => [quantise(x), quantise(interior.zs[i])]);
+const inDisk = ([x, z]) => {
+    const xm = x / UNITS_PER_METRE, zm = z / UNITS_PER_METRE;
+    return xm * xm + zm * zm < RADIUS * RADIUS;
 };
-const { xs, zs } = poissonDisk(RADIUS - EDGE_MARGIN, MIN_DISTANCE, CANDIDATES, SEED);
+const disk = inner.filter(inDisk);
+const surround = inner.filter(point => !inDisk(point));
+const edge = border.xs.map((x, i) => [quantise(x), quantise(border.zs[i])]);
+const params = {
+    halfSize: HALF_SIZE, radius: RADIUS, borderSpacing: BORDER_SPACING,
+    minDistance: MIN_DISTANCE, candidates: CANDIDATES, seed: SEED,
+    unitsPerMetre: UNITS_PER_METRE,
+    erodibleCount: disk.length, borderStart: disk.length + surround.length
+};
 const output = fileURLToPath(new URL('../js/mesh-points.js', import.meta.url));
-writeModule(output, params, xs, zs);
-console.log(`${xs.length} points written to ${output}`);
+writeModule(output, params, [...disk, ...surround, ...edge]);
+console.log(`${disk.length} disk, ${surround.length} surround and ${edge.length} border points written to ${output}`);
