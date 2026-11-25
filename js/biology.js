@@ -1,16 +1,11 @@
 /**
- * Visitor-local vegetation and Gray-Scott colonies on a finer grid than the bed.
+ * Visitor-local vegetation and Gray–Scott colonies, one cell per erodible vertex.
  */
 class BiologyGrid {
     constructor(terrain) {
         this.terrain = terrain;
-        this.size = 256;
-        this.spacing = 2 * terrain.radius / (this.size - 1);
-        const count = this.size * this.size;
-        this.faces = new Int32Array(count * 3);
-        this.faces.fill(-1);
-        this.weights = new Float32Array(count * 3);
-        this.active = new Uint8Array(count);
+        this.count = terrain.erodibleCount;
+        const count = this.count;
         this.sand = new Uint8Array(count);
         this.flow = new Float32Array(count);
         this.plants = new Float32Array(count);
@@ -30,22 +25,22 @@ class BiologyGrid {
         this.vertexFlux = new Float32Array(terrain.vertices.length);
         this.elapsed = 0;
 
-        for (let z = 0; z < this.size; z++) {
-            for (let x = 0; x < this.size; x++) {
-                const i = z * this.size + x;
-                const px = x * this.spacing - terrain.radius;
-                const pz = z * this.spacing - terrain.radius;
-                if (Math.hypot(px, pz) >= terrain.radius) continue;
-                const hit = terrain.locate(px, pz);
-                if (!hit) throw new Error(`Missing terrain under biology cell ${x},${z}`);
-                if (hit.face.some(index => index >= terrain.erodibleCount)) continue;
-                this.active[i] = 1;
-                for (let k = 0; k < 3; k++) {
-                    this.faces[3 * i + k] = hit.face[k];
-                    this.weights[3 * i + k] = hit.weights[k];
+        // Neighbour graph from the bed triangles: the erodible mesh is unstructured,
+        // so grid offsets (i±1, i±size) do not apply. Every pair of vertices sharing a
+        // triangle are neighbours, regardless of which side of the disk they lie on.
+        const neighbourSets = Array.from({ length: count }, () => new Set());
+        for (const [a, b, c] of terrain.triangles) {
+            const face = [a, b, c];
+            for (let p = 0; p < 3; p++) {
+                for (let q = p + 1; q < 3; q++) {
+                    const i = face[p], j = face[q];
+                    if (i >= count || j >= count) continue;
+                    neighbourSets[i].add(j);
+                    neighbourSets[j].add(i);
                 }
             }
         }
+        this.neighbours = neighbourSets.map(set => Array.from(set));
         this.reset();
     }
 
@@ -61,55 +56,41 @@ class BiologyGrid {
         this.nextV.fill(0);
         this.elapsed = 0;
         const radius = this.terrain.radius;
-        for (let z = 0; z < this.size; z++) {
-            for (let x = 0; x < this.size; x++) {
-                const i = z * this.size + x;
-                if (!this.active[i]) continue;
-                const px = x * this.spacing - radius;
-                const pz = z * this.spacing - radius;
-                const cellX = Math.floor(px / 3), cellZ = Math.floor(pz / 3);
-                let concentration = 0;
-                for (let cx = cellX - 1; cx <= cellX + 1; cx++) {
-                    for (let cz = cellZ - 1; cz <= cellZ + 1; cz++) {
-                        const hash = (Math.imul(cx, 73856093) ^ Math.imul(cz, 19349663)) >>> 0;
-                        if (hash % 2 !== 0) continue;
-                        const dx = px - 3 * (cx + 0.3 + ((hash >>> 4) % 40) / 100);
-                        const dz = pz - 3 * (cz + 0.3 + ((hash >>> 12) % 40) / 100);
-                        const distance = dx * dx + dz * dz;
-                        if (distance < 9) concentration = Math.max(concentration, 0.25 * Math.exp(-distance / 4));
-                    }
+        const vertices = this.terrain.vertices;
+        for (let i = 0; i < this.count; i++) {
+            const px = vertices[i].x, pz = vertices[i].z;
+            const cellX = Math.floor(px / 3), cellZ = Math.floor(pz / 3);
+            let concentration = 0;
+            for (let cx = cellX - 1; cx <= cellX + 1; cx++) {
+                for (let cz = cellZ - 1; cz <= cellZ + 1; cz++) {
+                    const hash = (Math.imul(cx, 73856093) ^ Math.imul(cz, 19349663)) >>> 0;
+                    if (hash % 2 !== 0) continue;
+                    const dx = px - 3 * (cx + 0.3 + ((hash >>> 4) % 40) / 100);
+                    const dz = pz - 3 * (cz + 0.3 + ((hash >>> 12) % 40) / 100);
+                    const distance = dx * dx + dz * dz;
+                    if (distance < 9) concentration = Math.max(concentration, 0.25 * Math.exp(-distance / 4));
                 }
-                this.microbeV[i] = concentration;
-                this.microbeSeeds[i] = concentration / 0.25;
             }
+            this.microbeV[i] = concentration;
+            this.microbeSeeds[i] = concentration / 0.25;
         }
         this.updateSand();
     }
 
-    terrainValue(i, values) {
-        const j = 3 * i;
-        return this.weights[j] * values[this.faces[j]] +
-            this.weights[j + 1] * values[this.faces[j + 1]] +
-            this.weights[j + 2] * values[this.faces[j + 2]];
-    }
-
     importLegacy() {
         const terrain = this.terrain;
-        for (let i = 0; i < this.active.length; i++) {
-            if (!this.active[i]) continue;
-            this.flow[i] = Math.max(0, this.terrainValue(i, terrain.flowHistory));
-            this.plants[i] = Math.max(0, Math.min(1, this.terrainValue(i, terrain.vegetation)));
-            this.microbeU[i] = Math.max(0, Math.min(1, this.terrainValue(i, terrain.microbeU)));
-            this.microbeV[i] = Math.max(0, Math.min(1, this.terrainValue(i, terrain.microbeV)));
+        for (let i = 0; i < this.count; i++) {
+            this.flow[i] = Math.max(0, terrain.flowHistory[i]);
+            this.plants[i] = Math.max(0, Math.min(1, terrain.vegetation[i]));
+            this.microbeU[i] = Math.max(0, Math.min(1, terrain.microbeU[i]));
+            this.microbeV[i] = Math.max(0, Math.min(1, terrain.microbeV[i]));
         }
     }
 
     updateSand() {
         const terrain = this.terrain;
-        for (let i = 0; i < this.active.length; i++) {
-            if (!this.active[i]) continue;
-            this.sand[i] = this.terrainValue(i, terrain.elevation) >
-                this.terrainValue(i, terrain.bedrock) + 1e-8 ? 1 : 0;
+        for (let i = 0; i < this.count; i++) {
+            this.sand[i] = terrain.elevation[i] > terrain.bedrock[i] + 1e-8 ? 1 : 0;
         }
     }
 
@@ -121,8 +102,8 @@ class BiologyGrid {
                 ? terrain.waterDepth[i] * Math.hypot(terrain.velocityX[i], terrain.velocityY[i]) : 0;
         }
         const alpha = 1 - Math.exp(-dt / 8);
-        for (let i = 0; i < this.active.length; i++) {
-            if (this.active[i]) this.flow[i] += alpha * (this.terrainValue(i, this.vertexFlux) - this.flow[i]);
+        for (let i = 0; i < this.count; i++) {
+            this.flow[i] += alpha * (this.vertexFlux[i] - this.flow[i]);
         }
         this.elapsed += dt;
         if (this.elapsed < 0.16) return;
@@ -133,18 +114,17 @@ class BiologyGrid {
     }
 
     updateColonies(dt) {
-        const size = this.size, count = this.active.length;
         this.nearby.set(this.flow);
         let nearby = this.nearby, scratch = this.scratch;
         for (let pass = 0; pass < 4; pass++) {
             scratch.set(nearby);
-            for (let z = 1; z < size - 1; z++) {
-                for (let x = 1; x < size - 1; x++) {
-                    const i = z * size + x;
-                    if (!this.active[i]) continue;
-                    scratch[i] = Math.max(nearby[i], 0.72 * nearby[i - 1], 0.72 * nearby[i + 1],
-                        0.72 * nearby[i - size], 0.72 * nearby[i + size]);
+            for (let i = 0; i < this.count; i++) {
+                let best = nearby[i];
+                for (const j of this.neighbours[i]) {
+                    const value = 0.72 * nearby[j];
+                    if (value > best) best = value;
                 }
+                scratch[i] = best;
             }
             [nearby, scratch] = [scratch, nearby];
         }
@@ -152,21 +132,20 @@ class BiologyGrid {
         let nearbyPlants = this.nearbyPlants, plantScratch = this.plantScratch;
         for (let pass = 0; pass < 12; pass++) {
             plantScratch.set(nearbyPlants);
-            for (let z = 1; z < size - 1; z++) {
-                for (let x = 1; x < size - 1; x++) {
-                    const i = z * size + x;
-                    if (!this.active[i] || !this.sand[i]) continue;
-                    plantScratch[i] = Math.max(nearbyPlants[i], 0.84 * nearbyPlants[i - 1],
-                        0.84 * nearbyPlants[i + 1], 0.84 * nearbyPlants[i - size],
-                        0.84 * nearbyPlants[i + size]);
+            for (let i = 0; i < this.count; i++) {
+                if (!this.sand[i]) continue;
+                let best = nearbyPlants[i];
+                for (const j of this.neighbours[i]) {
+                    const value = 0.84 * nearbyPlants[j];
+                    if (value > best) best = value;
                 }
+                plantScratch[i] = best;
             }
             [nearbyPlants, plantScratch] = [plantScratch, nearbyPlants];
         }
         const steps = Math.ceil(5 * dt);
         if (!steps) return;
         const step = 5 * dt / steps;
-        const offsets = [-1, 1, -size, size];
         for (let n = 0; n < steps; n++) {
             // The habitat is recomputed per sub-step on purpose: it depends on
             // this.plants, which is updated every sub-step, so it cannot be hoisted
@@ -174,43 +153,51 @@ class BiologyGrid {
             // hoisting the flow- and nearbyPlants-dependent factors would save
             // nothing and would change the Float32 rounding (bit-identical
             // evolution is kept). Do not "optimise" this away without measuring.
-            for (let i = 0; i < count; i++) {
-                this.habitat[i] = this.active[i] && this.sand[i]
-                    ? Math.max(0, 1 - this.flow[i] / 0.04) * Math.max(0, 1 - this.plants[i] / 0.6) *
-                    Math.min(1, Math.max(0, (nearbyPlants[i] - 0.035) / 0.12)) : 0;
+            for (let i = 0; i < this.count; i++) {
+                this.habitat[i] = this.sand[i]
+                    ? Math.max(0, 1 - this.flow[i] / 0.02) * Math.max(0, 1 - this.plants[i] / 0.6) *
+                    Math.min(1, Math.max(0, (nearbyPlants[i] - 0.06) / 0.09)) : 0;
             }
-            for (let z = 1; z < size - 1; z++) {
-                for (let x = 1; x < size - 1; x++) {
-                    const i = z * size + x;
-                    if (!this.active[i]) continue;
-                    const p = this.plants[i], inhibitor = this.inhibitor[i];
-                    const u = this.microbeU[i], v = this.microbeV[i], habitat = this.habitat[i];
-                    let lapP = 0, lapI = 0, lapU = 0, lapV = 0;
-                    for (const offset of offsets) {
-                        const j = i + offset;
-                        if (!this.active[j] || !this.sand[j] || !this.sand[i]) continue;
-                        lapP += (this.plants[j] - p) / 4;
-                        lapI += (this.inhibitor[j] - inhibitor) / 4;
+            for (let i = 0; i < this.count; i++) {
+                const p = this.plants[i], inhibitor = this.inhibitor[i];
+                const u = this.microbeU[i], v = this.microbeV[i], habitat = this.habitat[i];
+                let lapP = 0, lapI = 0, lapU = 0, lapV = 0, lapCount = 0;
+                if (this.sand[i]) {
+                    for (const j of this.neighbours[i]) {
+                        if (!this.sand[j]) continue;
+                        lapP += this.plants[j] - p;
+                        lapI += this.inhibitor[j] - inhibitor;
                         const weight = Math.min(habitat, this.habitat[j]);
-                        lapU += weight * (this.microbeU[j] - u) / 4;
-                        lapV += weight * (this.microbeV[j] - v) / 4;
+                        lapU += weight * (this.microbeU[j] - u);
+                        lapV += weight * (this.microbeV[j] - v);
+                        lapCount++;
                     }
-                    const wetness = Math.min(1, Math.max(0, (nearby[i] - 0.0008) / 0.008));
-                    const bank = this.sand[i] * wetness *
-                        Math.min(1, Math.max(0, (0.8 - this.flow[i] / Math.max(nearby[i], 1e-12)) / 0.6));
-                    const reaction = (habitat > 0 ? 1 : 0) * u * v * v;
-                    this.nextPlants[i] = Math.max(0, Math.min(1, p + step *
-                        (0.15 * lapP + bank * (0.06 + 0.8 * p) * (1 - p) -
-                            (0.9 * inhibitor + (this.sand[i] ? 0 : 0.2)) * p)));
-                    this.nextInhibitor[i] = Math.max(0, Math.min(1, inhibitor + step *
-                        (0.02 * lapI + 0.1 * p - 0.05 * inhibitor)));
-                    this.nextU[i] = Math.max(0, Math.min(1, u + step *
-                        (0.9 * lapU - reaction + 0.046 * (1 - u))));
-                    // A localized inoculum revives colonies lost from saved states.
-                    this.nextV[i] = Math.max(0, Math.min(1, v + step *
-                        (0.45 * lapV + reaction - (0.109 + 0.15 * (1 - habitat)) * v +
-                            0.06 * this.microbeSeeds[i] * habitat * Math.max(0, 1 - v / 0.15))));
+                    if (lapCount > 0) {
+                        lapP /= lapCount;
+                        lapI /= lapCount;
+                        lapU /= lapCount;
+                        lapV /= lapCount;
+                    }
                 }
+                const wetness = Math.min(1, Math.max(0, (nearby[i] - 0.009) / 0.005));
+                const bank = this.sand[i] * wetness *
+                    Math.min(1, Math.max(0, (0.8 - this.flow[i] / Math.max(nearby[i], 1e-12)) / 0.6));
+                // Cells inside a fast-moving current are fully inhibited:
+                // no plants or microbes grow, spread or inoculate there.
+                const waterKill = Math.min(1, Math.max(0, (this.flow[i] - 0.010) / 0.008));
+                const growth = 1 - waterKill;
+                const reaction = (habitat > 0 ? 1 : 0) * growth * u * v * v;
+                this.nextPlants[i] = Math.max(0, Math.min(1, p + step *
+                    (growth * (0.06 * lapP + bank * (0.06 + 0.8 * p) * (1 - p)) -
+                        (0.9 * inhibitor + (this.sand[i] ? 0 : 0.2) + 1.5 * waterKill) * p)));
+                this.nextInhibitor[i] = Math.max(0, Math.min(1, inhibitor + step *
+                    (0.02 * lapI + 0.1 * p - 0.05 * inhibitor)));
+                this.nextU[i] = Math.max(0, Math.min(1, u + step *
+                    (0.9 * lapU - reaction + 0.046 * (1 - u))));
+                // A localized inoculum revives colonies lost from saved states.
+                this.nextV[i] = Math.max(0, Math.min(1, v + step *
+                    (0.45 * lapV + reaction - (0.109 + 0.15 * (1 - habitat) + 1.0 * waterKill) * v +
+                        0.06 * this.microbeSeeds[i] * habitat * growth * Math.max(0, 1 - v / 0.15))));
             }
             [this.plants, this.nextPlants] = [this.nextPlants, this.plants];
             [this.inhibitor, this.nextInhibitor] = [this.nextInhibitor, this.inhibitor];
@@ -228,19 +215,19 @@ class BiologyGrid {
                 bytes += String.fromCharCode(encoded >>> 8, encoded & 255);
             }
         }
-        return { version: 1, size: this.size, data: btoa(bytes) };
+        return { version: 2, count: this.count, data: btoa(bytes) };
     }
 
     fromJSON(json) {
-        if (!json || typeof json !== 'object' || json.version !== 1 ||
-            json.size !== this.size || typeof json.data !== 'string') {
+        if (!json || typeof json !== 'object' || json.version !== 2 ||
+            json.count !== this.count || typeof json.data !== 'string') {
             console.warn('Saved biology is incompatible with the local grid');
             return false;
         }
         // 4 fields x 2 bytes per cell; base64 is 4/3 longer. Reject an implausible
         // length before decoding so a corrupted or hostile string cannot make
         // atob allocate a huge binary string.
-        const expectedBytes = this.active.length * 8;
+        const expectedBytes = this.count * 8;
         const expectedDataLength = Math.ceil(expectedBytes / 3) * 4;
         if (json.data.length < expectedDataLength - 4 || json.data.length > expectedDataLength + 4) {
             console.warn('Saved biology has an invalid length');

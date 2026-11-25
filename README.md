@@ -18,7 +18,7 @@ and branching is encouraged but not guaranteed.
  ┌──────────── each browser (local) ────────────┐           ┌──── Cloudflare ─────┐
  │ water parcels ─► erosion / deposition ─► bed │  delta    │ Worker + Durable    │
  │                                          │   ├─────────► │ Object "global":    │
- │ vegetation + microbes (256 × 256 grid) ◄─┘   │           │ mean of the deltas  │
+ │ vegetation + microbes (per-vertex) ◄─┘       │           │ mean of the deltas  │
  │                                              │ ◄─────────┤ per vertex, version │
  └──────────────────────────────────────────────┘  shared   └─────────────────────┘
                                                    elevation
@@ -295,10 +295,10 @@ weighted velocity and $\Phi_i$ the water flux.
 
 #### Biology: vegetation and microbial colonies
 
-Biology lives on a regular $256 \times 256$ grid of spacing $\Delta = 2R/255$,
-finer than the mesh. It is restricted to cells inside the disk whose triangle is
-fully erodible. Each cell interpolates the bed and has a sand mask
-$m_i = [\eta > \beta]$. Every frame, a flow memory $F$ follows the interpolated
+Biology lives on the erodible vertices of the mesh itself (one cell per
+erodible vertex, $N = 47{,}323$, with the vertex spacing, about $0.2$ u). Each
+cell sits on its vertex, has the bed and the sand mask $m_i = [\eta_i > \beta_i]$
+directly, and neighbours are the vertices sharing a triangle. Every frame, a flow memory $F$ follows the vertex
 flux with time constant $\tau_F$:
 
 $$F \leftarrow F + \bigl(1 - e^{-\Delta t/\tau_F}\bigr)(\Phi - F).$$
@@ -308,30 +308,36 @@ $\lceil 5\,\Delta t_b\rceil$ explicit Euler steps covering $5\,\Delta t_b$ units
 biological time, where $\Delta t_b$ is the accumulated simulation time. Biology
 therefore runs five times faster than the water. Two
 neighbourhood fields come from repeated decaying max-dilations
-$\mathcal{D}_\gamma[X]_i = \max(X_i,\ \gamma X_j : j \in \mathcal{N}_4(i))$:
+$\mathcal{D}_\gamma[X]_i = \max(X_i,\ \gamma X_j : j \in \mathcal{N}(i))$:
 nearby flow $N = \mathcal{D}^4_{0.72}[F]$ and nearby plants
 $N_P = \mathcal{D}^{12}_{0.84}[P]$, the latter spreading through sand only. Then
 
-$$H = m\,(1 - F/0.04)_+\,(1 - P/0.6)_+\,\operatorname{clip}\!\left(\frac{N_P - 0.035}{0.12},\ 0,\ 1\right),\qquad
-B = m\,\operatorname{clip}\!\left(\frac{N - 0.0008}{0.008},\ 0,\ 1\right)\operatorname{clip}\!\left(\frac{0.8 - F/N}{0.6},\ 0,\ 1\right),$$
+$$H = m\,(1 - F/0.02)_+\,(1 - P/0.6)_+\,\operatorname{clip}\!\left(\frac{N_P - 0.06}{0.09},\ 0,\ 1\right),\qquad
+B = m\,\operatorname{clip}\!\left(\frac{N - 0.009}{0.005},\ 0,\ 1\right)\operatorname{clip}\!\left(\frac{0.8 - F/N}{0.6},\ 0,\ 1\right),\qquad
+W = \operatorname{clip}\!\left(\frac{F - 0.010}{0.008},\ 0,\ 1\right),$$
 
-where $H$ is the microbial habitat (calm, sandy, near but not under plants) and
-$B$ the plant-growth "bank" term (wet surroundings but not the strongest path).
+where $H$ is the microbial habitat (calm, sandy, near but not under plants),
+$B$ the plant-growth "bank" term (a narrow wet band along the edges of the
+currents, not the strongest path) and $W$ the water-current kill: inside a fast
+current ($F \ge 0.018$), plants and microbes neither grow nor spread. The
+factor $1 - W$ scales every growth, diffusion and inoculation term, and $W$ adds
+a decay penalty to plants and microbes, so neither species appear in a stream.
 The four fields evolve as
 
 $$\begin{aligned}
-\dot P &= D_P\,\mathcal{L}P + B\,(0.06 + 0.8P)(1 - P) - \bigl(0.9\,I + 0.2\,(1 - m)\bigr)P,\\
+\dot P &= (1 - W)\bigl[D_P\,\mathcal{L}P + B\,(0.06 + 0.8P)(1 - P)\bigr] - \bigl(0.9\,I + 0.2\,(1 - m) + 1.5\,W\bigr)P,\\
 \dot I &= D_I\,\mathcal{L}I + 0.1\,P - 0.05\,I,\\
-\dot U &= D_U\,\mathcal{L}_H U - [H > 0]\,U V^2 + F_{GS}(1 - U),\\
-\dot V &= D_V\,\mathcal{L}_H V + [H > 0]\,U V^2 - \bigl(F_{GS} + k_{GS} + 0.15\,(1 - H)\bigr)V + 0.06\,\Sigma\,H\,(1 - V/0.15)_+,
+\dot U &= D_U\,\mathcal{L}_H U - [H > 0]\,(1 - W)\,U V^2 + F_{GS}(1 - U),\\
+\dot V &= D_V\,\mathcal{L}_H V + [H > 0]\,(1 - W)\,U V^2 - \bigl(F_{GS} + k_{GS} + 0.15\,(1 - H) + 1.0\,W\bigr)V + 0.06\,\Sigma\,H\,(1 - W)\,(1 - V/0.15)_+,
 \end{aligned}$$
 
 where $P$ is the vegetation density, $I$ its inhibitor (crowded centres fade while
 colony edges keep growing), $U$ and $V$ the Gray–Scott substrate and microbe
 concentrations, and $\Sigma$ a fixed map of Gaussian seed patches. The diffuse
-source $0.06\,\Sigma H$ lets colonies regrow after extinction. The discrete
-Laplacian $\mathcal{L}X_i = \tfrac14\sum_{j}(X_j - X_i)$ runs over the four
-neighbours, with both cells sandy. $\mathcal{L}_H$ weights each term by
+source $0.06\,\Sigma H (1 - W)$ lets colonies regrow after extinction. The discrete
+Laplacian $\mathcal{L}X_i = \frac{1}{|\mathcal{N}_s(i)|}\sum_{j \in \mathcal{N}_s(i)}(X_j - X_i)$
+runs over the sandy neighbours, divided by the number of contributing
+neighbours. $\mathcal{L}_H$ weights each term by
 $\min(H_i, H_j)$, so microbes diffuse only through suitable habitat. All fields are
 clipped to $[0, 1]$.
 
@@ -410,16 +416,20 @@ reinjected at $r = 24.4$ u.
 
 | Symbol | Name in code | Default | Role |
 | --- | --- | --- | --- |
-| — | `size` | 256 | Cells per side |
-| $\Delta$ | `spacing` | $2R/255$ ≈ 0.196 u | Cell spacing |
+| — | `count` | 47,323 (`terrain.erodibleCount`) | Cells, one per erodible vertex |
+| $\Delta s$ | `terrain.spacing` | 0.2 u | Mean vertex spacing (border points) |
 | $\tau_F$ | literal | 8 sim s | Flow-memory time constant |
 | — | literal | 0.16 sim s | Minimum interval between colony updates |
 | — | literal | 5 | Biological time per simulation second |
-| $D_P$, $D_I$ | literals | 0.15, 0.02 | Plant and inhibitor diffusion (grid units) |
-| $D_U$, $D_V$ | literals | 0.9, 0.45 | Gray–Scott diffusion (grid units) |
+| $D_P$, $D_I$ | literals | 0.06, 0.02 | Plant and inhibitor diffusion (mesh units) |
+| $D_U$, $D_V$ | literals | 0.9, 0.45 | Gray–Scott diffusion (mesh units) |
 | $F_{GS}$ | literal | 0.046 | Gray–Scott feed rate |
 | $k_{GS}$ | literal (0.109 − 0.046) | 0.063 | Gray–Scott kill rate |
 | $\Sigma$ | `microbeSeeds` | Gaussian patches, amplitude 1 | Inoculum map (3 u lattice) |
+| $W$ | literals | 0.010, 0.008 | Water-current kill: $W = \operatorname{clip}((F - 0.010)/0.008, 0, 1)$ |
+| — | literals | 0.02, 0.06, 0.09 | Habitat: flow cutoff, $N_P$ onset, band width |
+| — | literals | 0.009, 0.005 | Bank wetness: onset, width (≈ 2-vertex band) |
+| — | literals | 1.5, 1.0 | Plant and microbe decay rates inside a current |
 
 **Collaboration:** `worker/index.mjs`, `worker/mesh.mjs` and `js/collaboration.js`.
 
@@ -487,12 +497,12 @@ console.
 | Mode | What is shown |
 | --- | --- |
 | `habitat` (default) | Dark bed with the biology overlay: yellow-green vegetation and ochre-to-purple microbes |
-| `Tree of life` | Dark bed with the biology overlay in a vivid style: green plants intensified near streams (high flow) and red-purple microbes at colony edges (gradient-based edge detection) |
-| `streams` | Dark bed with the biology overlay: luminous blue water proportional to flow, green plants along streams and red-magenta microbial colonies |
+| `Tree of life` | Composite of the habitat, sand depth and flow views: dark-bed sand depth with the biology overlay in a vivid, flow-reactive style — green plants intensified near streams (high flow) and red-purple microbes at colony edges (gradient-based edge detection) |
+| `streams` | Dark bed with the biology overlay: luminous blue water proportional to depth and velocity, green plants along streams and red-magenta microbial colonies with edge detection |
 | `mesh` | Wireframe of the triangular mesh with the parcels, without biology |
 | `sand depth` | Sand thickness in a reversed cmocean *deep* map: dark for bare rock, mid-palette for the initial layer $D_0$, lightest at $2D_0$ or more (`SAND_DEPTH_DISPLAY_MAX`); dimmed lighting |
 | `flux` | Water flux $\Phi_i$, square-root scaled by its current maximum |
-| `sediment` | Suspended sediment $c_i$, square-root scaled by its current maximum |
+| `sediment` | Sediment flux in transit $c_i \, h_i \, \lVert\mathbf{u}_i\rVert$, square-root scaled by its current maximum |
 
 The fixed surround is black in every mode except `mesh`. Water parcels are drawn
 as flattened blue spheres. A bursting parcel turns white and fades.
@@ -689,7 +699,7 @@ the mesh changes.
 | --- | --- | --- | --- |
 | Durable Object | `state` | Shared elevation, bedrock, version, active IDs, pending sum of deltas | Permanent |
 | `localStorage` | `tree-of-life-terrain-disk-v12` | Elevation, water, sediment and particles (format `16.0`); saved when a new shared version arrives and after a reset | Ignored after 24 h |
-| `localStorage` | `tree-of-life-local-biology-v2` | Plants, inhibitor, $U$, $V$, quantised to 16 bits | Saved every 5 s and on exit |
+| `localStorage` | `tree-of-life-local-biology-v3` | Plants, inhibitor, $U$, $V$, quantised to 16 bits | Saved every 5 s and on exit |
 | `localStorage` | `tree-of-life-collaborator-id` | Random browser ID | Until storage is cleared |
 | `localStorage` | `tree-of-life-simulation-time-v1:<uuid>` | Simulation time of one tab | Summed over all tabs |
 | `sessionStorage` | `github-oauth-token`, `tree-of-life-oauth-state` | GitHub token and OAuth `state` | Until the tab closes |
@@ -697,9 +707,9 @@ the mesh changes.
 
 Terrain saves from formats `10.0` to `13.0` were made on the polar-ring meshes
 and are ignored. A save that still holds per-vertex vegetation and microbe arrays (the
-former biology) is resampled once onto the 256 × 256 grid, if no biology save
+former biology) is copied once onto the erodible vertices, if no biology save
 exists yet. The terrain save is about 1.5 million characters and the biology save
-about 0.7 million, so both together use roughly half the usual 5-million-character
+about 0.5 million, so both together use roughly half the usual 5-million-character
 quota of an origin.
 
 [↑ Contents](#contents)
@@ -858,9 +868,8 @@ erodible, and the border is the last `MESH_POINTS.count − borderStart` vertice
 
 | Task | Method |
 | --- | --- |
-| Map grid cells to mesh triangles (`faces`, `weights`, `active`) | `constructor(terrain)` |
+| Build the neighbour graph from the bed triangles | `constructor(terrain)` |
 | Seed patches $\Sigma$ and initial $U$, $V$ | `reset()` |
-| Interpolate a vertex field at a cell | `terrainValue(i, values)` |
 | Sand mask $m$ | `updateSand()` |
 | Flow memory $F$, colony timer | `step(dt)` |
 | Dilations $N$, $N_P$, habitat $H$, bank $B$, Euler steps of $P$, $I$, $U$, $V$ | `updateColonies(dt)` |
@@ -873,7 +882,7 @@ erodible, and the border is the last `MESH_POINTS.count − borderStart` vertice
 | --- | --- |
 | Scene, top-down camera, lights | `constructor(canvas)`, `onWindowResize()` (keeps the disk in view on portrait screens) |
 | Terrain geometry and colours per display mode | `createTerrainMesh()`, `updateTerrainMesh()`, `updateTerrainColors()` |
-| Biology overlay (`habitat`, `Tree of life`, and `streams` modes) | `createBiologyMesh()`, `updateBiologyMesh()`, `volcanicColor()`, `lifeMapColor()`, `streamsColor()` |
+| Biology overlay (`habitat`, `Tree of life`, and `streams` modes) | `createBiologyMesh()`, `updateBiologyMesh()`, `volcanicColor()`, `treeOfLifeColor()`, `streamsColor()` |
 | Sand-depth colour map | `deepColor(t)`, `TerrainRenderer.DEEP`, `SAND_DEPTH_DISPLAY_MAX` |
 | Instanced parcels with a burst shader patch | `updateParticles(physics)` |
 | Mode order | `cycleDisplayMode()` |
@@ -1022,7 +1031,7 @@ initialize the same higher-resolution terrain* checks it.
 | Data | Writer | Format | Compatibility |
 | --- | --- | --- | --- |
 | Local terrain | `TerrainGrid.toJSON()` | `version: '16.0'`, `topology`, `meshSignature`, arrays, particles | Reads `16.0` only; 500 or 1,000 saved parcels are topped up to 1,500 |
-| Local biology | `BiologyGrid.toJSON()` | `version: 1`, `size: 256`, base64 of four 16-bit fields | Exact match only |
+| Local biology | `BiologyGrid.toJSON()` | `version: 2`, `count: erodibleCount`, base64 of four 16-bit fields | Exact match only |
 | Store wrapper | `LocalStorageManager.save()` | `{ version: '1.0', savedAt, data }` | Version must match; terrain expires after 24 h |
 | Shared state | `createState()` in the Worker | `schemaVersion: 4`, `meshSignature`, float64 arrays, contributions | Resets any other schema or signature |
 
@@ -1124,7 +1133,7 @@ cannot keep up reaches the cap $\Delta t_w^{\max}$: each frame then simulates
 simulation falls behind real time. Raising the speed with **↑** adds substeps, so
 it makes each frame more expensive.
 
-Measured on 2026-11-17 under Node.js 26 (V8), one core of an Apple M3 Ultra,
+Measured on 2026-11-25 under Node.js 26 (V8), one core of an Apple M3 Ultra,
 jittered mesh, nominal step of 0.04 sim s, averages over 40 calls:
 
 | Operation | Time | Per frame |
@@ -1132,20 +1141,20 @@ jittered mesh, nominal step of 0.04 sim s, averages over 40 calls:
 | `PhysicsEngine.step()` (2 substeps) | 48 ms | 48 ms |
 | of which `relaxSand()` (4 sweeps × 150,005 edges) | 18 ms per substep | ≈ 36 ms |
 | of which `collideParticles()` | 1.3 ms per substep | ≈ 3 ms |
-| `BiologyGrid.step()`, averaged | 26 ms | 26 ms |
-| of which `updateColonies(0.16)` | 97 ms, every 4th frame | ≈ 24 ms |
-| `new TerrainGrid()` | 270 ms | once |
-| `new BiologyGrid()` | 90 ms | once |
+| `BiologyGrid.step()`, averaged | 5 ms | 5 ms |
+| of which `updateColonies(0.16)` | 12 ms, every 4th frame | ≈ 3 ms |
+| `new TerrainGrid()` | 400 ms | once |
+| `new BiologyGrid()` | 50 ms | once |
 
-At this step, physics and biology take about **75 ms per frame**. Rendering adds the upload and
-`computeVertexNormals()` of the 87,276-vertex terrain, of the 65,536-vertex biology
+At this step, physics and biology take about **55 ms per frame**. Rendering adds the upload and
+`computeVertexNormals()` of the 87,276-vertex terrain, of the ~47,323-vertex biology
 overlay in `habitat`, `Tree of life`, and `streams` modes, and 1,500 `sample()` calls to place the parcels.
 
 Where the time goes:
 
 1. **Sand relaxation**: four full sweeps over all edges in every substep, even
    where no slope exceeds the angle of repose.
-2. **Colony update**: about 18 passes over 65,536 cells every 0.16 sim s.
+2. **Colony update**: about 18 passes over ~47,323 cells every 0.16 sim s.
 3. **Geometry upload**: normals and colours of every vertex, every frame.
 4. **Point location**: `locate()` builds a string key and scans a bin of triangles,
    several times per parcel per substep.
@@ -1239,7 +1248,7 @@ Status on 2026-11-17.
 - [x] Lagrangian parcels with gravity, friction, soft pressure and wall reflection
 - [x] Speed-dependent transport capacity, angle-of-repose avalanches, recycling
 - [x] Exact conservation of sand plus load (tested over a closed cycle and reload)
-- [x] Vegetation with inhibitor and Gray–Scott microbes on a local 256 × 256 grid
+- [x] Vegetation with inhibitor and Gray–Scott microbes on the mesh vertices
 - [x] Cloudflare Worker with per-version averaging of compressed deltas,
   validation, migrations, an adaptive request budget and a merge countdown
 - [x] GitHub OAuth through the Worker; owner-only reset checked server-side

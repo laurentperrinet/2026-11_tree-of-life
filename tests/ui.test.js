@@ -17,7 +17,7 @@ test('default camera centers the disk at the zenith and controls preserve its ta
     class Light { constructor() { this.position = new Vector(); } }
     const THREE = {
         Scene, Color: class {}, PerspectiveCamera: Camera,
-        WebGLRenderer: class { setSize() {} dispose() {} }, AmbientLight: Light, DirectionalLight: Light,
+        WebGLRenderer: class { setPixelRatio() {} setSize() {} dispose() {} }, AmbientLight: Light, DirectionalLight: Light,
         Object3D: class {}
     };
     const windowListeners = new Map();
@@ -81,7 +81,8 @@ test('mesh view shows the wireframe and particles without biology', () => {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js/renderer.js'), 'utf8'), context);
     const TerrainRenderer = vm.runInContext('TerrainRenderer', context);
     const renderer = Object.create(TerrainRenderer.prototype);
-    const colors = { setXYZ() {} };
+    const recorded = [];
+    const colors = { setXYZ(i, r, g, b) { recorded.push([i, r, g, b]); } };
     const material = { color: new Color(), specular: new Color(), wireframe: false };
     renderer.terrainMesh = {
         material,
@@ -91,7 +92,7 @@ test('mesh view shows the wireframe and particles without biology', () => {
     renderer.particleMesh = { visible: true };
     const grid = {
         elevation: [0.3], bedrock: [0], initialSandDepth: 0.3, erodibleCount: 1,
-        waterDepth: [0], velocityX: [0], velocityY: [0], sediment: [0]
+        waterDepth: [0.2], velocityX: [0.3], velocityY: [0], sediment: [0.4]
     };
     renderer.displayMode = 'habitat';
     renderer.cycleDisplayMode();
@@ -115,6 +116,25 @@ test('mesh view shows the wireframe and particles without biology', () => {
     assert.equal(renderer.displayMode, 'flux');
     assert.equal(material.color.r, 1);
     assert.equal(material.specular.r, 17 / 255);
+
+    renderer.cycleDisplayMode();
+    recorded.length = 0;
+    renderer.updateTerrainColors(grid);
+    assert.equal(renderer.displayMode, 'sediment');
+    assert.equal(material.color.r, 1);
+    assert.equal(material.specular.r, 17 / 255);
+    // Sediment flux is square-root scaled: with one vertex the normalised value
+    // is t = 1, so the magenta gradient reaches its brightest end.
+    const [, r, g, b] = recorded[0];
+    assert.ok(r > b && b > g, `expected r > b > g, got r=${r} b=${b} g=${g}`);
+
+    // With no water the flux is zero and the gradient sits at its dim end.
+    grid.waterDepth = [0];
+    grid.velocityX = [0];
+    recorded.length = 0;
+    renderer.updateTerrainColors(grid);
+    const [, dimR, dimG, dimB] = recorded[0];
+    assert.ok(dimB > dimR && dimR > dimG, `expected b > r > g, got b=${dimB} r=${dimR} g=${dimG}`);
 });
 
 test('authentication status is hidden until a user signs in', () => {

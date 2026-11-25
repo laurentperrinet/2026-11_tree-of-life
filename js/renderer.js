@@ -12,6 +12,9 @@ class TerrainRenderer {
         this.captureCamera = null;
         this.captureBuffer = null;
         this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+        // Cap the pixel ratio at 2: the bed is a dense 25 m disk and the default
+        // ratio can make the frame buffer enormous on high-density displays.
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.scene.add(new THREE.AmbientLight(0xffffff, 0.65));
         const light = new THREE.DirectionalLight(0xffffff, 0.85);
@@ -59,29 +62,30 @@ class TerrainRenderer {
             this.biologyMesh.geometry.dispose();
             this.biologyMesh.material.dispose();
         }
-        const positions = new Float32Array(biology.active.length * 3);
+        const terrain = biology.terrain;
+        const count = biology.count;
+        const positions = new Float32Array(count * 3);
+        for (let i = 0; i < count; i++) {
+            positions[3 * i] = terrain.vertices[i].x;
+            positions[3 * i + 1] = terrain.elevation[i] + 0.015;
+            positions[3 * i + 2] = terrain.vertices[i].z;
+        }
+        // The biology overlay is built on the terrain mesh itself: one vertex per
+        // erodible vertex and the same triangles, so the two stay in register as
+        // the bed erodes.
         const indices = [];
-        for (let z = 0; z < biology.size; z++) {
-            for (let x = 0; x < biology.size; x++) {
-                const i = z * biology.size + x;
-                positions[3 * i] = x * biology.spacing - biology.terrain.radius;
-                positions[3 * i + 2] = z * biology.spacing - biology.terrain.radius;
-                if (x + 1 >= biology.size || z + 1 >= biology.size) continue;
-                const right = i + 1, below = i + biology.size, diagonal = below + 1;
-                if (biology.active[i] && biology.active[below] && biology.active[right]) {
-                    indices.push(i, below, right);
-                }
-                if (biology.active[right] && biology.active[below] && biology.active[diagonal]) {
-                    indices.push(right, below, diagonal);
-                }
-            }
+        for (const [a, b, c] of terrain.triangles) {
+            if (a < count && b < count && c < count) indices.push(a, b, c);
         }
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(positions.length), 3));
+        // RGBA colour attribute: the alpha channel carries the per-vertex density,
+        // so the overlay blends softly over the bed instead of snapping opaque.
+        geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(count * 4), 4));
         geometry.setIndex(indices);
         this.biologyMesh = new THREE.Mesh(geometry, new THREE.MeshPhongMaterial({
-            vertexColors: true, side: THREE.DoubleSide, shininess: 25
+            vertexColors: true, transparent: true, depthWrite: false,
+            side: THREE.DoubleSide, shininess: 25
         }));
         this.scene.add(this.biologyMesh);
         this.updateBiologyMesh(biology);
@@ -99,25 +103,30 @@ class TerrainRenderer {
 
     updateBiologyMesh(biology) {
         const geometry = this.biologyMesh.geometry;
+        const terrain = biology.terrain;
         const positions = geometry.attributes.position;
-        for (let i = 0; i < biology.active.length; i++) {
-            if (biology.active[i]) positions.array[3 * i + 1] = biology.terrainValue(i, biology.terrain.elevation) + 0.015;
+        for (let i = 0; i < biology.count; i++) {
+            positions.array[3 * i + 1] = terrain.elevation[i] + 0.015;
         }
         positions.needsUpdate = true;
         geometry.computeVertexNormals();
         const colors = geometry.attributes.color;
         const normals = geometry.attributes.normal;
         const color = new THREE.Color();
-        for (let i = 0; i < biology.active.length; i++) {
-            if (!biology.active[i]) continue;
+        for (let i = 0; i < biology.count; i++) {
             if (this.displayMode === 'Tree of life') {
-                this.lifeMapColor(biology, i, color);
+                this.treeOfLifeColor(biology, i, normals, color);
             } else if (this.displayMode === 'streams') {
                 this.streamsColor(biology, i, color);
             } else {
                 this.volcanicColor(biology, i, normals, color);
             }
-            colors.setXYZ(i, color.r, color.g, color.b);
+            // Per-density alpha: sparse colonies stay translucent, dense patches
+            // approach full opacity. No fade-out at the disk edge.
+            const density = Math.max(
+                biology.plants[i], biology.microbeV[i] / 0.3, biology.flow[i] / 0.02);
+            const alpha = Math.min(1, density * 1.5);
+            colors.setXYZW(i, color.r, color.g, color.b, alpha);
         }
         colors.needsUpdate = true;
     }
@@ -126,7 +135,7 @@ class TerrainRenderer {
         const colors = this.terrainMesh.geometry.attributes.color;
         const material = this.terrainMesh.material;
         material.wireframe = this.displayMode === 'mesh';
-        const sandView = this.displayMode === 'sand depth';
+        const sandView = this.displayMode === 'sand depth' || this.displayMode === 'Tree of life';
         const brightness = sandView ? 0.6 : material.wireframe ? 0.3 : 1;
         const specular = sandView || material.wireframe ? 0 : 17 / 255;
         material.color.setRGB(brightness, brightness, brightness);
@@ -136,7 +145,7 @@ class TerrainRenderer {
             for (let i = 0; i < grid.elevation.length; i++) {
                 const value = this.displayMode === 'flux'
                     ? grid.waterDepth[i] * Math.hypot(grid.velocityX[i], grid.velocityY[i])
-                    : grid.sediment[i];
+                    : grid.sediment[i] * grid.waterDepth[i] * Math.hypot(grid.velocityX[i], grid.velocityY[i]);
                 max = Math.max(max, value);
             }
         }
@@ -146,109 +155,83 @@ class TerrainRenderer {
                 color.setRGB(0.55, 0.65, 0.7);
             } else if (i >= grid.erodibleCount) {
                 color.setRGB(0, 0, 0);
-            } else if (this.displayMode === 'habitat' || this.displayMode === 'Tree of life' || this.displayMode === 'streams') {
+            } else if (this.displayMode === 'habitat' || this.displayMode === 'streams') {
                 color.setRGB(0.053, 0.053, 0.055);
-            } else if (this.displayMode === 'sand depth') {
+            } else if (this.displayMode === 'sand depth' || this.displayMode === 'Tree of life') {
                 const depth = (grid.elevation[i] - grid.bedrock[i]) / grid.initialSandDepth;
                 this.deepColor(depth / TerrainRenderer.SAND_DEPTH_DISPLAY_MAX, color);
             } else {
                 const value = this.displayMode === 'flux'
                     ? grid.waterDepth[i] * Math.hypot(grid.velocityX[i], grid.velocityY[i])
-                    : grid.sediment[i];
+                    : grid.sediment[i] * grid.waterDepth[i] * Math.hypot(grid.velocityX[i], grid.velocityY[i]);
                 const t = max > 0 ? Math.sqrt(value / max) : 0;
                 if (this.displayMode === 'flux') color.setRGB(0.12 + 0.2 * t, 0.17 + 0.65 * t, 0.2 + 0.8 * t);
-                else color.setRGB(0.2 + 0.7 * t, 0.16 + 0.55 * t, 0.1);
+                else color.setRGB(0.18 + 0.77 * t, 0.05 + 0.2 * t, 0.28 + 0.55 * t);
             }
             colors.setXYZ(i, color.r, color.g, color.b);
         }
         colors.needsUpdate = true;
     }
 
-    lifeMapColor(biology, i, color) {
-        color.setRGB(0.015, 0.015, 0.02);
-
-        // Plants: vivid green, intensified near streams (high flow)
-        if (biology.sand[i] && biology.plants[i] > 0.05) {
-            const plantBase = biology.plants[i];
-            const flowBoost = Math.min(1, biology.flow[i] / 0.012);
-            const plantIntensity = plantBase * (0.4 + 0.6 * flowBoost);
-            const hue = 0.25 + 0.05 * (1 - flowBoost);
-            color.setHSL(hue, Math.min(1, 1.0 * plantIntensity), 0.2 + 0.5 * plantIntensity);
-        }
-
-        // Microbes: vivid red-purple at colony edges (gradient-based edge detection)
-        if (biology.microbeV[i] > 0.015) {
-            const size = biology.size;
-            const x = i % size;
-            const z = Math.floor(i / size);
-            let edgeStrength = 0;
-
-            if (x > 0 && x < size - 1 && z > 0 && z < size - 1) {
-                const v = biology.microbeV[i];
-                const gradients = [
-                    Math.abs(biology.microbeV[i - 1] - v),
-                    Math.abs(biology.microbeV[i + 1] - v),
-                    Math.abs(biology.microbeV[i - size] - v),
-                    Math.abs(biology.microbeV[i + size] - v)
-                ];
-                edgeStrength = Math.max(...gradients);
-            }
-
-            const microbeDensity = Math.min(1, biology.microbeV[i] / 0.25);
-            const edgeDetected = Math.min(1, edgeStrength / 0.06);
-            const microbeIntensity = microbeDensity * (0.2 + 0.8 * edgeDetected);
-
-            const purple = Math.min(1, biology.microbeV[i] / 0.3);
-            const targetR = 0.85 - 0.2 * purple;
-            const targetG = 0.05 - 0.03 * purple;
-            const targetB = 0.2 + 0.5 * purple;
-
-            color.r = color.r + (targetR - color.r) * microbeIntensity;
-            color.g = color.g + (targetG - color.g) * microbeIntensity;
-            color.b = color.b + (targetB - color.b) * microbeIntensity;
-        }
+    treeOfLifeColor(biology, i, normals, color) {
+        // Composite of the habitat view (sand depth + plants) and the flow view:
+        // plant intensity and hue are boosted where water runs, so the overlay
+        // brightens along streams while microbes stay confined to calm patches.
+        const growth = biology.sand[i] ? biology.plants[i] : 0;
+        const ny = normals.getY(i);
+        const nx = normals.getX(i);
+        const facing = Math.max(0, Math.min(1, 0.5 + 0.9 * (nx * 0.4 + ny - 0.85)));
+        const flowBoost = Math.min(1, biology.flow[i] / 0.012);
+        const hue = 0.17 + 0.04 * (1 - facing);
+        const lightness = 0.035 + 0.45 * growth * (0.4 + 0.6 * flowBoost) * (0.5 + 0.5 * facing);
+        color.setHSL(hue, 0.95 * growth * (0.4 + 0.6 * flowBoost), lightness);
+        const rock = biology.sand[i] ? 0.018 : 0.035;
+        color.r += rock; color.g += rock; color.b += rock * 1.1;
+        const habitat = biology.sand[i] * Math.max(0, 1 - biology.flow[i] / 0.04) *
+            Math.max(0, 1 - growth / 0.6);
+        const density = Math.min(1, Math.max(0, (biology.microbeV[i] - 0.025) / 0.16));
+        const amount = density * density * habitat * (0.4 + 0.6 * flowBoost);
+        const purple = Math.min(1, biology.microbeV[i] / 0.35);
+        color.r += ((0.55 - 0.18 * purple) - color.r) * amount;
+        color.g += ((0.30 - 0.18 * purple) - color.g) * amount;
+        color.b += ((0.07 + 0.28 * purple) - color.b) * amount;
     }
 
     streamsColor(biology, i, color) {
-        color.setRGB(0.01, 0.01, 0.015);
-
-        // Water streams: luminous blue, proportional to flow
+        // Luminous blue water: depth sets lightness, speed sets saturation, so
+        // the overlay reads as a luminous sheet of moving water.
+        const terrain = biology.terrain;
+        const depth = terrain.waterDepth[i];
+        const velocity = Math.hypot(terrain.velocityX[i], terrain.velocityY[i]);
         const flow = biology.flow[i];
-        if (flow > 0.0005) {
-            const flowStrength = Math.min(1, flow / 0.03);
+        color.setRGB(0.01, 0.01, 0.015);
+        if (depth > 0.0005 || flow > 0.0005) {
+            const depthStrength = Math.min(1, depth / 0.12);
+            const velocityStrength = Math.min(1, velocity / 0.6);
             const hue = 0.6;
-            const saturation = 0.9;
-            const lightness = 0.3 + 0.5 * flowStrength;
+            const saturation = 0.55 + 0.45 * velocityStrength;
+            const lightness = 0.18 + 0.55 * depthStrength;
             color.setHSL(hue, saturation, lightness);
         }
 
         // Plants: green along streams
         if (biology.sand[i] && biology.plants[i] > 0.03) {
             const plantBase = biology.plants[i];
-            const flowPresence = Math.min(1, biology.flow[i] / 0.01);
+            const flowPresence = Math.min(1, flow / 0.01);
             const plantIntensity = plantBase * (0.3 + 0.7 * flowPresence);
             const hue = 0.28;
             color.setHSL(hue, 0.95, Math.max(color.b, 0.25 + 0.4 * plantIntensity));
         }
 
-        // Microbes: distinct colonies in red-magenta
+        // Microbes: distinct colonies in red-magenta, edge-detected over the
+        // mesh neighbours rather than a regular grid.
         if (biology.microbeV[i] > 0.03) {
-            const size = biology.size;
-            const x = i % size;
-            const z = Math.floor(i / size);
+            const v = biology.microbeV[i];
             let edgeStrength = 0;
-
-            if (x > 0 && x < size - 1 && z > 0 && z < size - 1) {
-                const v = biology.microbeV[i];
-                const gradients = [
-                    Math.abs(biology.microbeV[i - 1] - v),
-                    Math.abs(biology.microbeV[i + 1] - v),
-                    Math.abs(biology.microbeV[i - size] - v),
-                    Math.abs(biology.microbeV[i + size] - v)
-                ];
-                edgeStrength = Math.max(...gradients);
+            for (const j of biology.neighbours[i]) {
+                const d = Math.abs(biology.microbeV[j] - v);
+                if (d > edgeStrength) edgeStrength = d;
             }
-
             const density = Math.min(1, biology.microbeV[i] / 0.2);
             const edgeDetected = Math.min(1, edgeStrength / 0.05);
             const colonyStrength = density * (0.25 + 0.75 * edgeDetected);
@@ -410,6 +393,7 @@ class TerrainRenderer {
         this.camera.aspect = window.innerWidth / window.innerHeight;
         this.camera.fov = TerrainRenderer.fieldOfView(this.camera.aspect);
         this.camera.updateProjectionMatrix();
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
         this.renderer.setSize(window.innerWidth, window.innerHeight);
     }
 

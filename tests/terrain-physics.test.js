@@ -47,14 +47,47 @@ function totalSediment(grid, physics) {
         physics.particles.reduce((sum, particle) => sum + particle.sediment, 0);
 }
 
-test('local colonies grow on wet sandy banks and microbes diffuse only through suitable habitat', () => {
+
+// A minimal per-vertex biology double: a regular grid of `size` x `size` vertices
+// with a 4-neighbour graph, matching the BiologyGrid contract without needing a
+// real terrain. Only the arrays updateColonies reads are allocated.
+function fakeBiology(size) {
+    const count = size * size;
     const biology = Object.create(BiologyGrid.prototype);
-    biology.size = 5;
-    for (const name of ['active', 'sand', 'flow', 'plants', 'inhibitor', 'microbeU', 'microbeV', 'microbeSeeds',
-        'nearby', 'scratch', 'nearbyPlants', 'plantScratch', 'nextPlants', 'nextInhibitor', 'nextU', 'nextV', 'habitat']) {
-        biology[name] = new Float32Array(25);
+    biology.terrain = {
+        radius: 10,
+        vertices: [],
+        elevation: new Float64Array(count),
+        bedrock: new Float64Array(count),
+        triangles: []
+    };
+    for (let i = 0; i < count; i++) {
+        biology.terrain.vertices.push({ x: (i % size) * 3 - 5, z: Math.floor(i / size) * 3 - 5 });
     }
-    biology.active.fill(1);
+    biology.count = count;
+    for (const name of ['flow', 'plants', 'inhibitor', 'microbeU', 'microbeV', 'microbeSeeds',
+        'habitat', 'nearby', 'scratch', 'nearbyPlants', 'plantScratch',
+        'nextPlants', 'nextInhibitor', 'nextU', 'nextV']) {
+        biology[name] = new Float32Array(count);
+    }
+    biology.sand = new Uint8Array(count);
+    biology.neighbours = [];
+    for (let z = 0; z < size; z++) {
+        for (let x = 0; x < size; x++) {
+            const i = z * size + x;
+            const nb = [];
+            if (x > 0) nb.push(i - 1);
+            if (x < size - 1) nb.push(i + 1);
+            if (z > 0) nb.push(i - size);
+            if (z < size - 1) nb.push(i + size);
+            biology.neighbours.push(nb);
+        }
+    }
+    return biology;
+}
+
+test('local colonies grow on wet sandy banks and microbes diffuse only through suitable habitat', () => {
+    const biology = fakeBiology(5);
     biology.sand.fill(1);
     biology.microbeU.fill(1);
     biology.flow[12] = 0.03;
@@ -74,8 +107,8 @@ test('local colonies grow on wet sandy banks and microbes diffuse only through s
 test('local biology round-trips independently of the shared terrain', () => {
     const grid = new TerrainGrid();
     const biology = new BiologyGrid(grid);
-    assert.ok(biology.active.reduce((sum, value) => sum + value, 0) > grid.erodibleCount);
-    const i = biology.active.findIndex(value => value);
+    assert.equal(biology.count, grid.erodibleCount);
+    const i = 0;
     biology.plants[i] = 0.5;
     biology.inhibitor[i] = 0.2;
     biology.microbeV[i] = 0.3;
@@ -92,14 +125,14 @@ test('local biology round-trips independently of the shared terrain', () => {
     assert.equal(biology.fromJSON(extinct), true);
     assert.ok(biology.microbeSeeds.some(value => value > 0));
     assert.ok(Math.abs(biology.plants[i] - 0.5) <= 1 / 65535);
-    assert.equal(biology.fromJSON({ ...saved, size: 2 }), false);
+    assert.equal(biology.fromJSON({ ...saved, count: 2 }), false);
 });
 
 test('biology fromJSON rejects malformed input without throwing', () => {
     const grid = new TerrainGrid();
     const biology = new BiologyGrid(grid);
     const saved = biology.toJSON();
-    const expectedBytes = biology.active.length * 8;
+    const expectedBytes = biology.count * 8;
     const expectedDataLength = Math.ceil(expectedBytes / 3) * 4;
     for (const malformed of [
         null,
@@ -107,7 +140,7 @@ test('biology fromJSON rejects malformed input without throwing', () => {
         42,
         'not-an-object',
         {},
-        { ...saved, version: 2 },
+        { ...saved, version: 1 },
         { ...saved, data: 42 },
         { ...saved, data: 'not-base64!!!' },
         { ...saved, data: 'a'.repeat(expectedDataLength - 4) },
@@ -120,17 +153,9 @@ test('biology fromJSON rejects malformed input without throwing', () => {
 });
 
 test('extinct microbes recover near plants and disappear far away', () => {
-    const biology = Object.create(BiologyGrid.prototype);
-    biology.size = 65;
-    biology.terrain = { radius: 5 };
-    biology.spacing = 10 / 64;
-    const count = biology.size ** 2;
-    for (const name of ['active', 'sand', 'flow', 'plants', 'inhibitor', 'microbeU', 'microbeV', 'microbeSeeds',
-        'nearby', 'scratch', 'nearbyPlants', 'plantScratch', 'nextPlants', 'nextInhibitor', 'nextU', 'nextV', 'habitat']) {
-        biology[name] = new Float32Array(count);
-    }
+    const biology = fakeBiology(65);
     for (let z = 1; z < 64; z++) {
-        for (let x = 1; x < 64; x++) biology.active[z * 65 + x] = biology.sand[z * 65 + x] = 1;
+        for (let x = 1; x < 64; x++) biology.sand[z * 65 + x] = 1;
     }
     biology.updateSand = () => {};
     biology.reset();
@@ -171,22 +196,16 @@ test('extinct microbes recover near plants and disappear far away', () => {
 });
 
 test('crowded plant centers fade while the colony edge remains brighter', () => {
-    const biology = Object.create(BiologyGrid.prototype);
-    biology.size = 25;
-    for (const name of ['active', 'sand', 'flow', 'plants', 'inhibitor', 'microbeU', 'microbeV', 'microbeSeeds',
-        'nearby', 'scratch', 'nearbyPlants', 'plantScratch', 'nextPlants', 'nextInhibitor', 'nextU', 'nextV', 'habitat']) {
-        biology[name] = new Float32Array(625);
-    }
-    biology.active.fill(1);
+    const biology = fakeBiology(25);
     biology.sand.fill(1);
     biology.microbeU.fill(1);
-    for (let z = 0; z < biology.size; z++) {
-        biology.flow[z * biology.size + 8] = 0.03;
-        for (let x = 0; x < biology.size; x++) {
-            if ((x - 11) ** 2 + (z - 12) ** 2 <= 4) biology.plants[z * biology.size + x] = 0.8;
+    for (let z = 0; z < 25; z++) {
+        biology.flow[z * 25 + 8] = 0.03;
+        for (let x = 0; x < 25; x++) {
+            if ((x - 11) ** 2 + (z - 12) ** 2 <= 4) biology.plants[z * 25 + x] = 0.8;
         }
     }
-    const center = 12 * biology.size + 11;
+    const center = 12 * 25 + 11;
     for (let i = 0; i < 10; i++) biology.updateColonies(0.2);
     assert.ok(biology.inhibitor[center] > 0.1);
     assert.ok(biology.plants[center] < 0.6);
@@ -198,17 +217,11 @@ test('crowded plant centers fade while the colony edge remains brighter', () => 
 });
 
 test('microorganisms spread farther than plants under the same conditions', () => {
-    const biology = Object.create(BiologyGrid.prototype);
-    biology.size = 7;
-    for (const name of ['active', 'sand', 'flow', 'plants', 'inhibitor', 'microbeU', 'microbeV', 'microbeSeeds',
-        'nearby', 'scratch', 'nearbyPlants', 'plantScratch', 'nextPlants', 'nextInhibitor', 'nextU', 'nextV', 'habitat']) {
-        biology[name] = new Float32Array(49);
-    }
-    biology.active.fill(1);
+    const biology = fakeBiology(7);
     biology.sand.fill(1);
     biology.microbeU.fill(1);
     biology.plants.fill(0.2);
-    const center = 3 * biology.size + 3;
+    const center = 3 * 7 + 3;
     biology.plants[center] = 0.3;
     biology.microbeV[center] = 0.1;
     biology.updateColonies(0.2);

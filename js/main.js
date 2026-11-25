@@ -13,7 +13,7 @@ class Application {
         
         // Storage and sync
         this.localStore = new LocalStorageManager();
-        this.biologyStore = new LocalStorageManager('tree-of-life-local-biology-v2', null);
+        this.biologyStore = new LocalStorageManager('tree-of-life-local-biology-v3', null);
         this.simulationTime = new SimulationTimeTracker();
         // Served by tools/timelapse_server.py (timelapse in Safari): the Worker only
         // accepts the GitHub Pages origin, so sync goes through the server's
