@@ -168,6 +168,12 @@ class BiologyGrid {
         const step = 5 * dt / steps;
         const offsets = [-1, 1, -size, size];
         for (let n = 0; n < steps; n++) {
+            // The habitat is recomputed per sub-step on purpose: it depends on
+            // this.plants, which is updated every sub-step, so it cannot be hoisted
+            // out of this loop. In practice steps === 1 (see updateColonies), so
+            // hoisting the flow- and nearbyPlants-dependent factors would save
+            // nothing and would change the Float32 rounding (bit-identical
+            // evolution is kept). Do not "optimise" this away without measuring.
             for (let i = 0; i < count; i++) {
                 this.habitat[i] = this.active[i] && this.sand[i]
                     ? Math.max(0, 1 - this.flow[i] / 0.04) * Math.max(0, 1 - this.plants[i] / 0.6) *

@@ -12,6 +12,9 @@ const STATE_SCHEMA_VERSION = 4;
 // A browser counts as online when seen within this many synchronization intervals.
 const ONLINE_SYNC_INTERVALS = 2;
 // Kept outside the terrain state so that resets and mesh changes do not lose it.
+// The per-ID keys below are deliberately never deleted: deleting them would let a
+// returning browser be counted again, inflating the lifetime total. They grow by
+// one tiny key per distinct browser ever seen, which is acceptable for this project.
 const COLLABORATOR_TOTAL_KEY = 'collaboratorTotal';
 const COLLABORATOR_KEY_PREFIX = 'collaborator:';
 // Merge statistics, also kept apart from the terrain so that resets keep them.
@@ -295,6 +298,9 @@ export class Simulation {
 
     /**
      * Count a browser ID once, however long it stays away.
+     *
+     * The per-ID key is deliberately kept forever: removing it would let a
+     * returning browser be counted again, inflating the lifetime total.
      *
      * Args:
      *   id: Validated browser ID.

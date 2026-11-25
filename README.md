@@ -651,7 +651,10 @@ contribution is pending. `lastMerge` gives the last merge's age `agoMs`, its
 browser was one of them; `null` for `GET /api/state`); it is `null` before the
 first merge and after a reset. Contributor IDs are never returned. The total is
 stored apart from the terrain, one storage key per ID, so resets and mesh changes
-keep it; it started from the IDs active when it was introduced. The Worker rejects:
+keep it; it started from the IDs active when it was introduced. The per-ID keys are
+never deleted on purpose: deleting them would let a returning browser be counted
+again, inflating the lifetime total. They grow by one tiny key per distinct browser
+ever seen, which is acceptable for this project. The Worker rejects:
 
 - a signature from another mesh (409);
 - a wrong length, corrupt gzip or oversized body (400 or 413);
