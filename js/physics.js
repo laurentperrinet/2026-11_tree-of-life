@@ -5,8 +5,28 @@
 const TRANSIT_SAMPLE_LIMIT = 100;
 const SAND_THROUGHPUT_WINDOW_SECONDS = 60;
 
+/**
+ * Deterministic pseudo-random generator (mulberry32).
+ *
+ * Args:
+ *   seed: 32-bit integer seed.
+ *
+ * Returns:
+ *   A function returning a float in [0, 1).
+ */
+function createSeededRandom(seed) {
+    let state = seed >>> 0;
+    return function random() {
+        state = (state + 0x6d2b79f5) >>> 0;
+        let t = state;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
 class PhysicsEngine {
-    constructor(grid) {
+    constructor(grid, options = {}) {
         this.grid = grid;
         // Nominal step (sim s), used when step() is called without wall-clock time,
         // as in the tests.
@@ -40,14 +60,18 @@ class PhysicsEngine {
         this.sandOutflowHead = 0;
         this.sandReposeSlope = Math.tan(34 * Math.PI / 180);
         this.particles = [];
+        // Seeded RNG: the simulation is reproducible for a given seed, which keeps
+        // parameter scans comparable. Injected via options.random by the tests.
+        this.seed = options.seed ?? 2026;
+        this.random = options.random ?? createSeededRandom(this.seed);
         this.createParticles();
     }
 
     createParticles() {
         this.particles = Array.from({ length: this.particleCount }, (_, i) => {
             const particle = { x: 0, z: 0, vx: 0, vz: 0, sediment: 0 };
-            this.reinject(particle, (i + Math.random()) / this.particleCount);
-            const radiusFraction = 0.1 + 0.9 * Math.random();
+            this.reinject(particle, (i + this.random()) / this.particleCount);
+            const radiusFraction = 0.1 + 0.9 * this.random();
             particle.x *= radiusFraction;
             particle.z *= radiusFraction;
             return particle;
@@ -55,7 +79,7 @@ class PhysicsEngine {
         this.grid.particles = this.particles;
     }
 
-    reinject(particle, fraction = Math.random()) {
+    reinject(particle, fraction = this.random()) {
         const angle = 2 * Math.PI * fraction;
         // Three mesh spacings inside the disk edge, which is the circle of
         // radius R (the mesh itself has no circular boundary).
@@ -107,7 +131,13 @@ class PhysicsEngine {
         }
         for (const particle of this.particles) {
             const sample = grid.sample(particle.x, particle.z);
-            if (!sample) throw new Error('Water particle outside the terrain mesh');
+            if (!sample) {
+                // A particle that escaped the mesh must not crash the frame:
+                // re-inject it at the disk edge (sediment load is kept) and
+                // skip the accumulation for this frame.
+                this.reinject(particle);
+                continue;
+            }
             sample.face.forEach((index, i) => {
                 const weight = Math.max(0, sample.weights[i]);
                 grid.waterDepth[index] += this.waterPerParticle * weight / grid.vertexArea[index];
@@ -251,7 +281,7 @@ class PhysicsEngine {
             }
             return;
         }
-        if (Math.random() < -Math.expm1(-this.particleHazardRate * dt)) {
+        if (this.random() < -Math.expm1(-this.particleHazardRate * dt)) {
             particle.burstProgress = 0;
             particle.vx = 0;
             particle.vz = 0;
@@ -264,7 +294,11 @@ class PhysicsEngine {
         if (particle.sediment === 0) return;
         const grid = this.grid;
         const sample = grid.sample(particle.x, particle.z);
-        if (!sample) throw new Error('Evaporating particle outside the terrain mesh');
+        if (!sample) {
+            // Outside the mesh there is nowhere to deposit: keep the sediment
+            // load so the caller's reinject() carries it to the next cycle.
+            return;
+        }
         const weights = sample.weights.map(weight => Math.max(0, weight));
         const total = weights.reduce((sum, weight) => sum + weight, 0);
         if (total < 1e-12) throw new Error('No terrain for sediment deposit');
@@ -282,7 +316,12 @@ class PhysicsEngine {
         particle.travelTime = (Number.isFinite(particle.travelTime) ? particle.travelTime : 0) + dt;
         const grid = this.grid;
         const sample = grid.sample(particle.x, particle.z);
-        if (!sample) throw new Error('Water particle outside the terrain mesh');
+        if (!sample) {
+            // A particle that escaped the mesh is re-injected at the disk edge
+            // (sediment load is kept) rather than crashing the simulation.
+            this.reinject(particle);
+            return;
+        }
         const previousSpeed = Math.hypot(particle.vx, particle.vz);
         const damping = Math.exp(-this.friction * dt);
         particle.vx = (particle.vx - this.g * sample.dx * dt) * damping;

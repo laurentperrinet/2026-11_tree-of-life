@@ -22,7 +22,9 @@ class TerrainRenderer {
         this.particleMesh = null;
         this.displayMode = TerrainRenderer.DEFAULT_DISPLAY_MODE;
         this.dummy = new THREE.Object3D();
-        window.addEventListener('resize', () => this.onWindowResize());
+        // Kept as a named handler so dispose() can remove it again.
+        this.onResize = () => this.onWindowResize();
+        window.addEventListener('resize', this.onResize);
         this.onWindowResize();
     }
 
@@ -327,7 +329,12 @@ class TerrainRenderer {
         const bursts = this.particleMesh.geometry.attributes.burstProgress;
         physics.particles.forEach((particle, i) => {
             const sample = physics.grid.sample(particle.x, particle.z);
-            if (!sample) throw new Error('Cannot render particle outside the terrain mesh');
+            if (!sample) {
+                // A particle outside the mesh is skipped this frame; the physics
+                // step re-injects it and the instance matrix stays at its last
+                // position, which is harmless for one frame.
+                return;
+            }
             this.dummy.position.set(particle.x, sample.height + 0.02, particle.z);
             this.dummy.scale.set(1, 0.3, 1);
             this.dummy.updateMatrix();
@@ -407,6 +414,7 @@ class TerrainRenderer {
     }
 
     dispose() {
+        window.removeEventListener('resize', this.onResize);
         this.captureTarget?.dispose();
         this.scene.traverse(object => {
             if (object.geometry) object.geometry.dispose();

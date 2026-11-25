@@ -32,6 +32,8 @@ CHECKS AFTER A DEPLOYMENT
   1. npm test passes locally (about five minutes).
   2. curl -s https://tree-of-life.laurent-perrinet.workers.dev/api/state
      returns JSON whose meshSignature matches js/terrain.js meshSignature().
+     (The light form, ?includeTerrain=0, returns the same metadata without the
+     elevation payload.)
   3. The site loads, shows "Simulation ready" and, after the first sync,
      a number of seconds next to the sync icon in the status bar.
   4. ?admin > Sign in with GitHub works and shows the lock and login.

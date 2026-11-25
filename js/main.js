@@ -51,6 +51,7 @@ class Application {
         this.biologyLoaded = false;
         this.frameCount = 0;
         this.fps = 60;
+        this.lastFrameErrorTime = 0;
         
     }
     
@@ -177,7 +178,8 @@ class Application {
         const now = performance.now();
         const deltaTime = (now - this.lastRenderTime) / 1000;
         this.lastRenderTime = now;
-        
+
+        try {
         // The physics step follows wall-clock time, so the simulated time per second
         // does not depend on the device's frame rate (within maxFrameSeconds).
         const dt = this.physics.step(deltaTime);
@@ -216,15 +218,25 @@ class Application {
 
         // FPS counter
         this.frameCount++;
-        
-        // Continue loop
-        requestAnimationFrame(() => this.animate());
+        } catch (error) {
+            // A broken frame must not kill the loop: report once per 10 s and let
+            // the next frame try again.
+            console.error('Animation frame failed:', error);
+            if (now - this.lastFrameErrorTime >= 10000) {
+                this.lastFrameErrorTime = now;
+                this.ui.showToast(`Animation error: ${error.message}`, 'error', 8000);
+            }
+        } finally {
+            // Continue loop
+            requestAnimationFrame(() => this.animate());
+        }
     }
     
     /**
      * Cleanup on unload
      */
     dispose() {
+        this.controls.dispose();
         this.collaboration.stop();
         this.timelapse?.stop();
         try {
@@ -251,13 +263,18 @@ window.addEventListener('DOMContentLoaded', async () => {
         await app.initialize();
     } catch (error) {
         console.error('Fatal error:', error);
-        document.body.innerHTML += `
-            <div style="color: red; padding: 20px; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.9); border-radius: 8px;">
-                <h2>Error initializing application</h2>
-                <p>${error.message}</p>
-                <p>Check browser console for details</p>
-            </div>
-        `;
+        // Build the overlay with DOM nodes: the message is interpolated as text,
+        // never as HTML, and the existing page content is left intact.
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'color: red; padding: 20px; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.9); border-radius: 8px; z-index: 1000;';
+        const title = document.createElement('h2');
+        title.textContent = 'Error initializing application';
+        const message = document.createElement('p');
+        message.textContent = error.message;
+        const hint = document.createElement('p');
+        hint.textContent = 'Check browser console for details';
+        overlay.append(title, message, hint);
+        document.body.appendChild(overlay);
     }
 });
 

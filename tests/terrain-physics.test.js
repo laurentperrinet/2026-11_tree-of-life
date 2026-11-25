@@ -95,6 +95,30 @@ test('local biology round-trips independently of the shared terrain', () => {
     assert.equal(biology.fromJSON({ ...saved, size: 2 }), false);
 });
 
+test('biology fromJSON rejects malformed input without throwing', () => {
+    const grid = new TerrainGrid();
+    const biology = new BiologyGrid(grid);
+    const saved = biology.toJSON();
+    const expectedBytes = biology.active.length * 8;
+    const expectedDataLength = Math.ceil(expectedBytes / 3) * 4;
+    for (const malformed of [
+        null,
+        undefined,
+        42,
+        'not-an-object',
+        {},
+        { ...saved, version: 2 },
+        { ...saved, data: 42 },
+        { ...saved, data: 'not-base64!!!' },
+        { ...saved, data: 'a'.repeat(expectedDataLength - 4) },
+        { ...saved, data: 'a'.repeat(expectedDataLength + 8) }
+    ]) {
+        assert.equal(biology.fromJSON(malformed), false, JSON.stringify(malformed));
+    }
+    // A valid save still loads.
+    assert.equal(biology.fromJSON(saved), true);
+});
+
 test('extinct microbes recover near plants and disappear far away', () => {
     const biology = Object.create(BiologyGrid.prototype);
     biology.size = 65;
@@ -433,14 +457,12 @@ test('collisions exchange momentum and push overlapping water parcels apart', ()
 
 test('evaporation deposits sediment locally before reinjection and survives a save', () => {
     let random = 0.5;
-    const seededMath = Object.create(Math);
-    seededMath.random = () => random;
-    const seededContext = vm.createContext({ console, Math: seededMath, Float64Array, Date });
+    const seededContext = vm.createContext({ console, Math, Float64Array, Date, __random: () => random });
     for (const name of ['mesh-points', 'terrain', 'physics']) {
         vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', `${name}.js`), 'utf8'), seededContext);
     }
     const { grid, physics } = vm.runInContext(
-        'const grid = new TerrainGrid(); const physics = new PhysicsEngine(grid); ({ grid, physics })',
+        'const grid = new TerrainGrid(); const physics = new PhysicsEngine(grid, { random: __random }); ({ grid, physics })',
         seededContext
     );
     const particle = physics.particles[0];
@@ -795,17 +817,15 @@ test('fixed surround never gains or loses sediment', () => {
 
 test('particle flow produces localized erosion on the initially uniform slope', () => {
     let seed = 123456789;
-    const seededMath = Object.create(Math);
-    seededMath.random = () => {
+    const seededContext = vm.createContext({ console, Math, Float64Array, Date, __random: () => {
         seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
         return seed / 4294967296;
-    };
-    const seededContext = vm.createContext({ console, Math: seededMath, Float64Array, Date });
+    } });
     for (const name of ['mesh-points', 'terrain', 'physics']) {
         vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', `${name}.js`), 'utf8'), seededContext);
     }
     const { grid, physics } = vm.runInContext(
-        'const grid = new TerrainGrid(); const physics = new PhysicsEngine(grid); ({ grid, physics })',
+        'const grid = new TerrainGrid(); const physics = new PhysicsEngine(grid, { random: __random }); ({ grid, physics })',
         seededContext
     );
     const before = totalSediment(grid, physics);

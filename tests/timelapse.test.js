@@ -270,3 +270,20 @@ test('a failed encoding is reported with the server message', async () => {
     const recorder = new TimelapseRecorder({});
     await assert.rejects(recorder.finish(), /brew install ffmpeg/);
 });
+
+test('encoding poll is bounded and reports the server state on timeout', async () => {
+    let polls = 0;
+    const fetch = async (url) => {
+        if (url === 'api/timelapse/stop') {
+            return { ok: true, json: async () => ({ video: { state: 'encoding', path: '/r/timelapse.mp4' } }) };
+        }
+        polls++;
+        return { ok: true, json: async () => ({ video: { state: 'encoding', path: '/r/timelapse.mp4' } }) };
+    };
+    const { TimelapseRecorder } = loadTimelapse({ fetch, setTimeout: fn => setImmediate(fn) });
+    const recorder = new TimelapseRecorder({});
+    recorder.maxPollAttempts = 3;
+    recorder.pollMs = 1000;
+    await assert.rejects(recorder.finish(), /timed out after 3 s \(server state: encoding\)/);
+    assert.equal(polls, 3);
+});

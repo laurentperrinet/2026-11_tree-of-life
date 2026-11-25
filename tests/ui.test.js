@@ -13,15 +13,25 @@ test('default camera centers the disk at the zenith and controls preserve its ta
         lookAt(x, y, z) { this.target = [x, y, z]; }
         updateProjectionMatrix() {}
     }
-    class Scene { add() {} }
+    class Scene { add() {} traverse() {} }
     class Light { constructor() { this.position = new Vector(); } }
     const THREE = {
         Scene, Color: class {}, PerspectiveCamera: Camera,
-        WebGLRenderer: class { setSize() {} }, AmbientLight: Light, DirectionalLight: Light,
+        WebGLRenderer: class { setSize() {} dispose() {} }, AmbientLight: Light, DirectionalLight: Light,
         Object3D: class {}
     };
-    const window = { innerWidth: 1200, innerHeight: 800, addEventListener() {} };
-    const context = vm.createContext({ THREE, window, document: { addEventListener() {} } });
+    const windowListeners = new Map();
+    const documentListeners = new Map();
+    const track = (map) => ({
+        addEventListener: (type, fn) => map.set(type, [...(map.get(type) ?? []), fn]),
+        removeEventListener: (type, fn) => map.set(type, (map.get(type) ?? []).filter(f => f !== fn))
+    });
+    const window = {
+        innerWidth: 1200, innerHeight: 800,
+        ...track(windowListeners)
+    };
+    const document = track(documentListeners);
+    const context = vm.createContext({ THREE, window, document });
     for (const file of ['renderer.js', 'controls.js']) {
         vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js', file), 'utf8'), context);
     }
@@ -34,7 +44,7 @@ test('default camera centers the disk at the zenith and controls preserve its ta
     assert.deepEqual(camera.target, [0, 0, 0]);
     assert.deepEqual([camera.up.x, camera.up.y, camera.up.z], [0, 0, -1]);
 
-    controls.onMouseWheel({ deltaY: -1, preventDefault() {} });
+    controls.onMouseWheel({ deltaY: -1, target: renderer.canvas, preventDefault() {} });
     assert.ok(Math.abs(camera.position.x) < 1e-10 && Math.abs(camera.position.z) < 1e-10);
     assert.equal(camera.position.y, 64.5);
     assert.deepEqual(camera.target, [0, 0, 0]);
@@ -52,6 +62,15 @@ test('default camera centers the disk at the zenith and controls preserve its ta
     renderer.onWindowResize();
     const halfWidth = 62 * Math.tan(camera.fov * Math.PI / 360) * camera.aspect;
     assert.ok(halfWidth > 25);
+
+    // Both objects register their listeners, and dispose() removes them.
+    assert.equal(windowListeners.get('resize').length, 1);
+    assert.equal(documentListeners.get('wheel').length, 1);
+    renderer.dispose();
+    assert.equal(windowListeners.get('resize')?.length ?? 0, 0);
+    controls.dispose();
+    assert.equal(documentListeners.get('wheel')?.length ?? 0, 0);
+    assert.equal(documentListeners.get('keydown')?.length ?? 0, 0);
 });
 
 test('mesh view shows the wireframe and particles without biology', () => {
@@ -76,7 +95,9 @@ test('mesh view shows the wireframe and particles without biology', () => {
     };
     renderer.displayMode = 'habitat';
     renderer.cycleDisplayMode();
-    assert.equal(renderer.displayMode, 'Tree of life');
+    renderer.cycleDisplayMode();
+    renderer.cycleDisplayMode();
+    assert.equal(renderer.displayMode, 'mesh');
     renderer.updateTerrainMesh(grid, {});
     assert.equal(material.wireframe, true);
     assert.equal(renderer.biologyMesh.visible, false);
@@ -214,10 +235,14 @@ test('cumulative simulation time persists across sessions and sums concurrent ta
         get length() { return entries.size; },
         key: i => [...entries.keys()][i] ?? null,
         getItem: key => entries.get(key) ?? null,
-        setItem: (key, value) => entries.set(key, value)
+        setItem: (key, value) => entries.set(key, value),
+        removeItem: key => entries.delete(key)
     };
-    let id = 0;
-    const context = vm.createContext({ localStorage, crypto: { randomUUID: () => `session-${++id}` } });
+    const warnings = [];
+    const context = vm.createContext({
+        localStorage,
+        console: { warn: message => warnings.push(message) }
+    });
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js/local-storage.js'), 'utf8'), context);
     const Tracker = vm.runInContext('SimulationTimeTracker', context);
     const a = new Tracker();
@@ -232,8 +257,39 @@ test('cumulative simulation time persists across sessions and sums concurrent ta
     const reopened = new Tracker();
     reopened.add(2);
     assert.equal(reopened.getTotal(), 22);
+    // An invalid stored value is skipped, not fatal.
+    entries.set('tree-of-life-simulation-time-v1', 'bad');
+    assert.equal(reopened.getTotal(), 2);
+    assert.equal(warnings.length, 1);
+});
+
+test('legacy per-session keys are merged into the single key and removed', () => {
+    const entries = new Map();
+    const localStorage = {
+        get length() { return entries.size; },
+        key: i => [...entries.keys()][i] ?? null,
+        getItem: key => entries.get(key) ?? null,
+        setItem: (key, value) => entries.set(key, value),
+        removeItem: key => entries.delete(key)
+    };
+    entries.set('tree-of-life-simulation-time-v1:session-1', '10');
+    entries.set('tree-of-life-simulation-time-v1:session-2', '4');
     entries.set('tree-of-life-simulation-time-v1:invalid', 'bad');
-    assert.throws(() => reopened.getTotal(), /Invalid saved simulation time/);
+    entries.set('unrelated-key', 'ignored');
+    const context = vm.createContext({
+        localStorage,
+        console: { warn: () => {} }
+    });
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js/local-storage.js'), 'utf8'), context);
+    const Tracker = vm.runInContext('SimulationTimeTracker', context);
+    const tracker = new Tracker();
+    tracker.add(1);
+    assert.equal(tracker.getTotal(), 15);
+    assert.equal(entries.get('tree-of-life-simulation-time-v1'), '14');
+    assert.equal(entries.has('tree-of-life-simulation-time-v1:session-1'), false);
+    assert.equal(entries.has('tree-of-life-simulation-time-v1:session-2'), false);
+    assert.equal(entries.has('tree-of-life-simulation-time-v1:invalid'), false);
+    assert.equal(entries.get('unrelated-key'), 'ignored');
 });
 
 test('simulation loop accumulates and periodically saves model time', () => {
@@ -370,6 +426,12 @@ test('scrolling status help does not zoom the terrain', () => {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js/controls.js'), 'utf8'), context);
     const InputControls = vm.runInContext('InputControls', context);
     const controls = Object.create(InputControls.prototype);
+    controls.camera = {
+        position: { x: 0, y: 65, z: 0 },
+        up: { set() {} },
+        lookAt() {}
+    };
+    controls.cameraRotation = { x: 0, y: 0 };
     controls.cameraDistance = 65;
     let prevented = false;
     controls.onMouseWheel({
@@ -377,6 +439,21 @@ test('scrolling status help does not zoom the terrain', () => {
     });
     assert.equal(prevented, false);
     assert.equal(controls.cameraDistance, 65);
+
+    // Outside the canvas (and outside the help dialog), the wheel is left alone.
+    controls.renderer = { canvas: {} };
+    controls.onMouseWheel({
+        deltaY: 1, target: { closest: () => null }, preventDefault() { prevented = true; }
+    });
+    assert.equal(prevented, false);
+    assert.equal(controls.cameraDistance, 65);
+
+    // On the canvas, the wheel zooms and is prevented.
+    controls.onMouseWheel({
+        deltaY: 1, target: controls.renderer.canvas, preventDefault() { prevented = true; }
+    });
+    assert.equal(prevented, true);
+    assert.equal(controls.cameraDistance, 65.5);
 });
 
 test('display mode notice stays visible for two seconds after the latest change', () => {

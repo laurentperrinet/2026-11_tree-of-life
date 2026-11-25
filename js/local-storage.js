@@ -85,9 +85,41 @@ class LocalStorageManager {
 class SimulationTimeTracker {
     constructor() {
         this.prefix = 'tree-of-life-simulation-time-v1:';
-        this.key = this.prefix + crypto.randomUUID();
+        this.key = 'tree-of-life-simulation-time-v1';
         this.sessionTime = 0;
         this.savedTime = 0;
+        this.migrateLegacyKeys();
+    }
+
+    /**
+     * Fold the legacy per-session UUID keys into the single key, then delete
+     * them so storage does not grow without bound. Invalid values are ignored.
+     */
+    migrateLegacyKeys() {
+        let legacyTotal = 0;
+        const legacyKeys = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (!key?.startsWith(this.prefix)) continue;
+            legacyKeys.push(key);
+            const value = Number(localStorage.getItem(key));
+            if (Number.isFinite(value) && value >= 0) legacyTotal += value;
+        }
+        if (legacyKeys.length === 0) return;
+        const stored = this.readStoredTotal();
+        localStorage.setItem(this.key, String(stored + legacyTotal));
+        for (const key of legacyKeys) localStorage.removeItem(key);
+    }
+
+    readStoredTotal() {
+        const raw = localStorage.getItem(this.key);
+        if (raw === null || raw.trim() === '') return 0;
+        const value = Number(raw);
+        if (!Number.isFinite(value) || value < 0) {
+            console.warn('Ignoring invalid saved simulation time');
+            return 0;
+        }
+        return value;
     }
 
     add(dt) {
@@ -95,23 +127,17 @@ class SimulationTimeTracker {
     }
 
     save() {
-        localStorage.setItem(this.key, String(this.sessionTime));
+        // Persist only this session's increment on top of the stored total, so
+        // concurrent tabs each contribute their own delta instead of
+        // overwriting each other's session time.
+        const stored = this.readStoredTotal();
+        const newTotal = stored + (this.sessionTime - this.savedTime);
+        localStorage.setItem(this.key, String(newTotal));
         this.savedTime = this.sessionTime;
     }
 
     getTotal() {
-        let total = this.sessionTime - this.savedTime;
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            if (!key?.startsWith(this.prefix)) continue;
-            const raw = localStorage.getItem(key);
-            const value = Number(raw);
-            if (raw === null || raw.trim() === '' || !Number.isFinite(value) || value < 0) {
-                throw new Error('Invalid saved simulation time');
-            }
-            total += value;
-        }
-        return total;
+        return this.readStoredTotal() + (this.sessionTime - this.savedTime);
     }
 }
 

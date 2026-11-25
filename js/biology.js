@@ -226,12 +226,28 @@ class BiologyGrid {
     }
 
     fromJSON(json) {
-        if (json.version !== 1 || json.size !== this.size || typeof json.data !== 'string') {
+        if (!json || typeof json !== 'object' || json.version !== 1 ||
+            json.size !== this.size || typeof json.data !== 'string') {
             console.warn('Saved biology is incompatible with the local grid');
             return false;
         }
-        const bytes = atob(json.data);
-        if (bytes.length !== this.active.length * 8) {
+        // 4 fields x 2 bytes per cell; base64 is 4/3 longer. Reject an implausible
+        // length before decoding so a corrupted or hostile string cannot make
+        // atob allocate a huge binary string.
+        const expectedBytes = this.active.length * 8;
+        const expectedDataLength = Math.ceil(expectedBytes / 3) * 4;
+        if (json.data.length < expectedDataLength - 4 || json.data.length > expectedDataLength + 4) {
+            console.warn('Saved biology has an invalid length');
+            return false;
+        }
+        let bytes;
+        try {
+            bytes = atob(json.data);
+        } catch (error) {
+            console.warn('Saved biology has an invalid encoding');
+            return false;
+        }
+        if (bytes.length !== expectedBytes) {
             console.warn('Saved biology has an invalid length');
             return false;
         }

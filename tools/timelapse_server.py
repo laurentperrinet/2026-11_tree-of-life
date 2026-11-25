@@ -204,11 +204,20 @@ class VideoEncoder:
             with self.lock:
                 if not self.again:
                     self.status = status
+                    # A custom encoder may report a minimal status; the print must
+                    # never crash the daemon thread, so read fields defensively.
                     if status['state'] == 'done':
-                        print(f"Video: {status['path']} ({status['frames']} frames, "
-                              f"{status['seconds']:.1f} s)", flush=True)
+                        detail = []
+                        frames = status.get('frames')
+                        seconds = status.get('seconds')
+                        if frames is not None:
+                            detail.append(f"{frames} frames")
+                        if seconds is not None:
+                            detail.append(f"{seconds:.1f} s")
+                        print(f"Video: {status.get('path', self.output)} ({', '.join(detail) or 'done'})",
+                              flush=True)
                     else:
-                        print(f"Video not made: {status['message']}", flush=True)
+                        print(f"Video not made: {status.get('message', 'unknown error')}", flush=True)
                     return
                 self.again = False
                 self.status = {'state': 'encoding', 'path': str(self.output)}

@@ -344,6 +344,22 @@ test('status lists merge statistics without the terrain and keeps them across re
     }
 });
 
+test('GET /api/state keeps the terrain by default and honours ?includeTerrain=0', async () => {
+    const { request } = harness();
+    const full = (await request('/api/state')).body;
+    equal(full.terrain.elevation.length, createInitialMesh().elevation.length);
+    ok(full.meshSignature);
+
+    const light = (await request('/api/state?includeTerrain=0')).body;
+    equal(light.terrain, undefined);
+    equal(light.meshSignature, full.meshSignature);
+    equal(light.version, full.version);
+
+    // Any other value keeps the terrain: the opt-out is explicit.
+    const other = (await request('/api/state?includeTerrain=1')).body;
+    ok(other.terrain.elevation.length > 0);
+});
+
 test('merge statistics start from the last merge already recorded', async () => {
     const seed = harness();
     await seed.request('/api/state');
@@ -515,4 +531,28 @@ test('only the configured GitHub owner can reset shared terrain', async () => {
 test('foreign origins and non-JSON OAuth requests are rejected', async () => {
     const { request } = harness();
     equal((await request('/api/state', { origin: 'https://other.example' })).status, 403);
+});
+
+test('exchange rejects oversized and malformed bodies before any OAuth call', async () => {
+    const { env, request } = harness();
+    env.GITHUB_CLIENT_ID = 'client-id';
+    env.GITHUB_CLIENT_SECRET = 'client-secret';
+    let githubCalled = false;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => { githubCalled = true; return Response.json({}); };
+    try {
+        const oversized = await request('/api/auth/exchange', {
+            method: 'POST', body: 'x'.repeat(5_000)
+        });
+        equal(oversized.status, 413);
+        const malformed = await request('/api/auth/exchange', {
+            method: 'POST', body: 'not json'
+        });
+        equal(malformed.status, 400);
+        const empty = await request('/api/auth/exchange', { method: 'POST', body: '' });
+        equal(empty.status, 400);
+        equal(githubCalled, false, 'no GitHub call may happen for invalid bodies');
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
 });

@@ -62,8 +62,8 @@ leave the browser**. Only the elevation field is shared.
 
 1. Open <https://laurentperrinet.github.io/2026-11_tree-of-life/>.
 2. Drag to orbit, scroll to zoom.
-3. Press **D** or click **View** to cycle through `habitat`, `mesh`,
-   `sand depth`, `flux` and `sediment`.
+3. Press **D** or click **View** to cycle through `habitat`, `Tree of life`,
+   `streams`, `mesh`, `sand depth`, `flux` and `sediment`.
 4. Click **❔** in the status bar: it explains, in plain words, each indicator
    and how your screen shares the sand with other visitors.
 
@@ -487,6 +487,8 @@ console.
 | Mode | What is shown |
 | --- | --- |
 | `habitat` (default) | Dark bed with the biology overlay: yellow-green vegetation and ochre-to-purple microbes |
+| `Tree of life` | Dark bed with the biology overlay in a vivid style: green plants intensified near streams (high flow) and red-purple microbes at colony edges (gradient-based edge detection) |
+| `streams` | Dark bed with the biology overlay: luminous blue water proportional to flow, green plants along streams and red-magenta microbial colonies |
 | `mesh` | Wireframe of the triangular mesh with the parcels, without biology |
 | `sand depth` | Sand thickness in a reversed cmocean *deep* map: dark for bare rock, mid-palette for the initial layer $D_0$, lightest at $2D_0$ or more (`SAND_DEPTH_DISPLAY_MAX`); dimmed lighting |
 | `flux` | Water flux $\Phi_i$, square-root scaled by its current maximum |
@@ -629,7 +631,7 @@ serialises updates.
 
 | Method and path | Purpose |
 | --- | --- |
-| `GET /api/state` | Current shared elevation and metadata (does not count as activity) |
+| `GET /api/state` | Current shared elevation and metadata (does not count as activity). The browser never reads this endpoint; pass `?includeTerrain=0` for the metadata only, without the elevation payload |
 | `GET /api/status` | The same metadata without the terrain, plus `merges`: `total`, `shared` (merges of two browsers or more), `since` (ISO 8601, when counting began) and `recent` (the last `MERGE_HISTORY_LENGTH` merges, newest first, each with `agoMs`, `version`, `contributors`); read by `status.html` |
 | `POST /api/sync` | Heartbeat or contribution; returns the metadata, and the terrain if the version changed |
 | `POST /api/auth/exchange` | Exchange a GitHub OAuth code for a token (holds the client secret) |

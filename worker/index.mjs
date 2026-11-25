@@ -5,6 +5,8 @@ import {
 const ACTIVE_CLIENT_MS = 24 * 60 * 60 * 1000;
 const DAILY_REQUEST_BUDGET = 80_000;
 const MAX_COMPRESSED_BYTES = 300_000;
+// Authorization codes are short strings; anything larger is an error.
+const MAX_EXCHANGE_BODY_BYTES = 4_096;
 const MAX_DELTA = 10;
 const STATE_SCHEMA_VERSION = 4;
 // A browser counts as online when seen within this many synchronization intervals.
@@ -149,8 +151,10 @@ async function exchangeCode(request, env) {
     }
     let body;
     try {
-        body = await request.json();
-    } catch {
+        const bytes = await readStreamLimited(request.body, MAX_EXCHANGE_BODY_BYTES);
+        body = JSON.parse(new TextDecoder().decode(bytes));
+    } catch (error) {
+        if (error instanceof HttpError) throw error;
         throw new HttpError(400, 'Invalid JSON');
     }
     if (!body || typeof body.code !== 'string' || body.code.length < 1 || body.code.length > 512) {
@@ -366,7 +370,11 @@ export class Simulation {
         await this.loadMergeHistory(state, now);
 
         if (path === '/api/state' && request.method === 'GET') {
-            return this.stateResponse(state);
+            // The elevation payload is opt-out via ?includeTerrain=0. The default
+            // stays full so existing callers (curl checks, humans reading the JSON)
+            // keep the elevation. The browser never reads this endpoint.
+            const includeTerrain = new URL(request.url).searchParams.get('includeTerrain') !== '0';
+            return this.stateResponse(state, {}, includeTerrain);
         }
         if (path === '/api/status' && request.method === 'GET') {
             // Light enough to poll: no terrain, but the merge statistics.

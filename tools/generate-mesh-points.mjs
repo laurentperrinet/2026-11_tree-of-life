@@ -193,6 +193,31 @@ function writeModule(path, params, points) {
 (function (root) {
     const params = ${JSON.stringify(params)};
     const data = '${bytes.toString('base64')}';
+    // Load-time validation, part 1: parameters and payload shape, before any
+    // decoding. A corrupted or hand-edited file must fail loudly here, with a
+    // clear error, rather than propagate silently as wrong coordinates.
+    function validateInputs() {
+        const required = ['halfSize', 'radius', 'borderSpacing', 'minDistance', 'candidates',
+            'seed', 'unitsPerMetre', 'erodibleCount', 'borderStart'];
+        for (const key of required) {
+            if (typeof params[key] !== 'number' || !Number.isFinite(params[key])) {
+                throw new Error('Mesh points: param "' + key + '" is missing or not a finite number');
+            }
+        }
+        if (!Number.isInteger(params.erodibleCount) || !Number.isInteger(params.borderStart)) {
+            throw new Error('Mesh points: erodibleCount and borderStart must be integers');
+        }
+        if (typeof data !== 'string' || data.length === 0 || data.length % 4 !== 0) {
+            throw new Error('Mesh points: data is not a non-empty base64 string (length must be a multiple of 4)');
+        }
+        for (let i = 0; i < data.length; i++) {
+            const c = data.charCodeAt(i);
+            const isBase64 = (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) ||
+                c === 43 || c === 47 || c === 61;
+            if (!isBase64) throw new Error('Mesh points: data contains a non-base64 character at index ' + i);
+        }
+    }
+    validateInputs();
     const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
     const lookup = new Uint8Array(128);
     for (let i = 0; i < alphabet.length; i++) lookup[alphabet.charCodeAt(i)] = i;
@@ -209,6 +234,25 @@ function writeModule(path, params, points) {
     // regenerated point set never matches saves made on another one.
     let checksum = 0x811c9dc5;
     for (let i = 0; i < bytes.length; i++) checksum = Math.imul(checksum ^ bytes[i], 0x01000193) >>> 0;
+    // Load-time validation, part 2: decoded payload shape, before any
+    // coordinate decoding.
+    function validateDecoded() {
+        if (bytes.length === 0 || bytes.length % 8 !== 0) {
+            throw new Error('Mesh points: decoded payload is ' + bytes.length + ' bytes, not a positive multiple of 8');
+        }
+        const decodedCount = bytes.length / 8;
+        if (!(params.erodibleCount > 0 && params.erodibleCount <= params.borderStart &&
+              params.borderStart < decodedCount)) {
+            throw new Error('Mesh points: erodibleCount/borderStart out of range');
+        }
+        // The checksum is computed at load time, so this only checks the format
+        // contract: the hex string must be exactly 8 lowercase characters.
+        const checksumHex = checksum.toString(16).padStart(8, '0');
+        if (!/^[0-9a-f]{8}$/.test(checksumHex)) {
+            throw new Error('Mesh points: checksum is not 8-char lowercase hex');
+        }
+    }
+    validateDecoded();
     const view = new DataView(bytes.buffer);
     const count = bytes.length / 8;
     const x = new Float64Array(count);

@@ -122,6 +122,9 @@ class TimelapseRecorder {
         this.pending = Promise.resolve();
         this.video = null;
         this.pollMs = 2000;
+        // Bounded wait for the server to finish encoding: at most this many
+        // polls before giving up (with the current state in the error).
+        this.maxPollAttempts = 150;
     }
 
     /**
@@ -181,7 +184,12 @@ class TimelapseRecorder {
         if (!response.ok) throw new Error(result.error || `video request failed (HTTP ${response.status})`);
         this.video = result.video;
         this.onChange?.();
-        while (this.video.state === 'encoding') {
+        for (let attempt = 0; this.video.state === 'encoding'; attempt++) {
+            if (attempt >= this.maxPollAttempts) {
+                throw new Error(
+                    `timelapse encoding timed out after ${this.maxPollAttempts * this.pollMs / 1000} s ` +
+                    `(server state: ${this.video.state})`);
+            }
             await new Promise(resolve => setTimeout(resolve, this.pollMs));
             const status = await fetch(`${this.serverUrl}status`, { cache: 'no-store' });
             if (!status.ok) throw new Error(`timelapse server: HTTP ${status.status}`);

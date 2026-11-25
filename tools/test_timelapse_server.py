@@ -153,6 +153,7 @@ class Video(unittest.TestCase):
                 runs.append(1)
                 started.set()
                 release.wait(10)
+                # Deliberately minimal: no 'seconds', exercising the defensive print in run().
                 return {'state': 'done', 'path': str(encoder.output), 'frames': len(runs)}
             encoder.encode = encode
             encoder.request()

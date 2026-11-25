@@ -21,7 +21,9 @@ class InputControls {
      * Setup keyboard event listener
      */
     setupKeyboardListener() {
-        document.addEventListener('keydown', (e) => this.onKeyDown(e));
+        // Kept as named handlers so dispose() can remove them again.
+        this.onKeyDownListener = (e) => this.onKeyDown(e);
+        document.addEventListener('keydown', this.onKeyDownListener);
     }
     
     /**
@@ -137,10 +139,25 @@ class InputControls {
      * Setup mouse event listener
      */
     setupMouseListener() {
-        document.addEventListener('mousedown', (e) => this.onMouseDown(e));
-        document.addEventListener('mousemove', (e) => this.onMouseMove(e));
-        document.addEventListener('mouseup', (e) => this.onMouseUp(e));
-        document.addEventListener('wheel', (e) => this.onMouseWheel(e), { passive: false });
+        this.onMouseDownListener = (e) => this.onMouseDown(e);
+        this.onMouseMoveListener = (e) => this.onMouseMove(e);
+        this.onMouseUpListener = (e) => this.onMouseUp(e);
+        this.onMouseWheelListener = (e) => this.onMouseWheel(e);
+        document.addEventListener('mousedown', this.onMouseDownListener);
+        document.addEventListener('mousemove', this.onMouseMoveListener);
+        document.addEventListener('mouseup', this.onMouseUpListener);
+        document.addEventListener('wheel', this.onMouseWheelListener, { passive: false });
+    }
+
+    /**
+     * Remove every document listener registered by this object.
+     */
+    dispose() {
+        document.removeEventListener('keydown', this.onKeyDownListener);
+        document.removeEventListener('mousedown', this.onMouseDownListener);
+        document.removeEventListener('mousemove', this.onMouseMoveListener);
+        document.removeEventListener('mouseup', this.onMouseUpListener);
+        document.removeEventListener('wheel', this.onMouseWheelListener);
     }
     
     /**
@@ -187,7 +204,10 @@ class InputControls {
      * Handle mouse wheel (zoom)
      */
     onMouseWheel(event) {
+        // Let the help dialog scroll natively, and only zoom for the canvas:
+        // anywhere else (panels, dialogs) the wheel must be left alone.
         if (event.target?.closest?.('#status-help-dialog')) return;
+        if (event.target !== this.renderer.canvas) return;
         event.preventDefault();
         
         const zoomSpeed = 0.5;
