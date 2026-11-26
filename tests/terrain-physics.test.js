@@ -396,6 +396,7 @@ test('the initial terrain leaves the output-channel bed and flanks sand-free', (
 test('water is reinjected just inside the disk edge at every angle', () => {
     const grid = new TerrainGrid();
     const physics = new PhysicsEngine(grid);
+    physics.noiseSigma = 0;
     for (let n = 0; n < 128; n++) {
         const fraction = (n + 0.5) / 128;
         const particle = { x: 0, z: 0, vx: 0, vz: 0, sediment: 0.1 };
@@ -468,7 +469,7 @@ test('collisions exchange momentum and push overlapping water parcels apart', ()
     assert.equal(b.sediment, 0.2);
 });
 
-test('evaporation deposits sediment locally before reinjection and survives a save', () => {
+test('evaporation reinjects with the sediment load and survives a save', () => {
     let random = 0.5;
     const seededContext = vm.createContext({ console, Math, Float64Array, Date, __random: () => random });
     for (const name of ['mesh-points', 'terrain', 'physics']) {
@@ -502,26 +503,24 @@ test('evaporation deposits sediment locally before reinjection and survives a sa
     physics.updateParticle(physics.particles[0], physics.burstDuration / 2);
     assert.equal(physics.particles[0].burstProgress, undefined);
     assert.ok(Math.hypot(physics.particles[0].x, physics.particles[0].z) > grid.radius - 1);
-    assert.equal(physics.particles[0].sediment, 0);
-    assert.ok(face.some(i => grid.elevation[i] > grid.bedrock[i]));
+    // The parcel keeps its sediment load: nothing is deposited on the bed.
+    assert.equal(physics.particles[0].sediment, 0.25);
+    assert.ok(face.every(i => grid.elevation[i] === grid.bedrock[i]));
     assert.ok(Math.abs(totalSediment(grid, physics) - beforeDeposit) < 1e-8);
 });
 
-test('evaporation on the fixed surround deposits on the underlying face', () => {
+test('evaporation reinjects the load without depositing on the surround', () => {
     const grid = new TerrainGrid();
     const physics = new PhysicsEngine(grid);
     const particle = physics.particles[0];
     Object.assign(particle, { x: 28, z: 0, vx: 0, vz: 0, sediment: 0.25, burstProgress: 0.5 });
     const before = totalSediment(grid, physics);
     const elevations = Array.from(grid.elevation);
-    const face = grid.sample(particle.x, particle.z).face;
     physics.updateParticle(particle, physics.burstDuration / 2);
-    assert.equal(particle.sediment, 0);
+    // The load is kept and the parcel is reinjected, with nothing deposited.
+    assert.equal(particle.sediment, 0.25);
     assert.ok(Math.abs(totalSediment(grid, physics) - before) < 1e-8);
-    const changed = grid.vertices.map((point, i) => i).filter(i => grid.elevation[i] > elevations[i]);
-    assert.ok(changed.length > 0);
-    assert.ok(changed.every(i => face.includes(i)));
-    assert.ok(changed.some(i => i >= grid.erodibleCount));
+    assert.deepEqual(Array.from(grid.elevation), elevations);
     const saved = grid.toJSON();
     assert.equal(grid.fromJSON(saved), true);
 });
@@ -551,17 +550,13 @@ test('water deposits sand on the initially bare output-channel bed', () => {
     const { x, z } = grid.vertices[index];
     assert.equal(grid.elevation[index], grid.bedrock[index]);
     // A still parcel has no transport capacity, so it settles its load.
+    physics.noiseSigma = 0;
     physics.g = 0;
     physics.friction = 0;
     const settling = { x, z, vx: 0, vz: 0, sediment: 0.1 };
     physics.moveParticle(settling, 0.04);
     assert.ok(grid.elevation[index] > grid.bedrock[index]);
     assert.ok(settling.sediment < 0.1);
-    const evaporating = { x, z, vx: 0, vz: 0, sediment: 0.1 };
-    const before = grid.elevation[index];
-    physics.depositEvaporatedSediment(evaporating);
-    assert.ok(grid.elevation[index] > before);
-    assert.equal(evaporating.sediment, 0);
     const saved = grid.toJSON();
     assert.equal(grid.fromJSON(saved), true);
 });
@@ -579,6 +574,7 @@ test('bursting particles do not collide with moving water', () => {
 test('stationary water gradually deposits its sediment in a hollow', () => {
     const grid = new TerrainGrid();
     const physics = new PhysicsEngine(grid);
+    physics.noiseSigma = 0;
     physics.g = 0;
     const particle = physics.particles[0];
     Object.assign(particle, { x: 10, z: -5, vx: 0, vz: 0, sediment: 0.1 });
@@ -710,6 +706,7 @@ test('inverted cone drains through a flared channel towards the bottom sink', ()
 test('the steeper peripheral bed carries stationary water inward', () => {
     const grid = new TerrainGrid();
     const physics = new PhysicsEngine(grid);
+    physics.noiseSigma = 0;
     physics.transportCapacity = 0;
     for (let i = 0; i < 48; i++) {
         const angle = 2 * Math.PI * (i + 0.5) / 48;
@@ -769,6 +766,7 @@ test('erosion tapers at the disk edge without preventing deposition', () => {
     assert.ok(physics.erosionFactor(transition) > 0 && physics.erosionFactor(transition) < 1);
     assert.ok(physics.erosionFactor(edge) < 1e-12);
 
+    physics.noiseSigma = 0;
     physics.g = 0;
     physics.friction = 0;
     const particle = physics.particles[0];

@@ -71,10 +71,11 @@ What you see: a circular bed of sand, 50 units across, inside a black square.
 Its bedrock is a shallow inverted cone. Water runs towards the centre, then down an
 outlet channel to a sink in the middle of the bottom edge. Blue dots are the water
 parcels: they pick up sand where they move fast and drop it where they slow down,
-so channels deepen where water concentrates. Vegetation (yellow-green) grows along
-wet banks, and microbial colonies (ochre to purple) form Turing-like patterns in
-calm sandy areas. Keeping the tab open is how you contribute (see
-[Contributing](#contributing)).
+so channels deepen where water concentrates. Vegetation (yellow-green) forms
+narrow linear formations along the edges of the water currents, and microbial
+colonies (ochre to purple) cling to those formations like leaves on a branch:
+locally ordered, globally disordered. Neither species appears inside a current.
+Keeping the tab open is how you contribute (see [Contributing](#contributing)).
 
 ### For the owner
 
@@ -171,11 +172,10 @@ $$\eta_i(0) = \beta_i + D_0\,\phi_i,\qquad
 where $D_0$ is the initial sand depth and $\phi_i \in [0, 1]$ the sand factor. The
 channel bed ($\phi = 0$) starts as bare bedrock. Afterwards it behaves like the
 rest of the bed: water deposits and re-erodes sand there, avalanches from the
-banks reach it, and evaporating parcels drop their load on it. Only the
+banks reach it. Only the
 47,323 vertices inside the disk ($\lVert \mathbf{p}_i \rVert < R$) are erodible. The
-surround (the other interior points and the border) can receive sediment from
-evaporating parcels, but it is never eroded, and avalanches do not relax the edges
-that touch it.
+surround (the other interior points and the border) is never eroded and receives no
+sediment, and avalanches do not relax the edges that touch it.
 
 #### Water parcels
 
@@ -200,11 +200,14 @@ $n = \lceil \Delta t / (a / v_\max) \rceil$ substeps of length $\delta = \Delta 
 so that a parcel of radius $a$ travels less than one radius per substep. In each
 substep:
 
-$$\mathbf{v}_p \leftarrow \bigl(\mathbf{v}_p - g\,\nabla\eta\,\delta\bigr)\,e^{-k\delta},\qquad
+$$\mathbf{v}_p \leftarrow \bigl(\mathbf{v}_p - \alpha g\,\nabla\eta\,\delta\bigr)\,e^{-k\delta},\qquad
+\mathbf{v}_p \leftarrow \mathbf{v}_p + \sigma\sqrt{\delta}\,\mathbf{N}(0,1),\qquad
 \mathbf{v}_p \leftarrow \mathbf{v}_p\,\min\!\left(1, \frac{v_\max}{\lVert\mathbf{v}_p\rVert}\right),\qquad
 \mathbf{x}_p \leftarrow \mathbf{x}_p + \mathbf{v}_p\,\delta,$$
 
-where $k$ is a linear friction rate and $v_\max$ a speed cap. The square walls
+where $k$ is a linear friction rate, $v_\max$ a speed cap, $\alpha$ the inertia factor
+(gravity multiplier) and $\sigma$ the Langevin perturbation strength, with
+$\mathbf{N}(0,1)$ a standard normal vector drawn from the seeded RNG. The square walls
 $\lvert x\rvert = L$ and $\lvert z\rvert = L$ reflect parcels, except for the sink:
 the segment $\lvert x\rvert < r_s$ of the wall $z = L$.
 
@@ -274,9 +277,8 @@ granular relaxation, not a model of wet sand.
   ($r = R_\text{edge}(\theta) - 3\Delta s$) at a uniformly random angle $\theta$.
 - **Evaporation ("bursting").** In each substep a parcel bursts with probability
   $1 - e^{-\delta/T_b}$, so each parcel has a mean lifetime $T_b$ between bursts.
-  It stops, turns white and fades over $T_\text{fade}$, then deposits its load on
-  the vertices of its triangle (weights $\propto w_{p,j}$, surround and channel
-  included) and is reinjected without sediment.
+  It stops, turns white and fades over $T_\text{fade}$, then is reinjected at the
+  disk edge **with its load**, the same way as the sink does.
 
 Exchange, avalanches and both recycling paths conserve
 $\sum_i A_i s_i + \sum_p q_p$ exactly (to rounding). Remote merges do not (see
@@ -391,9 +393,11 @@ does not depend on the radius.
 | $\Delta t_0$ | `dt` | 0.04 sim s | Nominal step when no wall-clock time is given (tests) |
 | $\tau$ | `timeScale` | 1 (0.1–5, ×1.5 per key) | Speed factor |
 | $g$ | `g` | 9.81 u sim s⁻² | Gravity along the slope |
-| $k$ | `friction` | 1.8 sim s⁻¹ | Linear velocity damping |
+| $k$ | `friction` | 1.1 sim s⁻¹ | Linear velocity damping |
+| $\alpha$ | `inertiaFactor` | 1.5 | Gravity factor (multiplies $g$) |
+| $\sigma$ | `noiseSigma` | 1.4 u sim s⁻³ᐟ² | Langevin velocity perturbation, $\sigma\sqrt{\delta}\,\mathbf{N}(0,1)$ |
 | $N_p$ | `particleCount` | 1,500 | Number of water parcels |
-| $V_p$ | `waterPerParticle` | 0.02 u³ | Water volume per parcel |
+| $V_p$ | `waterPerParticle` | 0.02 u³ at 1,500 parcels (0.02·(1,500/$N_p$) in general) | Water volume per parcel |
 | $K$ | `transportCapacity` | 6 | Capacity per unit volume and speed |
 | $v_c$ | literal | 0.1 u sim s⁻¹ | Speed threshold for transport |
 | $\lambda$ | literals | 0.3 or 2 sim s⁻¹ | Entrainment and settling rate (moving or slow) |
@@ -541,7 +545,7 @@ film: `sim s` are simulated seconds, not seconds on your watch.
 | --- | --- | --- |
 | 🕰️ | Simulated time | How long the water has flowed on this computer, all its tabs together; kept on this computer only, not shared, not erased by a terrain reset |
 | ⏱️ | Journey time | How long a drop of water (a blue dot) takes, on average, to travel from the edge of the disk to the drain, over its last 100 journeys |
-| 💧 | Flow | How many drops reach the drain each simulated second, like cars counted at a toll booth, over the last 60 sim s. Drops that evaporate on the way (they turn white and leave their sand where they are) are not counted |
+| 💧 | Flow | How many drops reach the drain each simulated second, like cars counted at a toll booth, over the last 60 sim s. Drops that evaporate on the way (they turn white and are reinjected with their load) are not counted |
 
 **The whole story.** The [sharing status page](https://laurentperrinet.github.io/2026-11_tree-of-life/status.html)
 (`status.html`, also linked from **❔**) shows the edition of the shared map, how
@@ -762,6 +766,7 @@ quota of an origin.
 | 2026-11-17 | Vogel-spiral mesh with golden-angle rotation and Delaunay triangulation replaces the polar rings; shared terrain and local saves restart |
 | 2026-11-18 | Precomputed Poisson-disk points replace the Vogel spiral, whose defects formed concentric rings; shared terrain and local saves restart |
 | 2026-11-19 | Poisson-disk points sampled over the whole square in Cartesian coordinates; the disk is only the erodible subset; shared terrain and local saves restart |
+| 2026-11-26 | Flow dynamics re-centred (friction 1.1, noise 1.4, inertia 1.5); evaporation no longer deposits its load — it is kept and reinjected |
 
 [↑ Contents](#contents)
 
@@ -853,9 +858,8 @@ erodible, and the border is the last `MESH_POINTS.count − borderStart` vertice
 | Task | Method |
 | --- | --- |
 | Step size, substeps, projection to $h_i$, $c_i$, $\mathbf{u}_i$ | `step()` |
-| Gravity, friction, speed cap, sediment exchange, walls, sink | `moveParticle(particle, dt)` |
+| Gravity, inertia, noise, friction, speed cap, sediment exchange, walls, sink | `moveParticle(particle, dt)` |
 | Burst hazard and fade | `updateParticle(particle, dt)` |
-| Deposit of an evaporated load | `depositEvaporatedSediment(particle)` |
 | Soft pressure between parcels (spatial hash of size $2a$) | `collideParticles(dt)` |
 | Angle-of-repose avalanches (4 sweeps) | `relaxSand(dt)` |
 | Erosion fade near the edge $e_j$ | `erosionFactor(index)` |
@@ -1039,10 +1043,11 @@ initialize the same higher-resolution terrain* checks it.
 the bedrock, erodes the surround, adds sand to the channel, or holds non-finite
 values or invalid particles.
 
-**Randomness.** Parcel creation, reinjection angles and burst times use
-`Math.random()` without a seed, so two runs never match. The mesh points (seed
-2026) and the microbe seed patches are deterministic. Tests therefore check invariants
-and statistics, not exact trajectories.
+**Randomness.** Parcel creation, reinjection angles, burst times and Langevin
+perturbations use a seeded pseudo-random generator (mulberry32, seed 2026 by default,
+overridable via `options.random`), so a run is reproducible for a given seed. The mesh
+points (seed 2026) and the microbe seed patches are deterministic. Tests therefore check
+invariants and statistics, not exact trajectories.
 
 [↑ Contents](#contents)
 
@@ -1264,7 +1269,6 @@ Status on 2026-11-17.
   last accepted submission is lost, and the local sand balance breaks.
 - Contributions are anonymous; the request budget is a client-side target, not a
   quota.
-- Particle randomness is unseeded, so runs are not reproducible.
 - A device rendering fewer than 10 frames per second falls behind the nominal
   simulation rate; the cost of sand relaxation dominates.
 - There is no pause: the speed factor goes down to 0.1, not 0.
@@ -1273,7 +1277,7 @@ Status on 2026-11-17.
 **Open work**
 
 - [ ] Measure the frame rate and simulation rate in browsers, then tune $\rho$
-- [ ] Seed the particle generator, for reproducible runs and parameter scans
+- [x] Seed the particle generator, for reproducible runs and parameter scans
 - [ ] Make sand relaxation cheaper; move the simulation to a Web Worker
 - [ ] Touch gestures (orbit, pinch zoom)
 - [ ] Quantitative branching measures: channel count, drainage density, bifurcation ratios

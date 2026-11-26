@@ -4,14 +4,17 @@
  *
  * The script loads `js/mesh-points.js`, `js/terrain.js` and `js/physics.js`
  * in a `vm` context (exactly like the test suite), then subclasses
- * `PhysicsEngine` with three extra levers on top of the default dynamics:
+ * `PhysicsEngine` to add the per-parcel speed samples and the cumulative sink
+ * exit counters used by the report. The dynamics itself is the base engine's:
+ * the levers are its own options,
  *
- *   - `noise`   : Langevin-style velocity perturbation applied after gravity
- *                 and damping, `v += sigma * sqrt(dt) * N(0, 1)` (m per sim s).
- *   - `inertia` : factor alpha in (0, 1] multiplying the gravity acceleration,
- *                 so that alpha = 1 is the default dynamics and alpha < 1
- *                 makes the response sluggish (more inertial).
- *   - `friction`: the linear damping rate k (sim s^-1), already in the model.
+ *   - `friction`: linear damping rate k (sim s^-1);
+ *   - `noise`   : Langevin velocity perturbation (m per sim s^1/2), applied
+ *                 after gravity and damping, `v += sigma * sqrt(dt) * N(0, 1)`;
+ *   - `inertia` : factor alpha multiplying the gravity acceleration (alpha = 1
+ *                 is the base dynamics);
+ *   - `evaporation`: toggles the bursting mechanism (a parcel that bursts is
+ *                 reinjected at the disk edge with its sediment load kept).
  *
  * The bedrock, the mesh, the sediment exchange and the sand relaxation are
  * left untouched. The scan reports the transit time, the sink throughput, the
@@ -48,56 +51,30 @@ for (const name of ['mesh-points', 'terrain', 'physics']) {
 const { TerrainGrid, PhysicsEngine } = vm.runInContext('({ TerrainGrid, PhysicsEngine })', context);
 
 const DEFAULT_PARTICLES = 1500;
-const DEFAULT_WATER_PER_PARTICLE = 0.02;
 const NOMINAL_DT = 0.04; // nominal step when step() is called without wall-clock time (sim s)
 
 /**
- * PhysicsEngine subclass with the scan levers. The original `moveParticle` is
- * copied verbatim, with two changes: the gravity acceleration is multiplied by
- * `inertia`, and a Langevin noise term is added after the damping. The original
- * method is preserved as the `super.moveParticle` fallback for the default
- * configuration, so that the default dynamics is byte-for-byte the model.
+ * PhysicsEngine subclass for the parameter scan. It adds only the per-parcel
+ * speed samples needed for the stuck-fraction metrics and the cumulative sink
+ * exit counters; the dynamics itself (gravity, damping, noise, inertia,
+ * sediment exchange, walls, sink) is the base engine's, so the default
+ * configuration is byte-for-byte the model.
+ *
+ * `evaporation` toggles the bursting mechanism. When disabled, the hazard
+ * rate is zeroed: the base updateParticle still draws one random per substep
+ * (the hazard check), so the RNG stream stays aligned; the burst branch is
+ * never taken because -Math.expm1(0) = 0 and random() < 0 is false.
  */
 class ScanEngine extends PhysicsEngine {
     constructor(grid, options = {}) {
         super(grid, options);
-        this.noiseSigma = options.noise ?? 0;
-        this.inertiaFactor = options.inertia ?? 1;
         this.evaporation = options.evaporation !== false;
         if (!this.evaporation) {
-            // Toggle off the evaporation ("bursting") mechanism. The base
-            // updateParticle still draws one random per substep (hazard check),
-            // so the RNG stream stays aligned; the burst branch is never taken
-            // because -Math.expm1(0) = 0 and random() < 0 is false.
             this.particleHazardRate = 0;
         }
-        // The evaporation burst deposits the parcel's sediment load on the bed.
-        // This lever keeps the burst + reinjection (rescue from local minima)
-        // while skipping the deposit, to isolate the deposit's effect.
-        this.depositSediment = options.depositSediment !== false;
-        // Anti-stagnation kick: isotropic impulse applied to a parcel that has
-        // spent stuckDelay sim s below stuckThreshold m/sim s. Default off.
-        this.stuckKick = options.stuckKick ?? 0;
         this.stuckThreshold = options.stuckThreshold ?? 0.15;
-        this.stuckDelay = options.stuckDelay ?? 2.0;
-        this._speedSum = 0;
-        this._speedSamples = 0;
         this._uniqueSinkExits = new Set();
         this._totalSinkExits = 0;
-        if (options.particleCount && options.particleCount !== this.particleCount) {
-            // Keep the total water volume constant when the parcel count drops.
-            this.waterPerParticle = DEFAULT_WATER_PER_PARTICLE * (this.particleCount / options.particleCount);
-            this.particleCount = options.particleCount;
-            this.createParticles();
-        }
-    }
-
-    /** Standard normal sample from the seeded RNG (Box-Muller). */
-    randn() {
-        let u = 0;
-        while (u === 0) u = this.random();
-        const v = this.random();
-        return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
     }
 
     recordSinkExit(particle) {
@@ -106,130 +83,31 @@ class ScanEngine extends PhysicsEngine {
         super.recordSinkExit(particle);
     }
 
-    /**
-     * Skip the bed deposit when the lever is off. The sediment load stays
-     * with the parcel (the same behaviour as the base engine's null-sample
-     * case), so the burst + reinjection rescue path is unchanged.
-     */
-    depositEvaporatedSediment(particle) {
-        if (!this.depositSediment) return;
-        super.depositEvaporatedSediment(particle);
-    }
-
     moveParticle(particle, dt) {
-        if (this.noiseSigma === 0 && this.inertiaFactor === 1 && this.stuckKick === 0) {
-            // Default dynamics, byte-for-byte the model. Track per-particle
-            // speeds for the stuck-fraction metric; this draws no randoms.
-            const speed = Math.hypot(particle.vx, particle.vz);
-            particle._speedSum = (particle._speedSum ?? 0) + speed;
-            particle._speedSamples = (particle._speedSamples ?? 0) + 1;
-            particle._slowSamples = (particle._slowSamples ?? 0) + (speed < this.stuckThreshold ? 1 : 0);
-            return super.moveParticle(particle, dt);
-        }
-        if (dt === 0) return;
-        particle.travelTime = (Number.isFinite(particle.travelTime) ? particle.travelTime : 0) + dt;
-        const grid = this.grid;
-        const sample = grid.sample(particle.x, particle.z);
-        if (!sample) {
-            this.reinject(particle);
-            return;
-        }
-        const previousSpeed = Math.hypot(particle.vx, particle.vz);
-        const damping = Math.exp(-this.friction * dt);
-        const gravity = this.inertiaFactor * this.g * dt;
-        particle.vx = (particle.vx - gravity * sample.dx) * damping;
-        particle.vz = (particle.vz - gravity * sample.dz) * damping;
-        if (this.noiseSigma > 0) {
-            const perturbation = this.noiseSigma * Math.sqrt(dt);
-            particle.vx += perturbation * this.randn();
-            particle.vz += perturbation * this.randn();
-        }
-        // Anti-stagnation kick: break a parcel out of a local minimum. The
-        // kick is bounded by the maxSpeed cap below.
-        if (this.stuckKick > 0) {
-            const speedNow = Math.hypot(particle.vx, particle.vz);
-            if (speedNow < this.stuckThreshold) {
-                particle.stuckTime = (particle.stuckTime ?? 0) + dt;
-                if (particle.stuckTime >= this.stuckDelay) {
-                    const theta = this.random() * 2 * Math.PI;
-                    particle.vx += this.stuckKick * Math.cos(theta);
-                    particle.vz += this.stuckKick * Math.sin(theta);
-                    particle.stuckTime = 0;
-                }
-            } else {
-                particle.stuckTime = 0;
-            }
-        }
-        let speed = Math.hypot(particle.vx, particle.vz);
-        if (speed > this.maxSpeed) {
-            particle.vx *= this.maxSpeed / speed;
-            particle.vz *= this.maxSpeed / speed;
-            speed = this.maxSpeed;
-        }
-        this._speedSum += speed;
-        this._speedSamples += 1;
+        // Track per-parcel speeds for the stuck-fraction metrics. This draws
+        // no randoms, so the RNG stream stays aligned with the base dynamics.
+        const speed = Math.hypot(particle.vx, particle.vz);
         particle._speedSum = (particle._speedSum ?? 0) + speed;
         particle._speedSamples = (particle._speedSamples ?? 0) + 1;
         particle._slowSamples = (particle._slowSamples ?? 0) + (speed < this.stuckThreshold ? 1 : 0);
-        const capacity = this.waterPerParticle * this.transportCapacity * Math.max(0, speed - 0.1);
-        const exchangeRate = speed < 0.1 ? 2 : 0.3;
-        const relaxation = 1 - Math.exp(-exchangeRate * dt);
-        let entrainment = capacity * relaxation;
-        let settling = particle.sediment * relaxation;
-        if (speed < previousSpeed && particle.sediment > 0) {
-            const slowingDeposit = particle.sediment * (1 - speed / previousSpeed);
-            if (entrainment - settling > -slowingDeposit) {
-                entrainment = 0;
-                settling = slowingDeposit;
-            }
-        }
-        let actualExchange = 0;
-        sample.face.forEach((index, i) => {
-            if (index >= grid.erodibleCount) return;
-            const weight = Math.max(0, sample.weights[i]);
-            const previousHeight = grid.elevation[index];
-            const available = (previousHeight - grid.bedrock[index]) * grid.vertexArea[index];
-            const entrained = Math.min(available, weight * entrainment * this.erosionFactor(index));
-            const height = Math.max(grid.bedrock[index],
-                previousHeight + (weight * settling - entrained) / grid.vertexArea[index]);
-            grid.elevation[index] = height;
-            actualExchange += (previousHeight - height) * grid.vertexArea[index];
-        });
-        particle.sediment = Math.max(0, particle.sediment + actualExchange);
-        let x = particle.x + particle.vx * dt;
-        let z = particle.z + particle.vz * dt;
-        if (z >= grid.halfSize) {
-            const fraction = (grid.halfSize - particle.z) / (z - particle.z);
-            const exitX = particle.x + fraction * (x - particle.x);
-            if (Math.abs(exitX) < grid.sinkRadius) {
-                this.recordSinkExit(particle);
-                this.reinject(particle);
-                return;
-            }
-            z = grid.halfSize - 0.000001;
-            particle.vz = -Math.abs(particle.vz);
-        } else if (z <= -grid.halfSize) {
-            z = -grid.halfSize + 0.000001;
-            particle.vz = Math.abs(particle.vz);
-        }
-        if (x >= grid.halfSize) {
-            x = grid.halfSize - 0.000001;
-            particle.vx = -Math.abs(particle.vx);
-        } else if (x <= -grid.halfSize) {
-            x = -grid.halfSize + 0.000001;
-            particle.vx = Math.abs(particle.vx);
-        }
-        particle.x = x;
-        particle.z = z;
+        return super.moveParticle(particle, dt);
     }
 
     meanSpeed() {
-        // Sample the mean parcel speed from the run; default dynamics has no
-        // samples, so fall back to a direct mean over the parcels.
-        if (this._speedSamples > 0) return this._speedSum / this._speedSamples;
+        // Mean parcel speed over all per-parcel samples of the run.
         let sum = 0;
-        for (const particle of this.particles) sum += Math.hypot(particle.vx, particle.vz);
-        return sum / this.particles.length;
+        let samples = 0;
+        for (const particle of this.particles) {
+            if (particle._speedSamples > 0) {
+                sum += particle._speedSum;
+                samples += particle._speedSamples;
+            }
+        }
+        if (samples > 0) return sum / samples;
+        // Fall back to a direct mean over the parcels (e.g. no samples).
+        let instantaneous = 0;
+        for (const particle of this.particles) instantaneous += Math.hypot(particle.vx, particle.vz);
+        return this.particles.length ? instantaneous / this.particles.length : 0;
     }
 
     channelisation() {
@@ -269,15 +147,12 @@ function bedSedimentVolume(grid) {
 
 /** Run one configuration and return its metrics. */
 function runConfig(config) {
-    const { friction = 1.8, noise = 0, inertia = 1, evaporation = true, depositSediment = true,
-        stuckKick = 0, stuckThreshold = 0.15, stuckDelay = 2.0,
-        particles = DEFAULT_PARTICLES, duration = 200, seed = 2026 } = config;
+    const { friction = 1.1, noise = 1.4, inertia = 1.5, evaporation = true,
+        stuckThreshold = 0.15, particles = DEFAULT_PARTICLES, duration = 200, seed = 2026 } = config;
     const grid = new TerrainGrid();
     const engine = new ScanEngine(grid, {
-        seed, noise, inertia, evaporation, depositSediment, stuckKick, stuckThreshold, stuckDelay,
-        particleCount: particles
+        seed, friction, noise, inertia, evaporation, stuckThreshold, particleCount: particles
     });
-    engine.friction = friction;
     const steps = Math.max(1, Math.ceil(duration / NOMINAL_DT));
     for (let i = 0; i < steps; i++) engine.step();
     const transit = engine.transitStats();
@@ -304,7 +179,7 @@ function runConfig(config) {
     // total.
     const totalSinkExits = engine._totalSinkExits ?? 0;
     return {
-        friction, noise, inertia, evaporation, depositSediment, stuckKick, stuckThreshold, stuckDelay,
+        friction, noise, inertia, evaporation, stuckThreshold,
         particles, duration, seed,
         meanSpeed: engine.meanSpeed(),
         transitMean: transit.mean,
@@ -324,11 +199,11 @@ function runConfig(config) {
 }
 
 /** The configuration grid: friction x noise x inertia. The default grid is
- *  re-centred on the recommended full-scale configuration (friction 1.3, noise
- *  1.6, inertia 1.1); the grid can be overridden from the CLI
+ *  re-centred on the recommended full-scale configuration (friction 1.1, noise
+ *  1.4, inertia 1.5); the grid can be overridden from the CLI
  *  (--frictions/--noises/--inertias, comma-separated) for a re-centred
  *  exploration around a new best. */
-function buildGrid(frictions = [1.3, 1.4, 1.5], noises = [1.5, 1.6, 1.7], inertias = [0.9, 1.0, 1.1]) {
+function buildGrid(frictions = [1.0, 1.1, 1.2], noises = [1.3, 1.4, 1.5], inertias = [1.4, 1.5, 1.6]) {
     const grid = [];
     for (const friction of frictions) {
         for (const noise of noises) {
@@ -340,12 +215,17 @@ function buildGrid(frictions = [1.3, 1.4, 1.5], noises = [1.5, 1.6, 1.7], inerti
     return grid;
 }
 
-/** Composite score: 1 = ideal "critical" regime, 0 = stuck or too fast. */
+/** Composite score: 1 = ideal "critical" regime (flowing, not stuck, not
+ *  too fast, channelising and circulating), 0 = stuck or too fast. */
 function scoreOf(metrics) {
     const speed = metrics.meanSpeed ?? 0;
     const channel = metrics.channelisation ?? 0;
+    const uniqueFrac = metrics.uniqueExitFraction ?? 0;
+    const mostlyStuck = metrics.mostlyStuckFraction ?? 0;
     const speedScore = Math.max(0, 1 - Math.abs(speed - 1.2) / 1.2);
-    return 0.5 * speedScore + 0.5 * channel;
+    const channelScore = Math.min(1, channel / 0.30);
+    const circulationScore = Math.min(1, uniqueFrac / 0.90);
+    return Math.max(0, 0.4 * speedScore + 0.3 * channelScore + 0.3 * circulationScore - 0.5 * mostlyStuck);
 }
 
 /** Print metrics as JSON on stdout (used by the parallel workers). */
@@ -435,11 +315,12 @@ function report(resultsFile, verifyFile = path.join(here, 'flow-verify-results.j
     lines.push('Generated by `tools/scan-flow.mjs`. All configurations run with seed 2026, ' +
         `${results[0].particles} parcels, ${results[0].duration} sim s, nominal step 0.04 sim s.`);
     lines.push('');
-    lines.push('The levers: `friction` (linear damping rate k), `noise` (Langevin velocity ' +
+    lines.push('The levers: `friction` (linear damping rate k, sim s^-1), `noise` (Langevin velocity ' +
         'perturbation, m per sim s^1/2) and `inertia` (gravity acceleration factor). ' +
-        '`evaporation` toggles the bursting/sediment-deposit mechanism and `stuckKick` applies ' +
-        'an isotropic kick to parcels that stay below `stuckThreshold` for `stuckDelay` sim s. ' +
-        '`score` = 0.5 * (1 - |meanSpeed - 1.2| / 1.2) + 0.5 * channelisation, clipped at 0.');
+        '`evaporation` toggles the bursting mechanism (a parcel that bursts is reinjected at the ' +
+        'disk edge with its sediment load kept). ' +
+        '`score` = max(0, 0.4 * (1 - |meanSpeed - 1.2| / 1.2) + 0.3 * min(1, channelisation / 0.30) ' +
+        '+ 0.3 * min(1, uniqueExitFraction / 0.90) - 0.5 * mostlyStuckFraction).');
     lines.push('');
     lines.push('## Critical regimes (speed 0.6–1.8 m/sim s, channelisation ≥ 30%)');
     lines.push('');
@@ -539,9 +420,10 @@ function report(resultsFile, verifyFile = path.join(here, 'flow-verify-results.j
         '(the base engine prunes its event list to a 60 sim s window, so only the cumulative count is meaningful).');
     lines.push('');
     lines.push('Note: Langevin noise disperses the flow and lowers channelisation, so the score ' +
-        'rewards the intermediate-speed / high-channelisation compromise rather than the fastest regime. ' +
-        'The evaporation mechanism (bursting + sediment deposit) is toggled separately and is ' +
-        'not part of the score.');
+        'rewards the intermediate-speed / high-channelisation compromise rather than the fastest regime, ' +
+        'and additionally rewards circulation (unique sink exits) while penalising parcels stuck ' +
+        'more than half the time. The evaporation mechanism (bursting + reinjection with the sediment ' +
+        'load kept) is toggled separately and is not part of the score.');
     const reportFile = resultsFile.replace(/\.json$/, '-report.md');
     fs.writeFileSync(reportFile, lines.join('\n') + '\n');
     console.log(`Report written to ${reportFile}`);
@@ -559,9 +441,9 @@ if (command === 'one') {
     const resultsFile = args.results ?? path.join(here, 'flow-scan-results.json');
     const verifyFile = args.verifyResults ?? path.join(here, 'flow-verify-results.json');
     const parseList = value => value.split(',').map(s => Number(s.trim()));
-    const frictions = args.frictions ? parseList(args.frictions) : [1.3, 1.4, 1.5];
-    const noises = args.noises ? parseList(args.noises) : [1.5, 1.6, 1.7];
-    const inertias = args.inertias ? parseList(args.inertias) : [0.9, 1.0, 1.1];
+    const frictions = args.frictions ? parseList(args.frictions) : [1.0, 1.1, 1.2];
+    const noises = args.noises ? parseList(args.noises) : [1.3, 1.4, 1.5];
+    const inertias = args.inertias ? parseList(args.inertias) : [1.4, 1.5, 1.6];
     const configs = buildGrid(frictions, noises, inertias).map(config => ({ ...config, particles, duration, seed: 2026 }));
     const results = await runParallel(configs, { workers });
     atomicWriteJson(resultsFile, results);
@@ -579,8 +461,6 @@ if (command === 'one') {
     const configs = best.map(m => ({
         friction: m.friction, noise: m.noise, inertia: m.inertia,
         evaporation: m.evaporation ?? true,
-        depositSediment: m.depositSediment ?? true,
-        stuckKick: m.stuckKick ?? 0,
         particles, duration, seed: 2026
     }));
     const verified = await runParallel(configs, { workers });

@@ -43,10 +43,17 @@ class PhysicsEngine {
         // behind real time instead of taking ever longer, ever slower frames.
         this.maxFrameSeconds = 0.1;
         this.g = 9.81;
-        this.friction = 1.8;
+        this.friction = options.friction ?? 1.1;
+        // Langevin velocity perturbation (m per sim s^1/2): keeps parcels moving
+        // out of local minima instead of settling. Zero disables it.
+        this.noiseSigma = options.noise ?? 1.4;
+        // Gravity factor alpha: multiplies the gravity acceleration, so a value
+        // above 1 makes the response stronger (faster response), not sluggish.
+        this.inertiaFactor = options.inertia ?? 1.5;
         this.timeScale = 1;
-        this.particleCount = 1500;
-        this.waterPerParticle = 0.02;
+        this.particleCount = options.particleCount ?? 1500;
+        // Total water volume is held constant when the parcel count changes.
+        this.waterPerParticle = options.waterPerParticle ?? (0.02 * (1500 / this.particleCount));
         this.transportCapacity = 6;
         this.erosionBorderWidth = 2;
         this.particleRadius = 0.105;
@@ -65,6 +72,19 @@ class PhysicsEngine {
         this.seed = options.seed ?? 2026;
         this.random = options.random ?? createSeededRandom(this.seed);
         this.createParticles();
+    }
+
+    /**
+     * Standard normal sample from the seeded RNG (Box-Muller).
+     *
+     * Returns:
+     *   A sample of the standard normal distribution.
+     */
+    randn() {
+        let u = 0;
+        while (u === 0) u = this.random();
+        const v = this.random();
+        return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
     }
 
     createParticles() {
@@ -274,7 +294,7 @@ class PhysicsEngine {
         if (particle.burstProgress !== undefined) {
             const progress = particle.burstProgress + dt / this.burstDuration;
             if (progress >= 1) {
-                this.depositEvaporatedSediment(particle);
+                // No bed deposit: the parcel keeps its load and is reinjected.
                 this.reinject(particle);
             } else {
                 particle.burstProgress = progress;
@@ -290,27 +310,6 @@ class PhysicsEngine {
         this.moveParticle(particle, dt);
     }
 
-    depositEvaporatedSediment(particle) {
-        if (particle.sediment === 0) return;
-        const grid = this.grid;
-        const sample = grid.sample(particle.x, particle.z);
-        if (!sample) {
-            // Outside the mesh there is nowhere to deposit: keep the sediment
-            // load so the caller's reinject() carries it to the next cycle.
-            return;
-        }
-        const weights = sample.weights.map(weight => Math.max(0, weight));
-        const total = weights.reduce((sum, weight) => sum + weight, 0);
-        if (total < 1e-12) throw new Error('No terrain for sediment deposit');
-        for (let i = 0; i < sample.face.length; i++) {
-            if (weights[i] > 0) {
-                const index = sample.face[i];
-                grid.elevation[index] += particle.sediment * weights[i] / total / grid.vertexArea[index];
-            }
-        }
-        particle.sediment = 0;
-    }
-
     moveParticle(particle, dt) {
         if (dt === 0) return;
         particle.travelTime = (Number.isFinite(particle.travelTime) ? particle.travelTime : 0) + dt;
@@ -324,8 +323,15 @@ class PhysicsEngine {
         }
         const previousSpeed = Math.hypot(particle.vx, particle.vz);
         const damping = Math.exp(-this.friction * dt);
-        particle.vx = (particle.vx - this.g * sample.dx * dt) * damping;
-        particle.vz = (particle.vz - this.g * sample.dz * dt) * damping;
+        const gravity = this.inertiaFactor * this.g * dt;
+        particle.vx = (particle.vx - gravity * sample.dx) * damping;
+        particle.vz = (particle.vz - gravity * sample.dz) * damping;
+        if (this.noiseSigma > 0) {
+            // Langevin perturbation: keeps parcels from settling in local minima.
+            const perturbation = this.noiseSigma * Math.sqrt(dt);
+            particle.vx += perturbation * this.randn();
+            particle.vz += perturbation * this.randn();
+        }
         let speed = Math.hypot(particle.vx, particle.vz);
         if (speed > this.maxSpeed) {
             particle.vx *= this.maxSpeed / speed;
